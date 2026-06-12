@@ -109,6 +109,28 @@ for _r in CAT:
     kindbit = 1 if _r["kind"] == "unique" else 0
     BY_ADDR[(kindbit, _r["cls"], _r["sub"], _r["b"])] = _r
 
+# Runeword'leri soketteki run dizisinden tani (her tarif benzersiz, 0 cakisma).
+RW_BY_RUNES = {}
+for _rw in RUNEWORDS:
+    _seq = tuple(int(_rn["b"]) for _rn in _rw.get("runes", []))
+    if _seq:
+        RW_BY_RUNES.setdefault(_seq, _rw)
+
+
+def socket_rune_seq(data: dict) -> tuple:
+    """Itemin s1..s6 soketlerindeki run b-degerlerini sirayla cikar."""
+    seq = []
+    for n in range(1, 7):
+        v = data.get(f"s{n}")
+        if not v:
+            continue
+        try:
+            rj = json.loads(base64.b64decode(v))
+            seq.append(int(rj["b"]))
+        except Exception:
+            pass
+    return tuple(seq)
+
 
 def resolve(key: str, data: dict) -> dict:
     """Save kaydini katalog girdisine cozer."""
@@ -122,13 +144,23 @@ def resolve(key: str, data: dict) -> dict:
     out = {"key": key, "raw": data, "stack": data.get("o")}
     if b is None:
         out.update(name="Special/Runeword item", rar="Runeword", w=2, h=4, cid=None)
-        return out
-    r = BY_ADDR.get((c, sfx, j if sfx == 3 else 0, int(b)))
-    if r:
-        out.update(name=r["name"], rar=r["rar"], w=r["w"], h=r["h"], cid=r["id"],
-                   set=r.get("set"), clsName=CLASS_NAMES.get(r["cls"], "?"), spr=r.get("spr"))
     else:
-        out.update(name=f"? (c{c} s{sfx} j{j} b{int(b)})", rar="?", w=1, h=1, cid=None)
+        r = BY_ADDR.get((c, sfx, j if sfx == 3 else 0, int(b)))
+        if r:
+            out.update(name=r["name"], rar=r["rar"], w=r["w"], h=r["h"], cid=r["id"],
+                       set=r.get("set"), clsName=CLASS_NAMES.get(r["cls"], "?"), spr=r.get("spr"))
+        else:
+            out.update(name=f"? (c{c} s{sfx} j{j} b{int(b)})", rar="?", w=1, h=1, cid=None)
+    # Soketlenmis runler bir tarifle eslesiyorsa bu bir runeword'dur (oyunun mantigi).
+    # Taban itemin cls/spr/w/h/cid'i korunur (giydirme/surukleme dogru kalsin),
+    # sadece gorunen ad + rarity runeword olarak isaretlenir; tooltip rwcid'den okur.
+    rw = RW_BY_RUNES.get(socket_rune_seq(data))
+    if rw:
+        out["name"] = rw["name"]
+        out["rar"] = "Runeword"
+        out["isRW"] = True
+        if isinstance(rw.get("cid"), int):
+            out["rwcid"] = rw["cid"]
     return out
 
 
@@ -392,6 +424,8 @@ def op_add(body: dict) -> dict:
     tgt = body["target"]          # {"type":"stash_unique"|"stash"|"bag"|"char_*", ...}
     if game_running():
         return {"err": "Game is running! Close it first."}
+    if r.get("kind") == "runeword" or r.get("cls", 0) < 0:
+        return {"err": "Runewords can't be added directly - use the Runeword Builder."}
     if tgt["type"] == "stash_unique":
         if r["kind"] != "unique":
             return {"err": "Only unique items can go to the Unique tab."}
@@ -931,9 +965,10 @@ button.act:hover{background:#6f421a}
 .sockrow img{width:24px;height:24px;image-rendering:pixelated}
 .sockrow input{flex:1}
 .sockrow button{background:#3a1c22;color:#c9a;border:1px solid var(--line);border-radius:4px;cursor:pointer;padding:4px 9px}
-.rwcard{background:var(--card);border:1px solid var(--line);border-radius:6px;padding:8px 14px;margin:6px 0;max-width:860px;display:grid;grid-template-columns:210px 150px 1fr 90px;align-items:center;gap:14px}
-.rwcard .rwname{font-weight:bold;cursor:default;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-.rwtarget{font-size:11px;color:var(--mut);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.rwcard{background:var(--card);border:1px solid var(--line);border-radius:6px;padding:8px 14px;margin:6px 0;max-width:920px;display:grid;grid-template-columns:240px 1fr 92px;align-items:center;gap:16px}
+.rwhead{display:flex;flex-direction:column;gap:2px;min-width:0}
+.rwcard .rwname{font-weight:bold;cursor:default;line-height:1.15}
+.rwtarget{font-size:11px;color:var(--mut);line-height:1.25;white-space:normal}
 .rwrunes{display:flex;gap:5px;flex-wrap:wrap}
 .rwrune{display:inline-flex;align-items:center;gap:3px;background:#1a0e10;border:1px solid #4a3a26;border-radius:4px;padding:2px 6px;font-size:11px;color:#d8c9a0}
 .rwrune img{width:18px;height:18px;image-rendering:pixelated}
@@ -964,7 +999,7 @@ button.act:hover{background:#6f421a}
   <div id="filters">
     <div class="fitem"><label>Type</label><select id="fkind"><option value="">All</option><option value="unique">Unique / Set</option><option value="normal">Normal</option><option value="runeword">Runeword</option></select></div>
     <div class="fitem"><label>Slot</label><select id="fcls"><option value="">All</option></select></div>
-    <div class="fitem"><label>Rarity</label><select id="frar"><option value="">All</option><option>Angelic</option><option>Unholy</option><option>Heroic</option><option>Satanic</option><option>Mythic</option><option>Legendary</option><option>Rare</option><option>Superior</option><option>Normal</option><option>Runeword</option></select></div>
+    <div class="fitem"><label>Rarity</label><select id="frar"><option value="">All</option><option>Angelic</option><option>Unholy</option><option>Heroic</option><option>Satanic</option><option>Mythic</option><option>Legendary</option><option>Rare</option><option>Superior</option><option>Normal</option></select></div>
     <div class="fitem"><label>Set</label><select id="fset"><option value="">All items</option><option value="any">Any set piece</option></select></div>
     <div class="fitem" style="grid-column:1/3"><label>Has Stat</label><input id="fstat" list="statlist" placeholder="e.g. magic find, attack speed..."><datalist id="statlist"></datalist></div>
   </div>
@@ -1022,7 +1057,7 @@ function gridHTML(tab,items,delTarget){
     const p=it.pos||[0,0];
     const rr=it.rar&&it.rar!=='?'?it.rar:'_';
     const inner=it.spr?`<img src="/icons/${it.spr}.png?v=2" loading="lazy">`:esc(short(it.name));
-    h+=`<div class="item b-${rr}" draggable="true" title="" data-i="${i}" data-del='${JSON.stringify(delTarget)}' data-key="${it.key}" data-w="${it.w||1}" data-h="${it.h||1}" data-cid="${it.cid??''}" data-raw='${esc(JSON.stringify(it.raw||{}))}' 
+    h+=`<div class="item b-${rr}" draggable="true" title="" data-i="${i}" data-del='${JSON.stringify(delTarget)}' data-key="${it.key}" data-w="${it.w||1}" data-h="${it.h||1}" data-cid="${it.cid??''}" data-rwcid="${it.rwcid??''}" data-raw='${esc(JSON.stringify(it.raw||{}))}'
       style="left:${p[0]*CELL}px;top:${p[1]*CELL}px;width:${(it.w||1)*CELL-2}px;height:${(it.h||1)*CELL-2}px">${inner}${it.stack?`<span class="stk">x${it.stack}</span>`:''}</div>`;
   });
   return h+'</div>';
@@ -1171,7 +1206,8 @@ function setupTip(){
   function show(cid,extra,x,y){
     const r=CAT[cid]; if(!r){tip.style.display='none';return}
     let h=`<div class="tname r-${r.rar}">${esc(r.name)}</div>`;
-    h+=`<div class="ttype">${CLS[r.cls]||''}${r.cls===3?' / '+(SUBN[r.sub]||r.sub):''} &middot; ${r.rar} &middot; ${r.kind}${r.tier?` &middot; Tier ${r.tier}`:''}${extra||''}</div>`;
+    const meta=r.kind==='runeword'?'Runeword':`${CLS[r.cls]||''}${r.cls===3?' / '+(SUBN[r.sub]||r.sub):''} &middot; ${r.rar} &middot; ${r.kind}`;
+    h+=`<div class="ttype">${meta}${r.tier?` &middot; Tier ${r.tier}`:''}${extra||''}</div>`;
     if(r.lvl)h+=`<div class="ttype">Requires Level ${r.lvl}</div>`;
     for(const [lbl,val] of (r.stats||[]))h+=`<div class="tstat"><b>${esc(val)}</b> ${esc(lbl)}</div>`;
     if(r.set!==undefined){const s=SETS_DB.find(x=>x.set===r.set);
@@ -1187,7 +1223,8 @@ function setupTip(){
     if(dragInfo){tip.style.display='none';return}
     const el=e.target.closest('.item,.dslot[draggable],.res,.rwname');
     if(!el){tip.style.display='none';return}
-    let cid=el.dataset.cid;
+    const rwcid=el.dataset.rwcid;
+    let cid=(rwcid!==''&&rwcid!=null)?rwcid:el.dataset.cid;
     if(cid===''||cid==null){
       if(el.classList.contains('res'))return;
       tip.style.display='none';return;
@@ -1226,7 +1263,7 @@ function dslot(g,w,h,label){
   const rr=e&&e.rar&&e.rar!=='?'?e.rar:null;
   const del=JSON.stringify({type:"equipped",slot:curChar,tab:"equipped_items"});
   return `<div class="dslot${rr?' b-'+rr:''}" data-g="${g}" style="width:${w*DC}px;height:${h*DC}px"
-    ${e?`draggable="true" data-del='${del}' data-key="${e.key}" data-w="${e.w||1}" data-h="${e.h||1}" data-cid="${e.cid??''}" data-raw='${esc(JSON.stringify(e.raw||{}))}'`:`title="${label} (empty)"`}>
+    ${e?`draggable="true" data-del='${del}' data-key="${e.key}" data-w="${e.w||1}" data-h="${e.h||1}" data-cid="${e.cid??''}" data-rwcid="${e.rwcid??''}" data-raw='${esc(JSON.stringify(e.raw||{}))}'`:`title="${label} (empty)"`}>
     <span class="lbl">${label}</span>${e&&e.spr?`<img src="/icons/${e.spr}.png?v=2">`:(e?esc(short(e.name)):'')}</div>`;
 }
 function wpanel(side){
@@ -1389,7 +1426,7 @@ function openRunewords(){
   const render=()=>{
     const q=(document.getElementById('rwq').value||'').toLowerCase();
     document.getElementById('rwlist').innerHTML=RW_DB.filter(r=>!q||r.name.toLowerCase().includes(q)).map(r=>
-      `<div class="rwcard"><span class="rwname r-Runeword" data-cid="${r.cid??''}">${esc(r.name)}</span><span class="rwtarget">${esc(r.target||'')}</span><span class="rwrunes">`+
+      `<div class="rwcard"><div class="rwhead"><span class="rwname r-Runeword" data-cid="${r.cid??''}">${esc(r.name)}</span><span class="rwtarget">${esc(r.target||'')}</span></div><span class="rwrunes">`+
       r.runes.map(rn=>`<span class="rwrune">${rn.spr?`<img src="/icons/${rn.spr}.png?v=2" loading="lazy">`:''}${esc(rn.name)}</span>`).join('')+
       `</span><button class="forgebtn" data-rw="${r.rw}">Forge</button></div>`).join('');
     document.querySelectorAll('.forgebtn').forEach(b=>{
@@ -1460,7 +1497,8 @@ function search(){
   const fk=document.getElementById('fkind').value, fc=document.getElementById('fcls').value;
   const fr=document.getElementById('frar').value, fs=document.getElementById('fset').value;
   const fst=document.getElementById('fstat').value.toLowerCase();
-  const out=CAT.filter(r=>(!q||r.name.toLowerCase().includes(q)||r.key.includes(q))&&(!fk||r.kind===fk)&&(fc===''||String(r.cls)===fc)&&(!fr||r.rar===fr)&&(fs===''||(fs==='any'?r.set!==undefined:r.set===+fs))&&(!fst||(r.stats||[]).some(([l,v])=>l.toLowerCase().includes(fst)))).slice(0,100);
+  // runeword (cls<0) girdileri buradan eklenmez -> Runeword Builder kullanilir
+  const out=CAT.filter(r=>r.kind!=='runeword'&&(!q||r.name.toLowerCase().includes(q)||r.key.includes(q))&&(!fk||r.kind===fk)&&(fc===''||String(r.cls)===fc)&&(!fr||r.rar===fr)&&(fs===''||(fs==='any'?r.set!==undefined:r.set===+fs))&&(!fst||(r.stats||[]).some(([l,v])=>l.toLowerCase().includes(fst)))).slice(0,100);
   const rd=document.getElementById('results'); rd.innerHTML='';
   out.forEach(r=>{const d=document.createElement('div');d.className='res'+(sel&&sel.id===r.id?' sel':'');
     d.draggable=true; d.dataset.cid=r.id;
