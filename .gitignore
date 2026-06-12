@@ -1,0 +1,21 @@
+# Editor backups & user data
+*.hss
+*.guibak_*
+*.itemed_bak_*
+hs_loadouts.json
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+dist/
+build/
+*.spec
+*.egg-info/
+
+# OS
+Thumbs.db
+.DS_Store
+
+# Local dev
+*.log
