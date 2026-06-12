@@ -765,10 +765,12 @@ def op_sockets(body: dict) -> dict:
         d0[f"s{n}"] = base64.b64encode(
             json.dumps(sj, separators=(",", ":")).encode()).decode()
         filled += 1
-    # zz.sockets SADECE zaten varsa guncellenir (runeword item); normal gemli
-    # itemlerde zz YOKTUR, eklemek hatali olurdu.
-    if isinstance(d0.get("zz"), dict):
-        d0["zz"]["sockets"] = float(len(sockets))
+    # zz.sockets oyunun soket SAYISINI okudugu yer -> her zaman yaz, yoksa
+    # editorden eklenen soketleri oyun GORMEZ (regresyon: bunu kaldirmistim).
+    if "zz" in d0 or len(sockets) > 0:
+        zz = d0.setdefault("zz", {})
+        if isinstance(zz, dict):
+            zz["sockets"] = float(len(sockets))
     baks = ctx.save_all()
     return {"ok": f"{it['name']}: sockets updated ({filled}/{len(sockets)} filled)",
             "backup": ", ".join(baks)}
