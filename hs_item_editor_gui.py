@@ -21,8 +21,8 @@ from urllib.parse import urlparse, parse_qs
 
 ROOT = Path.home() / "AppData" / "Local" / "Hero_Siege"
 SAVES = ROOT / "hs2saves"
-# PyInstaller exe olarak calisirken veri dosyalari exe'nin yanindadir
-BASE = Path(sys.executable).parent if getattr(sys, "frozen", False) else Path(__file__).parent
+# PyInstaller: bundled data _MEIPASS'ta; kaynak: script klasorunde
+BASE = Path(sys._MEIPASS) if getattr(sys, "frozen", False) else Path(__file__).parent
 CATALOG_FILE = BASE / "hs_full_catalog.json"
 PORT = 8765
 
