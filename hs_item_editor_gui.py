@@ -723,12 +723,20 @@ def op_restore_backup(body: dict) -> dict:
 
 
 def op_sockets(body: dict) -> dict:
-    """Soket duzenleme: s1..s6 iceriklerini yeniden yaz, sayisini zz ile ayarla."""
+    """Soket duzenleme: s1..s6 iceriklerini yeniden yaz.
+
+    Her soket girdisi su formlardan biri:
+      - None / ""              -> bos soket (atla)
+      - {"keep": {a,b,n}}      -> DEGISMEYEN soket; iceригi (tohum/varyant) AYNEN korunur
+      - {"b": <int>}           -> kullanici degistirdi/ekledi -> yeni tohum, n=0
+      - <int> (eski format)    -> yeni gem/run; yeni tohum, n=0
+    Boylece dokunulmayan gem/jewel'lerin a (tohum) ve n (varyant) degeri bozulmaz.
+    """
     if game_running():
         return {"err": "Game is running! Close it first."}
     tgt = body["target"]
     key = body["key"]
-    sockets = body.get("sockets") or []   # [runeB|null, ...] sirali
+    sockets = body.get("sockets") or []
     if len(sockets) > 6:
         return {"err": "max 6 sockets"}
     ctx = FileCtx()
@@ -742,17 +750,25 @@ def op_sockets(body: dict) -> dict:
         d0.pop(f"s{n}", None)
     d0.pop("unset", None)  # duzenleme forged durumunu sifirlar
     filled = 0
-    for n, rb in enumerate(sockets, 1):
-        if rb is None or rb == "":
+    for n, e in enumerate(sockets, 1):
+        if e is None or e == "":
             continue
-        rj = json.dumps({"a": random.randint(1, 999_999_999), "b": int(rb), "n": 0},
-                        separators=(",", ":"))
-        d0[f"s{n}"] = base64.b64encode(rj.encode()).decode()
+        if isinstance(e, dict) and isinstance(e.get("keep"), dict):
+            o = e["keep"]                       # dokunulmadi -> aynen koru
+            sj = {"a": o.get("a", 0), "b": int(o.get("b", 0)), "n": o.get("n", 0)}
+        elif isinstance(e, dict) and "b" in e:
+            sj = {"a": random.randint(1, 999_999_999), "b": int(e["b"]), "n": 0}
+        elif isinstance(e, (int, float)):
+            sj = {"a": random.randint(1, 999_999_999), "b": int(e), "n": 0}
+        else:
+            continue
+        d0[f"s{n}"] = base64.b64encode(
+            json.dumps(sj, separators=(",", ":")).encode()).decode()
         filled += 1
-    if "zz" in d0 or len(sockets) > 0:
-        zz = d0.setdefault("zz", {})
-        if isinstance(zz, dict):
-            zz["sockets"] = float(len(sockets))
+    # zz.sockets SADECE zaten varsa guncellenir (runeword item); normal gemli
+    # itemlerde zz YOKTUR, eklemek hatali olurdu.
+    if isinstance(d0.get("zz"), dict):
+        d0["zz"]["sockets"] = float(len(sockets))
     baks = ctx.save_all()
     return {"ok": f"{it['name']}: sockets updated ({filled}/{len(sockets)} filled)",
             "backup": ", ".join(baks)}
@@ -1157,25 +1173,27 @@ function clearGhost(){
 // ---- soket editoru ----
 function openSocketEditor(target,key,el){
   const old=document.getElementById('sockmodal'); if(old)old.remove();
-  // mevcut soketleri raw'dan al
+  // mevcut soketleri raw'dan al -- her soket: {orig:{a,b,n}|null, b:<secili>|null}
+  // orig = save'deki tam icerik; dokunulmadiginda AYNEN geri yazilir (tohum/varyant korunur)
   let raw={};
   try{raw=JSON.parse(el.dataset.raw||'{}')}catch(e){}
   const cur=[];
   for(let n=1;n<=6;n++){
     const s=raw['s'+n];
     if(s===undefined)continue;
-    try{cur.push(JSON.parse(atob(s)).b)}catch(e){cur.push(null)}
+    let o=null; try{o=JSON.parse(atob(s))}catch(e){}
+    cur.push({orig:o, b:(o&&o.b!==undefined)?o.b:null});
   }
   const RUNES=CAT.filter(r=>r.kind==='normal'&&r.cls===15);
   const byName={}; RUNES.forEach(r=>byName[r.name.toLowerCase()]=r.b);
   const modal=document.createElement('div'); modal.id='sockmodal';
-  const rows=[...cur]; if(rows.length===0)rows.push(null);
+  const rows=cur.length?[...cur]:[{orig:null,b:null}];
   function render(){
     let h=`<div id="sockbox"><h3>Edit Sockets</h3>
-    <div class="muted" style="margin-bottom:8px">Pick a rune for each socket (type to search). Empty = empty socket.<br>Editing resets a codex's forged state.</div>
+    <div class="muted" style="margin-bottom:8px">Pick a rune/gem for each socket (type to search). Empty = empty socket.<br>Sockets you don't change keep their exact gem (seed &amp; variant preserved). Editing resets a codex's forged state.</div>
     <datalist id="runedl">${RUNES.map(r=>`<option value="${esc(r.name)}">`).join('')}</datalist>`;
-    rows.forEach((rb,i)=>{
-      const r=RUNES.find(x=>x.b===rb);
+    rows.forEach((row,i)=>{
+      const r=RUNES.find(x=>x.b===row.b);
       h+=`<div class="sockrow"><b style="width:18px">${i+1}</b>
         ${r&&r.spr?`<img src="/icons/${r.spr}.png?v=2">`:'<span style="width:24px"></span>'}
         <input list="runedl" data-i="${i}" value="${r?esc(r.name):''}" placeholder="empty socket">
@@ -1187,15 +1205,25 @@ function openSocketEditor(target,key,el){
       <button class="act" style="margin:0" id="sockcancel">Cancel</button></div></div>`;
     modal.innerHTML=h;
     modal.querySelectorAll('input[data-i]').forEach(inp=>{
-      inp.onchange=()=>{const b=byName[inp.value.toLowerCase()];rows[+inp.dataset.i]=(b===undefined?null:b);render()};
+      inp.onchange=()=>{
+        const i=+inp.dataset.i;
+        const b=byName[inp.value.toLowerCase()];
+        const nb=(b===undefined?null:b);
+        // ayni gem yeniden secildiyse orijinali (tohum/varyant) koru; aksi halde yeni
+        if(rows[i].orig&&rows[i].orig.b===nb)rows[i]={orig:rows[i].orig,b:nb};
+        else rows[i]={orig:null,b:nb};
+        render();
+      };
     });
     modal.querySelectorAll('button[data-rm]').forEach(btn=>{
       btn.onclick=()=>{rows.splice(+btn.dataset.rm,1);render()};
     });
-    modal.querySelector('#sockadd').onclick=()=>{if(rows.length<6){rows.push(null);render()}};
+    modal.querySelector('#sockadd').onclick=()=>{if(rows.length<6){rows.push({orig:null,b:null});render()}};
     modal.querySelector('#sockcancel').onclick=()=>modal.remove();
     modal.querySelector('#socksave').onclick=async()=>{
-      const r=await j('/api/sockets',{method:'POST',body:JSON.stringify({target,key,sockets:rows})});
+      // dokunulmayan soket -> {keep:orig}; degisen/yeni -> {b}; bos -> null
+      const payload=rows.map(row=>row.b==null?null:(row.orig&&row.orig.b===row.b?{keep:row.orig}:{b:row.b}));
+      const r=await j('/api/sockets',{method:'POST',body:JSON.stringify({target,key,sockets:payload})});
       modal.remove(); flash(r); refresh();
     };
   }
