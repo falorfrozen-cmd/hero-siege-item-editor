@@ -25,9 +25,21 @@ Single file, no install, no Python needed. Just run it.
 1. **Close Hero Siege** (the editor locks writes while the game is running)
 2. Run `HeroSiegeItemEditor.exe` — a browser tab opens automatically showing the UI
 3. Pick a character or stash tab on the left
-4. Browse items, drag to equip, right-click for options, click **Save** when done
 
-Backups are saved next to your save files as `*.guibak_*`.
+Your characters and stash are detected automatically (standard Windows save folder) — no setup.
+
+### Controls
+
+- **Right-click any item** → menu with **Edit sockets**, **Reroll stats**, **Duplicate**, **Edit stack**, **Delete**
+- **Drag** an item to move it within/between tabs, or drop it onto an equipment slot to equip
+- **Drag from the Item Catalog** (right panel) onto a tab or slot to add a new item
+- **Hover** an item to see its full stats and rarity
+- **Runeword Builder** (left) → forge any of the 100 runewords into a stash tab
+- **Sets** (left) → see owned/missing pieces, add all missing in one click
+- **Loadouts** bar (character view) → save / apply / export / import full gear sets
+- **Backups** (left) → restore any automatic backup
+
+Every change auto-backs up first (saved next to your save files as `*.guibak_*`).
 
 ## Run from source (optional, for developers)
 

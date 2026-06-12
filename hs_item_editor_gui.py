@@ -966,6 +966,8 @@ button.act:hover{background:#6f421a}
 .sockrow input{flex:1}
 .sockrow button{background:#3a1c22;color:#c9a;border:1px solid var(--line);border-radius:4px;cursor:pointer;padding:4px 9px}
 .rwcard{background:var(--card);border:1px solid var(--line);border-radius:6px;padding:8px 14px;margin:6px 0;max-width:920px;display:grid;grid-template-columns:240px 1fr 92px;align-items:center;gap:16px}
+.tipbar{background:#241a2e;border:1px solid #4a3a6a;border-radius:6px;padding:7px 12px;margin:0 0 12px;font-size:12px;color:#bfb3d6;max-width:920px}
+.tipbar b{color:#d8c9ff}
 .rwhead{display:flex;flex-direction:column;gap:2px;min-width:0}
 .rwcard .rwname{font-weight:bold;cursor:default;line-height:1.15}
 .rwtarget{font-size:11px;color:var(--mut);line-height:1.25;white-space:normal}
@@ -1017,6 +1019,7 @@ const CLS={0:"Helmet",1:"Body Armor",2:"Boots",3:"Weapon",4:"Gloves",5:"Amulet",
 const SLOTS={0:"Helmet",1:"Body Armor",2:"Boots",3:"Weapon I",4:"Gloves",5:"Amulet",6:"Offhand I",7:"Ring I",8:"Belt",9:"Ring II",10:"Relic 1",11:"Relic 2",12:"Relic 3",13:"Relic 4",16:"Weapon II",17:"Offhand II"};
 const DIMS={inventory_tab:[15,6],inventory_charms:[3,11],inventory_key_tab:[15,6],inventory_material_tab:[15,6],inventory_socket_tab:[15,6],stash_tab:[17,18],material_tab:[17,18],socket_tab:[17,18],potions:[5,2],personal_stash:[17,18]};
 const CELL=26;
+const TIPBAR=`<div class="tipbar">&#128161; <b>Right-click any item</b> for: Edit sockets, Reroll stats, Duplicate, Edit stack, Delete &nbsp;&middot;&nbsp; <b>Drag</b> items to move them or drop onto an equipment slot &nbsp;&middot;&nbsp; drag from the <b>Item Catalog</b> (right) to add a new item</div>`;
 async function j(u,opt){const r=await fetch(u,opt);return r.json()}
 async function boot(){
   CAT=await j('/api/catalog'); SETS_DB=await j('/api/sets'); RW_DB=await j('/api/runewords');
@@ -1242,7 +1245,7 @@ async function openStash(){
   document.querySelectorAll('.charbtn').forEach(b=>b.classList.remove('sel'));
   const md=document.getElementById('mid');
   const order=Object.keys(stashData).sort();
-  let h='<h2>Stash (shared)</h2>';
+  let h='<h2>Stash (shared)</h2>'+TIPBAR;
   for(const tab of order){
     const items=stashData[tab];
     h+=`<h2>${tab} <span class="muted">(${items.length})</span></h2>`;
@@ -1290,6 +1293,7 @@ function renderChar(){
     <button class="act" style="margin:0;padding:5px 12px;border-color:#7a3030" id="lodelete">Delete</button>
     <input type="file" id="lofile" accept=".json" style="display:none">
   </div>`;
+  h+=TIPBAR;
   h+=`<div id="doll">`;
   // relic sutunu
   h+=`<div class="relcol">${[10,11,12,13].map(g=>dslot(g,1,1.6,SLOTS[g])).join('')}</div>`;
