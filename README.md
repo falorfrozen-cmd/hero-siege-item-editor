@@ -21,7 +21,7 @@ A standalone save editor for **Hero Siege** (Pixel Prone Games). Manage your uni
 ## Requirements
 
 **Option A — Run the exe (recommended, no Python needed)**  
-Download `HeroSiegeItemEditor.zip` from [Releases](../../releases) and extract anywhere. Run `HeroSiegeItemEditor.exe`.
+Download `HeroSiegeItemEditor.exe` from [Releases](../../releases) and run it directly — no extraction, no extra files.
 
 **Option B — Run from source**  
 - Python 3.8+
