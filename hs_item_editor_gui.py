@@ -933,7 +933,7 @@ button.act:hover{background:#6f421a}
 .sockrow button{background:#3a1c22;color:#c9a;border:1px solid var(--line);border-radius:4px;cursor:pointer;padding:4px 9px}
 .rwcard{background:var(--card);border:1px solid var(--line);border-radius:6px;padding:8px 14px;margin:6px 0;max-width:860px;display:grid;grid-template-columns:210px 150px 1fr 90px;align-items:center;gap:14px}
 .rwcard .rwname{font-weight:bold;cursor:default;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-.rwtarget{font-size:11px;color:var(--mut)}
+.rwtarget{font-size:11px;color:var(--mut);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .rwrunes{display:flex;gap:5px;flex-wrap:wrap}
 .rwrune{display:inline-flex;align-items:center;gap:3px;background:#1a0e10;border:1px solid #4a3a26;border-radius:4px;padding:2px 6px;font-size:11px;color:#d8c9a0}
 .rwrune img{width:18px;height:18px;image-rendering:pixelated}
