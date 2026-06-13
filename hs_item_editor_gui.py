@@ -809,6 +809,103 @@ def op_delete(body: dict) -> dict:
     return {"err": "item not found"}
 
 
+# ---------- Jewel generator ----------
+# Uncut Jewel'lerin affix'i save'de `n` alaninda 62-slotluk bir stat dizisi olarak
+# saklanir (seed'den degil). Boylece istenen affix'li jewel uretilebilir.
+JEWEL_N_LEN = 62
+# Kullanicinin save'inden alinmis GERCEK, gecerli ornek diziler (yedek sablon):
+BUILTIN_JEWEL_TEMPLATES = [
+    {"b": 109, "label": "High-grade (rich)", "n": [106, 75, 0, 2, 22, 4, 45, 0, 0, 20, 3, 9, 40,
+        0, 0, 0, 0, 1, 1, 0, 0, 0, 0, 0, 0, 0, 0, 80, 0, 0, 0, 25, 0, 0, 0, 10, 20, 20, 0, 8, 25,
+        0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]},
+    {"b": 97, "label": "Mid-grade", "n": [96, 22, 0, 0, 12, 0, 10, 0, 0, 3, 1, 5, 5, 0, 0, 0, 0,
+        0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 8, 0, 0, 0, 0, 0, 0, 0, 0, 8, 0, 0, 0, 0, 0, 0,
+        0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]},
+]
+
+
+def jewel_templates() -> list:
+    """Save'deki gercek array-n jewel'leri sablon olarak topla (yoksa builtin)."""
+    seen = {}
+    def consider(data):
+        try:
+            cls_ok = isinstance(data.get("n"), list) and len(data["n"]) >= 8
+        except Exception:
+            cls_ok = False
+        if not cls_ok:
+            return
+        b = int(data.get("b", -1))
+        n = [float(x) for x in data["n"]]
+        sig = (b, tuple(n))
+        if sig not in seen:
+            seen[sig] = {"b": b, "n": n, "n0": n[0] if n else 0,
+                         "label": f"b={b} n0={int(n[0]) if n else 0}"}
+    try:
+        d = json.loads(decode_hss(SAVES / "stash.hss"))
+        for tab, items in d.items():
+            if isinstance(items, dict):
+                for k, v in items.items():
+                    if isinstance(v, dict) and isinstance(v.get("data"), dict):
+                        consider(v["data"])
+    except Exception:
+        pass
+    for slot in [c["slot"] for c in list_characters()]:
+        bp = SAVES / f"inventory_order_{slot}.hss"
+        if bp.exists() and bp.stat().st_size > 50:
+            try:
+                bd = json.loads(decode_hss(bp))
+                for tab, items in bd.items():
+                    if isinstance(items, dict):
+                        for k, v in items.items():
+                            if isinstance(v, dict) and isinstance(v.get("data"), dict):
+                                consider(v["data"])
+            except Exception:
+                pass
+    out = list(seen.values())
+    if not out:
+        out = [dict(t, n=[float(x) for x in t["n"]], n0=t["n"][0]) for t in BUILTIN_JEWEL_TEMPLATES]
+    out.sort(key=lambda t: (t["b"], t["n0"]))
+    return out
+
+
+def _make_one_jewel(items: dict, tab: str, b: int, n: list):
+    pos = find_free_pos(items, tab, 1, 1)
+    if pos is None:
+        return None
+    key = fresh_key(15, items)
+    data = {"a": float(random.randint(1, 999_999_999)), "b": float(int(b)),
+            "j": 0.0, "c": 0.0, "n": [float(x) for x in n]}
+    items[key] = {"pos": pos, "data": data}
+    return key
+
+
+def op_make_jewel(body: dict) -> dict:
+    """Jewel uret. body: {target, jewels:[{b,n}, ...]}  (her biri 1 adet)
+    veya {target, b, n, count}."""
+    if game_running():
+        return {"err": "Game is running! Close it first."}
+    tgt = body["target"]
+    ctx = FileCtx()
+    items = ctx.items(tgt)
+    tab = tgt.get("tab") or tgt["type"]
+    jobs = body.get("jewels")
+    if not jobs:
+        count = max(1, min(200, int(body.get("count", 1))))
+        jobs = [{"b": body.get("b", 97), "n": body.get("n")} for _ in range(count)]
+    made = 0
+    for job in jobs:
+        n = job.get("n")
+        if not isinstance(n, list) or len(n) < 8:
+            return {"err": "invalid jewel stat array (n)"}
+        if _make_one_jewel(items, tab, int(job.get("b", 97)), n) is None:
+            break
+        made += 1
+    if made == 0:
+        return {"err": "no free space in target tab"}
+    baks = ctx.save_all()
+    return {"ok": f"generated {made} jewel(s) -> {tab}", "backup": ", ".join(baks)}
+
+
 # ---------- HTTP ----------
 
 class H(BaseHTTPRequestHandler):
@@ -844,6 +941,8 @@ class H(BaseHTTPRequestHandler):
             self._json(SETS)
         elif u.path == "/api/runewords":
             self._json(RUNEWORDS)
+        elif u.path == "/api/jeweltemplates":
+            self._json(jewel_templates())
         elif u.path == "/api/loadouts":
             self._json(load_loadouts())
         elif u.path == "/api/backups":
@@ -884,6 +983,8 @@ class H(BaseHTTPRequestHandler):
                 self._json(op_restore_backup(body))
             elif u.path == "/api/sockets":
                 self._json(op_sockets(body))
+            elif u.path == "/api/makejewel":
+                self._json(op_make_jewel(body))
             elif u.path == "/api/modify":
                 self._json(op_modify(body))
             elif u.path == "/api/delete":
@@ -986,6 +1087,9 @@ button.act:hover{background:#6f421a}
 .rwcard{background:var(--card);border:1px solid var(--line);border-radius:6px;padding:8px 14px;margin:6px 0;max-width:920px;display:grid;grid-template-columns:240px 1fr 92px;align-items:center;gap:16px}
 .tipbar{background:#241a2e;border:1px solid #4a3a6a;border-radius:6px;padding:7px 12px;margin:0 0 12px;font-size:12px;color:#bfb3d6;max-width:920px}
 .tipbar b{color:#d8c9ff}
+.jlrow{display:flex;align-items:center;gap:10px;margin:7px 0;max-width:760px}
+.jlrow label{min-width:90px;color:#bfb3d6;font-size:13px}
+.jlrow select,.jlrow input{background:#120a0c;color:var(--tx);border:1px solid var(--line);border-radius:4px;padding:5px 8px}
 .rwhead{display:flex;flex-direction:column;gap:2px;min-width:0}
 .rwcard .rwname{font-weight:bold;cursor:default;line-height:1.15}
 .rwtarget{font-size:11px;color:var(--mut);line-height:1.25;white-space:normal}
@@ -1008,6 +1112,7 @@ button.act:hover{background:#6f421a}
   <button class="tabbtn" data-view="stash">&#128451; Stash (shared)</button>
   <button class="tabbtn" data-view="sets">&#9876; Sets</button>
   <button class="tabbtn" data-view="runewords">&#10038; Runeword Builder</button>
+  <button class="tabbtn" data-view="jewels">&#128142; Jewel Lab</button>
   <button class="tabbtn" data-view="backups">&#128190; Backups</button>
   <h2>Characters</h2>
   <div id="chars"></div>
@@ -1063,6 +1168,7 @@ async function boot(){
   document.querySelector('[data-view=stash]').onclick=openStash;
   document.querySelector('[data-view=sets]').onclick=openSets;
   document.querySelector('[data-view=runewords]').onclick=openRunewords;
+  document.querySelector('[data-view=jewels]').onclick=openJewels;
   document.querySelector('[data-view=backups]').onclick=openBackups;
   setupDnD(); setupTip();
 }
@@ -1473,6 +1579,59 @@ function openRunewords(){
   };
   document.getElementById('rwq').addEventListener('input',render);
   render();
+}
+let JEWEL_TPLS=[];
+async function openJewels(){
+  view='jewels'; curChar=null;
+  document.querySelectorAll('.charbtn').forEach(b=>b.classList.remove('sel'));
+  JEWEL_TPLS=await j('/api/jeweltemplates');
+  const md=document.getElementById('mid');
+  const tgts=[{label:'Stash — Socket tab', t:{type:'stash',tab:'socket_tab'}}];
+  chars.forEach(c=>tgts.push({label:`${c.name} (slot ${c.slot}) — Socket bag`, t:{type:'bag',slot:c.slot,tab:'inventory_socket_tab'}}));
+  let h=`<h2>Jewel Lab <span class="muted">(${JEWEL_TPLS.length} templates)</span></h2>
+  <div class="tipbar">&#128142; An Uncut Jewel's affixes are stored in the save as a 62-slot stat array (<b>n</b>) — not from the seed. This lab writes that array directly, so you can mass-produce jewels with a known affix set. <b>n[0]</b> is the jewel's special affix (most likely the granted skill id). Use <b>Decode Batch</b> once to map n[0]&rarr;skill in your game, then generate the exact jewel you want.</div>`;
+  if(JEWEL_TPLS.length===0){h+=`<div class="muted">No jewel templates available.</div>`; md.innerHTML=h; return;}
+  h+=`<div class="jlrow"><label>Target</label><select id="jtgt">${tgts.map((o,i)=>`<option value="${i}">${esc(o.label)}</option>`).join('')}</select></div>
+  <div class="jlrow"><label>Template</label><select id="jtpl">${JEWEL_TPLS.map((t,i)=>`<option value="${i}">${esc(t.label)} — ${t.n.filter(x=>x).length} stats</option>`).join('')}</select></div>
+  <div class="jlrow"><label>n[0] (skill)</label><input id="jn0" type="number" style="width:120px"> <span class="muted">leave as template, or set the skill id</span></div>
+  <div class="jlrow"><label>Count</label><input id="jcount" type="number" value="1" min="1" max="200" style="width:80px"></div>
+  <div class="jlrow"><button class="act" id="jgen" style="margin:0">Generate</button></div>
+  <hr style="border-color:var(--line);margin:16px 0;max-width:760px">
+  <h2>Decode Batch <span class="muted">(map n[0] &rarr; skill)</span></h2>
+  <div class="muted" style="margin-bottom:6px;max-width:760px">Creates one jewel per value below (same template, only n[0] differs). Load the game and note which skill each grants — that gives the n[0]&rarr;skill map.</div>
+  <div class="jlrow"><label>n[0] list</label><input id="jbatch" value="1,2,3,5,9,20,50,100,150,200" style="width:380px"></div>
+  <div class="jlrow"><button class="act" id="jgenbatch" style="margin:0">Generate Decode Batch</button></div>
+  <hr style="border-color:var(--line);margin:16px 0;max-width:760px">
+  <h2>Advanced: raw n array</h2>
+  <div class="muted" style="max-width:760px">Comma-separated numbers. When "Use raw" is checked, this exact array is written (overrides template + n[0]).</div>
+  <div class="jlrow"><label><input type="checkbox" id="juseraw" style="min-width:0"> Use raw</label></div>
+  <textarea id="jraw" rows="3" style="width:100%;max-width:760px;background:#120a0c;color:var(--tx);border:1px solid var(--line);border-radius:4px"></textarea>
+  <div id="jmsg" class="muted" style="margin-top:12px;max-width:760px"></div>`;
+  md.innerHTML=h;
+  const curTpl=()=>JEWEL_TPLS[+document.getElementById('jtpl').value];
+  const target=()=>tgts[+document.getElementById('jtgt').value].t;
+  function fillN0(){const t=curTpl();
+    document.getElementById('jn0').value=t?Math.round(t.n[0]):0;
+    document.getElementById('jraw').value=t?t.n.map(x=>Math.round(x*1000)/1000).join(','):'';}
+  document.getElementById('jtpl').addEventListener('change',fillN0); fillN0();
+  function msg(r,extra){document.getElementById('jmsg').innerHTML=(r.err?`<span style="color:#ff7060">${esc(r.err)}</span>`:`<span style="color:#54e87a">${esc(r.ok)}</span>`)+(extra||'');}
+  function buildN(n0){
+    if(document.getElementById('juseraw').checked)
+      return document.getElementById('jraw').value.split(',').map(s=>parseFloat(s.trim())||0);
+    const n=curTpl().n.slice(); if(n0!=null&&n0!=='')n[0]=parseFloat(n0); return n;
+  }
+  document.getElementById('jgen').onclick=async()=>{
+    const t=curTpl(); const n=buildN(document.getElementById('jn0').value);
+    const count=Math.max(1,Math.min(200,+document.getElementById('jcount').value||1));
+    msg(await j('/api/makejewel',{method:'POST',body:JSON.stringify({target:target(),b:t.b,n:n,count:count})}));
+  };
+  document.getElementById('jgenbatch').onclick=async()=>{
+    const t=curTpl();
+    const vals=document.getElementById('jbatch').value.split(',').map(s=>parseInt(s.trim())).filter(x=>!isNaN(x));
+    const jewels=vals.map(v=>{const n=t.n.slice();n[0]=v;return {b:t.b,n:n}});
+    msg(await j('/api/makejewel',{method:'POST',body:JSON.stringify({target:target(),jewels:jewels})}),
+        `<br><span class="muted">n[0] order: ${esc(vals.join(', '))}</span>`);
+  };
 }
 async function openChar(slot,btn){
   view='char'; curChar=slot; charData=await j('/api/char/'+slot);
