@@ -182,6 +182,7 @@ def list_characters() -> list:
                           "level": int(float(lvl.group(1))) if lvl else 0})
         except Exception:
             continue
+    chars.sort(key=lambda c: c["slot"])
     return chars
 
 
@@ -194,6 +195,8 @@ def read_char(slot: int) -> dict:
         it = resolve(k, v["data"])
         it["g"] = int(v["data"].get("g", -1))
         it["slotName"] = SLOT_NAMES.get(it["g"], f"Slot {it['g']}")
+        if v["data"].get("o") is not None:
+            it["relicLevel"] = int(float(v["data"]["o"]))
         out["equipped"].append(it)
     for sec in ("potions", "personal_stash"):
         for k, v in inv.get(sec, {}).items():
@@ -809,101 +812,145 @@ def op_delete(body: dict) -> dict:
     return {"err": "item not found"}
 
 
-# ---------- Jewel generator ----------
-# Uncut Jewel'lerin affix'i save'de `n` alaninda 62-slotluk bir stat dizisi olarak
-# saklanir (seed'den degil). Boylece istenen affix'li jewel uretilebilir.
-JEWEL_N_LEN = 62
-# Kullanicinin save'inden alinmis GERCEK, gecerli ornek diziler (yedek sablon):
-BUILTIN_JEWEL_TEMPLATES = [
-    {"b": 109, "label": "High-grade (rich)", "n": [106, 75, 0, 2, 22, 4, 45, 0, 0, 20, 3, 9, 40,
-        0, 0, 0, 0, 1, 1, 0, 0, 0, 0, 0, 0, 0, 0, 80, 0, 0, 0, 25, 0, 0, 0, 10, 20, 20, 0, 8, 25,
-        0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]},
-    {"b": 97, "label": "Mid-grade", "n": [96, 22, 0, 0, 12, 0, 10, 0, 0, 3, 1, 5, 5, 0, 0, 0, 0,
-        0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 8, 0, 0, 0, 0, 0, 0, 0, 0, 8, 0, 0, 0, 0, 0, 0,
-        0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]},
-]
+# ---------- Relic Lab ----------
+# Relic'ler SADECE 4 relic slotuna (g=10..13) takilir; canta/bankaya konamaz.
+# Karakter save'inin equipped_items'inda saklanir:
+#   {"g":<slot 10-13>, "o":<level 1-10>, "a":<seed>, "j":0, "b":<relic base>, "c":0}
+# "o" = level (Globe lvl10 = +5 element skill). 4 slot doluysa secilen slot degisir.
+RELIC_SLOTS = {10: "Relic 1", 11: "Relic 2", 12: "Relic 3", 13: "Relic 4"}
 
 
-def jewel_templates() -> list:
-    """Save'deki gercek array-n jewel'leri sablon olarak topla (yoksa builtin)."""
-    seen = {}
-    def consider(data):
-        try:
-            cls_ok = isinstance(data.get("n"), list) and len(data["n"]) >= 8
-        except Exception:
-            cls_ok = False
-        if not cls_ok:
-            return
-        b = int(data.get("b", -1))
-        n = [float(x) for x in data["n"]]
-        sig = (b, tuple(n))
-        if sig not in seen:
-            seen[sig] = {"b": b, "n": n, "n0": n[0] if n else 0,
-                         "label": f"b={b} n0={int(n[0]) if n else 0}"}
-    try:
-        d = json.loads(decode_hss(SAVES / "stash.hss"))
-        for tab, items in d.items():
-            if isinstance(items, dict):
-                for k, v in items.items():
-                    if isinstance(v, dict) and isinstance(v.get("data"), dict):
-                        consider(v["data"])
-    except Exception:
-        pass
-    for slot in [c["slot"] for c in list_characters()]:
-        bp = SAVES / f"inventory_order_{slot}.hss"
-        if bp.exists() and bp.stat().st_size > 50:
-            try:
-                bd = json.loads(decode_hss(bp))
-                for tab, items in bd.items():
-                    if isinstance(items, dict):
-                        for k, v in items.items():
-                            if isinstance(v, dict) and isinstance(v.get("data"), dict):
-                                consider(v["data"])
-            except Exception:
-                pass
-    out = list(seen.values())
-    if not out:
-        out = [dict(t, n=[float(x) for x in t["n"]], n0=t["n"][0]) for t in BUILTIN_JEWEL_TEMPLATES]
-    out.sort(key=lambda t: (t["b"], t["n0"]))
+def relic_disp(key: str) -> str:
+    """relic_lightningGlobe -> 'Lightning Globe'."""
+    s = re.sub(r"^relic_", "", str(key or ""))
+    s = re.sub(r"([a-z0-9])([A-Z])", r"\1 \2", s)
+    return s[:1].upper() + s[1:] if s else "?"
+
+
+def relic_list() -> list:
+    """Katalogdaki tum relic'ler (cls 16), eleman-skill etiketiyle."""
+    out = []
+    for i, r in enumerate(CAT):
+        if isinstance(r, dict) and r.get("cls") == 16:
+            tag = ""
+            for s in (r.get("stats") or []):
+                s0 = str(s[0]) if isinstance(s, list) and len(s) >= 1 else ""
+                if "Skills" in s0 and "Damage" not in s0:
+                    tag = "+" + s0.replace("to ", "").replace(" Skills", " skills")
+                    break
+            out.append({"cid": i, "b": r.get("b"), "key": r.get("key"),
+                        "name": relic_disp(r.get("key")), "tag": tag})
+    out.sort(key=lambda x: x["name"])
     return out
 
 
-def _make_one_jewel(items: dict, tab: str, b: int, n: list):
+def op_make_relic(body: dict) -> dict:
+    """Relic'i karakterin equipped relic slotuna (g=10..13) yaz; o slottakini degistirir.
+    body: {slot:<char>, cid:<katalog>, level:1-10, g:10-13}"""
+    if game_running():
+        return {"err": "Game is running! Close it first."}
+    try:
+        slot = int(body["slot"]); g = int(body["g"])
+        level = max(1, min(10, int(body.get("level", 10))))
+        r = CAT[int(body["cid"])]
+    except Exception:
+        return {"err": "bad request"}
+    if r.get("cls") != 16:
+        return {"err": "That catalog entry is not a relic."}
+    if g not in RELIC_SLOTS:
+        return {"err": "Relic slot must be Relic 1-4 (g=10-13)."}
+    p = SAVES / f"herosiege{slot}.hss"
+    if not p.exists():
+        return {"err": f"character {slot} not found"}
+    txt = decode_hss(p)
+    m = re.search(r'inventory="([A-Za-z0-9+/=]+)"', txt)
+    inv = json.loads(base64.b64decode(m.group(1))) if m else {}
+    eq = inv.setdefault("equipped_items", {})
+    replaced = None
+    for k in [k for k, v in eq.items() if int(v.get("data", {}).get("g", -1)) == g]:
+        replaced = eq[k]["data"].get("b"); del eq[k]
+    key = fresh_key(16, eq)
+    eq[key] = {"data": {"g": float(g), "o": float(level),
+                        "a": float(random.randint(1, 999_999_999)),
+                        "j": 0.0, "b": float(int(r["b"])), "c": 0.0}}
+    bk = write_char_inventory(slot, inv)
+    name = relic_disp(r.get("key"))
+    extra = f" (replaced {relic_disp(_relic_key_by_b(replaced))})" if replaced is not None else ""
+    return {"ok": f"{name} lvl {level} -> {RELIC_SLOTS[g]} on character {slot}{extra}", "backup": bk}
+
+
+def _relic_key_by_b(b) -> str:
+    if b is None:
+        return ""
+    try:
+        bi = int(float(b))
+    except Exception:
+        return ""
+    for r in CAT:
+        if isinstance(r, dict) and r.get("cls") == 16 and int(r.get("b", -1)) == bi:
+            return r.get("key", "")
+    return f"b={bi}"
+
+
+# ---------- Bulk Stackable Lab ----------
+# Key (12) / Boss Material (13) / Gem-Socketable (14): tek slotta `o` = adet (stack).
+#   Key/Gem:   {"n":0,"w":1,"o":<adet>,"a":0,"e":0,"d":0,"b":<base>,"c":0}
+#   Material:  {"o":<adet>,"a":<seed>,"e":0,"d":0,"b":<base>,"c":0}
+# (Potion 11 = codex/potion-kemeri karisik; Consumable 18 = m:1 tekil -> dahil degil.)
+STACKABLE_CLS = {12: "Key", 13: "Boss Material", 14: "Gem / Socketable"}
+
+
+def stackable_list() -> list:
+    out = []
+    for i, r in enumerate(CAT):
+        if isinstance(r, dict) and r.get("cls") in STACKABLE_CLS:
+            out.append({"cid": i, "cls": r["cls"], "b": r.get("b"),
+                        "name": r.get("name") or r.get("key")})
+    out.sort(key=lambda x: (x["cls"], str(x["name"])))
+    return out
+
+
+def _make_one_stackable(items: dict, tab: str, cls: int, base: int, amount: int):
     pos = find_free_pos(items, tab, 1, 1)
     if pos is None:
         return None
-    key = fresh_key(15, items)
-    data = {"a": float(random.randint(1, 999_999_999)), "b": float(int(b)),
-            "j": 0.0, "c": 0.0, "n": [float(x) for x in n]}
-    items[key] = {"pos": pos, "data": data}
+    key = fresh_key(cls, items)
+    d = {"o": float(amount), "e": 0.0, "d": 0.0, "b": float(int(base)), "c": 0.0}
+    if cls in (12, 14):
+        d.update({"n": 0.0, "w": 1.0, "a": 0.0})
+    else:
+        d["a"] = float(random.randint(1, 999_999_999))
+    items[key] = {"pos": pos, "data": d}
     return key
 
 
-def op_make_jewel(body: dict) -> dict:
-    """Jewel uret. body: {target, jewels:[{b,n}, ...]}  (her biri 1 adet)
-    veya {target, b, n, count}."""
+def op_make_stackable(body: dict) -> dict:
+    """Key/Material/Gem yigini uret. body: {target, cid, amount, count}."""
     if game_running():
         return {"err": "Game is running! Close it first."}
-    tgt = body["target"]
+    try:
+        r = CAT[int(body["cid"])]
+        amount = max(1, min(99999, int(body.get("amount", 999))))
+        count = max(1, min(200, int(body.get("count", 1))))
+        tgt = body["target"]
+    except Exception:
+        return {"err": "bad request"}
+    cls = r.get("cls")
+    if cls not in STACKABLE_CLS:
+        return {"err": "That item is not a stackable (Key / Material / Gem)."}
     ctx = FileCtx()
     items = ctx.items(tgt)
     tab = tgt.get("tab") or tgt["type"]
-    jobs = body.get("jewels")
-    if not jobs:
-        count = max(1, min(200, int(body.get("count", 1))))
-        jobs = [{"b": body.get("b", 97), "n": body.get("n")} for _ in range(count)]
     made = 0
-    for job in jobs:
-        n = job.get("n")
-        if not isinstance(n, list) or len(n) < 8:
-            return {"err": "invalid jewel stat array (n)"}
-        if _make_one_jewel(items, tab, int(job.get("b", 97)), n) is None:
+    for _ in range(count):
+        if _make_one_stackable(items, tab, cls, int(r["b"]), amount) is None:
             break
         made += 1
     if made == 0:
         return {"err": "no free space in target tab"}
     baks = ctx.save_all()
-    return {"ok": f"generated {made} jewel(s) -> {tab}", "backup": ", ".join(baks)}
+    nm = r.get("name") or r.get("key")
+    return {"ok": f"{made}x {nm} (stack {amount}) -> {tab}", "backup": ", ".join(baks)}
 
 
 # ---------- HTTP ----------
@@ -941,8 +988,10 @@ class H(BaseHTTPRequestHandler):
             self._json(SETS)
         elif u.path == "/api/runewords":
             self._json(RUNEWORDS)
-        elif u.path == "/api/jeweltemplates":
-            self._json(jewel_templates())
+        elif u.path == "/api/relics":
+            self._json(relic_list())
+        elif u.path == "/api/stackables":
+            self._json(stackable_list())
         elif u.path == "/api/loadouts":
             self._json(load_loadouts())
         elif u.path == "/api/backups":
@@ -983,8 +1032,10 @@ class H(BaseHTTPRequestHandler):
                 self._json(op_restore_backup(body))
             elif u.path == "/api/sockets":
                 self._json(op_sockets(body))
-            elif u.path == "/api/makejewel":
-                self._json(op_make_jewel(body))
+            elif u.path == "/api/makerelic":
+                self._json(op_make_relic(body))
+            elif u.path == "/api/makestackable":
+                self._json(op_make_stackable(body))
             elif u.path == "/api/modify":
                 self._json(op_modify(body))
             elif u.path == "/api/delete":
@@ -1112,7 +1163,8 @@ button.act:hover{background:#6f421a}
   <button class="tabbtn" data-view="stash">&#128451; Stash (shared)</button>
   <button class="tabbtn" data-view="sets">&#9876; Sets</button>
   <button class="tabbtn" data-view="runewords">&#10038; Runeword Builder</button>
-  <button class="tabbtn" data-view="jewels">&#128142; Jewel Lab</button>
+  <button class="tabbtn" data-view="relics">&#128302; Relic Lab</button>
+  <button class="tabbtn" data-view="stackables">&#128230; Bulk Stackables</button>
   <button class="tabbtn" data-view="backups">&#128190; Backups</button>
   <h2>Characters</h2>
   <div id="chars"></div>
@@ -1168,7 +1220,8 @@ async function boot(){
   document.querySelector('[data-view=stash]').onclick=openStash;
   document.querySelector('[data-view=sets]').onclick=openSets;
   document.querySelector('[data-view=runewords]').onclick=openRunewords;
-  document.querySelector('[data-view=jewels]').onclick=openJewels;
+  document.querySelector('[data-view=relics]').onclick=openRelics;
+  document.querySelector('[data-view=stackables]').onclick=openStackables;
   document.querySelector('[data-view=backups]').onclick=openBackups;
   setupDnD(); setupTip();
 }
@@ -1580,57 +1633,79 @@ function openRunewords(){
   document.getElementById('rwq').addEventListener('input',render);
   render();
 }
-let JEWEL_TPLS=[];
-async function openJewels(){
-  view='jewels'; curChar=null;
+let STACKABLES=[];
+async function openStackables(){
+  view='stackables'; curChar=null;
   document.querySelectorAll('.charbtn').forEach(b=>b.classList.remove('sel'));
-  JEWEL_TPLS=await j('/api/jeweltemplates');
+  if(!STACKABLES.length) STACKABLES=await j('/api/stackables');
   const md=document.getElementById('mid');
-  const tgts=[{label:'Stash — Socket tab', t:{type:'stash',tab:'socket_tab'}}];
-  chars.forEach(c=>tgts.push({label:`${c.name} (slot ${c.slot}) — Socket bag`, t:{type:'bag',slot:c.slot,tab:'inventory_socket_tab'}}));
-  let h=`<h2>Jewel Lab <span class="muted">(${JEWEL_TPLS.length} templates)</span></h2>
-  <div class="tipbar">&#128142; An Uncut Jewel's affixes are stored in the save as a 62-slot stat array (<b>n</b>) — not from the seed. This lab writes that array directly, so you can mass-produce jewels with a known affix set. <b>n[0]</b> is the jewel's special affix (most likely the granted skill id). Use <b>Decode Batch</b> once to map n[0]&rarr;skill in your game, then generate the exact jewel you want.</div>`;
-  if(JEWEL_TPLS.length===0){h+=`<div class="muted">No jewel templates available.</div>`; md.innerHTML=h; return;}
-  h+=`<div class="jlrow"><label>Target</label><select id="jtgt">${tgts.map((o,i)=>`<option value="${i}">${esc(o.label)}</option>`).join('')}</select></div>
-  <div class="jlrow"><label>Template</label><select id="jtpl">${JEWEL_TPLS.map((t,i)=>`<option value="${i}">${esc(t.label)} — ${t.n.filter(x=>x).length} stats</option>`).join('')}</select></div>
-  <div class="jlrow"><label>n[0] (skill)</label><input id="jn0" type="number" style="width:120px"> <span class="muted">leave as template, or set the skill id</span></div>
-  <div class="jlrow"><label>Count</label><input id="jcount" type="number" value="1" min="1" max="200" style="width:80px"></div>
-  <div class="jlrow"><button class="act" id="jgen" style="margin:0">Generate</button></div>
-  <hr style="border-color:var(--line);margin:16px 0;max-width:760px">
-  <h2>Decode Batch <span class="muted">(map n[0] &rarr; skill)</span></h2>
-  <div class="muted" style="margin-bottom:6px;max-width:760px">Creates one jewel per value below (same template, only n[0] differs). Load the game and note which skill each grants — that gives the n[0]&rarr;skill map.</div>
-  <div class="jlrow"><label>n[0] list</label><input id="jbatch" value="1,2,3,5,9,20,50,100,150,200" style="width:380px"></div>
-  <div class="jlrow"><button class="act" id="jgenbatch" style="margin:0">Generate Decode Batch</button></div>
-  <hr style="border-color:var(--line);margin:16px 0;max-width:760px">
-  <h2>Advanced: raw n array</h2>
-  <div class="muted" style="max-width:760px">Comma-separated numbers. When "Use raw" is checked, this exact array is written (overrides template + n[0]).</div>
-  <div class="jlrow"><label><input type="checkbox" id="juseraw" style="min-width:0"> Use raw</label></div>
-  <textarea id="jraw" rows="3" style="width:100%;max-width:760px;background:#120a0c;color:var(--tx);border:1px solid var(--line);border-radius:4px"></textarea>
-  <div id="jmsg" class="muted" style="margin-top:12px;max-width:760px"></div>`;
+  const CATS=[{cls:13,label:'Boss Material'},{cls:14,label:'Gem / Socketable'},{cls:12,label:'Key'}];
+  let h=`<h2>Bulk Stackables <span class="muted">(${STACKABLES.length} items)</span></h2>
+  <div class="tipbar">&#128230; Mass-create <b>Keys</b>, <b>Boss Materials</b> and <b>Gems</b>. One slot holds the whole stack (e.g. 999). They go to their dedicated tab. (Potions/consumables don't stack this way, so they're not here.)</div>
+  <div class="jlrow"><label>Category</label><select id="scat">${CATS.map(c=>`<option value="${c.cls}">${c.label}</option>`).join('')}</select></div>
+  <div class="jlrow"><label>Item</label><select id="sitem" style="min-width:300px"></select></div>
+  <div class="jlrow"><label>Target</label><select id="stgt"></select></div>
+  <div class="jlrow"><label>Amount</label><input id="samt" type="number" value="999" min="1" max="99999" style="width:120px"> <span class="muted">how many in the stack (e.g. 999)</span></div>
+  <div class="jlrow"><button class="act" id="sgen" style="margin:0">Generate</button></div>
+  <div id="smsg" class="muted" style="margin-top:12px;max-width:760px"></div>`;
   md.innerHTML=h;
-  const curTpl=()=>JEWEL_TPLS[+document.getElementById('jtpl').value];
-  const target=()=>tgts[+document.getElementById('jtgt').value].t;
-  function fillN0(){const t=curTpl();
-    document.getElementById('jn0').value=t?Math.round(t.n[0]):0;
-    document.getElementById('jraw').value=t?t.n.map(x=>Math.round(x*1000)/1000).join(','):'';}
-  document.getElementById('jtpl').addEventListener('change',fillN0); fillN0();
-  function msg(r,extra){document.getElementById('jmsg').innerHTML=(r.err?`<span style="color:#ff7060">${esc(r.err)}</span>`:`<span style="color:#54e87a">${esc(r.ok)}</span>`)+(extra||'');}
-  function buildN(n0){
-    if(document.getElementById('juseraw').checked)
-      return document.getElementById('jraw').value.split(',').map(s=>parseFloat(s.trim())||0);
-    const n=curTpl().n.slice(); if(n0!=null&&n0!=='')n[0]=parseFloat(n0); return n;
+  let stgts=[];
+  function fillItems(){
+    const cls=+document.getElementById('scat').value;
+    const items=STACKABLES.filter(x=>x.cls===cls);
+    document.getElementById('sitem').innerHTML=items.map(x=>`<option value="${x.cid}">${esc(x.name)}</option>`).join('');
+    const tab = cls===12?'inventory_key_tab':(cls===13?'inventory_material_tab':'inventory_socket_tab');
+    stgts=[];
+    if(cls===13) stgts.push({label:'Stash — Material tab', t:{type:'stash',tab:'material_tab'}});
+    if(cls===14) stgts.push({label:'Stash — Socket tab', t:{type:'stash',tab:'socket_tab'}});
+    chars.forEach(c=>stgts.push({label:`${c.name} (slot ${c.slot}) — ${cls===12?'Key':(cls===13?'Material':'Socket')} bag`, t:{type:'bag',slot:c.slot,tab:tab}}));
+    document.getElementById('stgt').innerHTML=stgts.map((o,i)=>`<option value="${i}">${esc(o.label)}</option>`).join('');
   }
-  document.getElementById('jgen').onclick=async()=>{
-    const t=curTpl(); const n=buildN(document.getElementById('jn0').value);
-    const count=Math.max(1,Math.min(200,+document.getElementById('jcount').value||1));
-    msg(await j('/api/makejewel',{method:'POST',body:JSON.stringify({target:target(),b:t.b,n:n,count:count})}));
+  document.getElementById('scat').addEventListener('change',fillItems); fillItems();
+  function msg(r){document.getElementById('smsg').innerHTML=r.err?`<span style="color:#ff7060">${esc(r.err)}</span>`:`<span style="color:#54e87a">${esc(r.ok)}</span>`;}
+  document.getElementById('sgen').onclick=async()=>{
+    const tgt=stgts[+document.getElementById('stgt').value].t;
+    const body={target:tgt, cid:+document.getElementById('sitem').value,
+      amount:Math.max(1,Math.min(99999,+document.getElementById('samt').value||999)), count:1};
+    msg(await j('/api/makestackable',{method:'POST',body:JSON.stringify(body)}));
   };
-  document.getElementById('jgenbatch').onclick=async()=>{
-    const t=curTpl();
-    const vals=document.getElementById('jbatch').value.split(',').map(s=>parseInt(s.trim())).filter(x=>!isNaN(x));
-    const jewels=vals.map(v=>{const n=t.n.slice();n[0]=v;return {b:t.b,n:n}});
-    msg(await j('/api/makejewel',{method:'POST',body:JSON.stringify({target:target(),jewels:jewels})}),
-        `<br><span class="muted">n[0] order: ${esc(vals.join(', '))}</span>`);
+}
+let RELICS=[];
+async function openRelics(){
+  view='relics'; curChar=null;
+  document.querySelectorAll('.charbtn').forEach(b=>b.classList.remove('sel'));
+  if(!RELICS.length) RELICS=await j('/api/relics');
+  const md=document.getElementById('mid');
+  if(!chars.length){md.innerHTML='<h2>Relic Lab</h2><div class="muted">No characters found.</div>';return;}
+  const charOpts=chars.map(c=>`<option value="${c.slot}">${esc(c.name)} (slot ${c.slot})</option>`).join('');
+  const relOpts=RELICS.map(r=>`<option value="${r.cid}">${esc(r.name)}${r.tag?'  —  '+esc(r.tag):''}</option>`).join('');
+  let h=`<h2>Relic Lab <span class="muted">(${RELICS.length} relics)</span></h2>
+  <div class="tipbar">&#128302; Relics can ONLY live in the 4 Relic slots (never in bag/stash). This writes the relic straight into a Relic slot, <b>replacing</b> whatever is there. <b>Level</b> 1-10 = power (e.g. element Globe at lvl 10 = <b>+5 to that element's skills</b> &amp; +20% skill damage).</div>
+  <div class="jlrow"><label>Character</label><select id="rchar">${charOpts}</select></div>
+  <div id="rcur" class="muted" style="margin:2px 0 12px;max-width:820px">…</div>
+  <div class="jlrow"><label>Relic</label><select id="rsel" style="min-width:340px">${relOpts}</select></div>
+  <div class="jlrow"><label>Level</label><input id="rlvl" type="number" value="10" min="1" max="10" style="width:80px"> <span class="muted">1-10</span></div>
+  <div class="jlrow"><label>Slot</label><select id="rslot"><option value="10">Relic 1</option><option value="11">Relic 2</option><option value="12">Relic 3</option><option value="13">Relic 4</option></select></div>
+  <div class="jlrow"><button class="act" id="rgen" style="margin:0">Place Relic</button></div>
+  <div id="rmsg" class="muted" style="margin-top:12px;max-width:820px"></div>`;
+  md.innerHTML=h;
+  async function showCur(){
+    const slot=+document.getElementById('rchar').value;
+    const cd=await j('/api/char/'+slot);
+    const rel=(cd.equipped||[]).filter(e=>e.g>=10&&e.g<=13).sort((a,b)=>a.g-b.g);
+    const map={}; rel.forEach(e=>map[e.g]=e);
+    let parts=[];
+    for(let g=10;g<=13;g++){const e=map[g];
+      parts.push(`<b>Relic ${g-9}</b>: ${e?esc(e.name)+(e.relicLevel!=null?` (lvl ${e.relicLevel})`:''):'<span class="muted">empty</span>'}`);}
+    document.getElementById('rcur').innerHTML='Current relic slots — '+parts.join(' &nbsp;·&nbsp; ');
+  }
+  document.getElementById('rchar').addEventListener('change',showCur); showCur();
+  function msg(r){document.getElementById('rmsg').innerHTML=r.err?`<span style="color:#ff7060">${esc(r.err)}</span>`:`<span style="color:#54e87a">${esc(r.ok)}</span>`;}
+  document.getElementById('rgen').onclick=async()=>{
+    const body={slot:+document.getElementById('rchar').value, cid:+document.getElementById('rsel').value,
+      level:Math.max(1,Math.min(10,+document.getElementById('rlvl').value||10)), g:+document.getElementById('rslot').value};
+    const r=await j('/api/makerelic',{method:'POST',body:JSON.stringify(body)});
+    msg(r); if(!r.err) showCur();
   };
 }
 async function openChar(slot,btn){
