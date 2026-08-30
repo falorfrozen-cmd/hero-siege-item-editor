@@ -326,6 +326,7 @@ class HSSRecoveryIntegrationTests(unittest.TestCase):
         self.assertIn("expectedSha256:recovery.sourceSha256", editor.HTML)
         self.assertIn("/api/health/recover", editor.HTML)
         self.assertIn("OPEN SAVE HEALTH CHECK", editor.HTML)
+        self.assertIn("Automatic Backup", editor.HTML)
 
 
 if __name__ == "__main__":

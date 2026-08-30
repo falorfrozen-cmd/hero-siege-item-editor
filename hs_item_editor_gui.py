@@ -4787,7 +4787,7 @@ async function openBackups(){
   h+='<tr style="color:#937f6a;text-align:left"><th style="padding:4px 14px 4px 0">Time</th><th style="padding:4px 14px 4px 0">File</th><th style="padding:4px 14px 4px 0">Type</th><th style="padding:4px 14px 4px 0">Size</th><th></th></tr>';
   for(const b of baks){
     const ts=`${b.ts.slice(6,8)}.${b.ts.slice(4,6)}.${b.ts.slice(0,4)} ${b.ts.slice(9,11)}:${b.ts.slice(11,13)}:${b.ts.slice(13,15)}`;
-    const kind=b.kind==='pre_recovery'?'Recovery source':'Automatic';
+    const kind=b.kind==='pre_recovery'?'Recovery source':'Automatic Backup';
     h+=`<tr style="border-top:1px solid #2a1518"><td style="padding:4px 14px 4px 0">${ts}</td><td style="padding:4px 14px 4px 0">${esc(b.target)}</td><td style="padding:4px 14px 4px 0" class="muted">${kind}</td><td style="padding:4px 14px 4px 0" class="muted">${(b.size/1024).toFixed(1)} KB</td>
     <td><button class="act" style="margin:0;padding:3px 10px;font-size:11px" data-bak="${esc(b.file)}">Restore</button></td></tr>`;
   }
