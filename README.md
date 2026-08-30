@@ -8,7 +8,28 @@ A local/offline save editor for **Hero Siege** (Pixel Prone Games). Manage items
 
 Single file, no install, no Python needed. Just run it.
 
-## What's new in v2.8.1
+## What's new in v2.8.2
+
+- **HSS Recovery:** Save Health Check can now recognize the exact Season 10
+  `stash.hss` serializer-corruption signatures seen in affected saves: damaged
+  or blank Unique-tab metadata together with the invalid terminal
+  `NUL/U+FFFF` code units, plus the proven terminal-only variant.
+- The read-only analysis binds the matched profile and exact metadata changes
+  to the source/output hashes, per-container item counts, and an item-manifest
+  hash before recovery is offered. The confirmation card shows the profile,
+  changes, preserved item count, and source-hash identity.
+- A confirmed recovery creates a byte-for-byte `stash.hss.pre_recovery_*`
+  backup, writes and verifies a temporary candidate, atomically replaces the
+  active stash, then reopens it and proves that every native item record is
+  unchanged. A failed final verification restores the original automatically.
+- Unknown high bytes, malformed or non-canonical envelopes, unexpected stash
+  schemas, structural item errors, source-file races, a running game, and
+  pending Infinite Vault transfers all fail closed without modifying the stash.
+
+See [the v2.8.2 release notes](RELEASE_NOTES_v2.8.2.md) for the supported
+signatures, safety gates, and recovery procedure.
+
+## Previously added in v2.8.1
 
 - **ForgePact/Aurie compatibility:** the editor now recognizes the exact
   AuriePatcher layout shipped by ForgePact while still proving that the complete
@@ -77,6 +98,9 @@ Roll and Dice explanation.
 - Season 10 Access Kits — generate all three new Uber tablets (Phantom Leviathan, Captain Grimtide, Blood Maiden) or all five Act IX dungeon keys in one backed-up operation
 - Relic Lab and bulk stackable tools for Season 10 repository classes
 - Save Health Check — read-only preflight scan for malformed files, invalid item addresses, grid collisions, equipment-slot mismatches, sockets, and stack values
+- HSS Recovery — a separate, explicitly confirmed repair for narrowly proven
+  Season 10 Shared Stash serializer corruption; it previews exact changes and
+  item-preservation evidence before creating a permanent source backup
 - Safe repair mode only relocates deterministic grid conflicts or resets invalid stack amounts; every changed file is backed up first
 - Global Item Finder — search every character, equipment slot, bag, potion belt, personal stash, and shared stash, then jump to the item
 - Infinite Vault — unlimited named SQLite collections connected to every
@@ -137,6 +161,24 @@ Your characters and stash are detected automatically (standard Windows save fold
 
 Every change auto-backs up first (saved next to your save files as `*.guibak_*`).
 
+### Recover a supported corrupted `stash.hss`
+
+1. Close Hero Siege and leave it closed until recovery finishes.
+2. Open **Save Health Check** and run a scan. If the file matches a proven HSS
+   signature, the page shows a separate **HSS Recovery available** card.
+3. Review the matched profile, source SHA-256 identity, proposed metadata
+   changes, and the number of item records that will be preserved.
+4. Choose **Recover stash.hss** and confirm. The editor refuses if the file
+   changed after the preview, another save writer is present, or Infinite Vault
+   has an unfinished transfer.
+5. Keep the generated `stash.hss.pre_recovery_*` file. It is the exact original
+   and is intentionally not rotated with ordinary editor backups. It remains
+   visible in **Backups** as a separate **Recovery source** entry for an explicit
+   manual restore.
+
+If no recovery card appears, do not force or hand-edit the file. The corruption
+does not match a proven profile, so the editor leaves it untouched.
+
 ## Run from source (optional, for developers)
 
 Requires Python 3.8+, no external packages.
@@ -161,6 +203,9 @@ The repo contains the Python source (`hs_item_editor_gui.py`) and the data files
 
 - Reads and writes local save files only — no game process injection and no anti-cheat interaction
 - The game must be closed before a write; viewing is allowed while it is open
+- HSS Recovery is deliberately not a generic byte cleaner. It repairs only
+  exact, validated Season 10 signatures and rejects every unknown corruption
+  pattern instead of guessing which bytes or items to discard
 - Roll seeds are verified per exact item address because the game advances its
   RNG through definition stats, generated-stat pools, hidden calls, late
   sockets, and special tails. Existing socket metadata and rune payloads are

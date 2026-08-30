@@ -18,6 +18,7 @@ import re
 import shutil
 import subprocess
 import sys
+import tempfile
 import threading
 import time
 import zlib
@@ -60,6 +61,21 @@ except ModuleNotFoundError:
     from HSItemEditor.game_build_identity import GameBuildGuard
 
 try:
+    from hss_recovery import (
+        HSSRecoveryError,
+        RecoveryPlan,
+        analyze_stash_hss,
+        materialize_recovery,
+    )
+except ModuleNotFoundError:
+    from HSItemEditor.hss_recovery import (
+        HSSRecoveryError,
+        RecoveryPlan,
+        analyze_stash_hss,
+        materialize_recovery,
+    )
+
+try:
     from infinite_vault import (
         InfiniteVault,
         VaultConflictError,
@@ -99,7 +115,7 @@ def _resource_base() -> Path:
 BASE = _resource_base()
 CATALOG_FILE = BASE / "hs_full_catalog.json"
 PORT = 8765
-APP_VERSION = "2.8.1-s10"
+APP_VERSION = "2.8.2-s10"
 APPLICATION_ID = "hero-siege-item-editor"
 CATALOG_PROFILE = "Season 10"
 MAX_POST_BYTES = 2 * 1024 * 1024
@@ -2336,29 +2352,44 @@ def op_loadout(body: dict) -> dict:
 
 
 BAK_PAT = re.compile(
-    r"^(?P<target>.+?\.hss)\.(?:guibak|itemed_bak)_"
+    r"^(?P<target>(?:stash|herosiege\d+|inventory_order_\d+)\.hss)\."
+    r"(?P<kind>guibak|itemed_bak|pre_recovery)_"
     r"(?P<ts>\d{8}_\d{6})(?:_(?P<micro>\d{6}))?$"
 )
+
+
+def _backup_name_match(file_name: object):
+    if not isinstance(file_name, str) or Path(file_name).name != file_name:
+        return None
+    match = BAK_PAT.fullmatch(file_name)
+    if match and match.group("kind") == "pre_recovery" and match.group("target") != "stash.hss":
+        return None
+    return match
 
 
 def list_backups() -> list:
     out = []
     for f in SAVES.iterdir():
-        m = BAK_PAT.match(f.name)
-        if m:
+        m = _backup_name_match(f.name)
+        if m and f.is_file() and not f.is_symlink():
             out.append({"file": f.name, "target": m.group("target"), "ts": m.group("ts"),
+                        "micro": m.group("micro") or "", "kind": m.group("kind"),
                         "size": f.stat().st_size})
-    out.sort(key=lambda x: x["ts"], reverse=True)
+    out.sort(key=lambda x: (x["ts"], x["micro"]), reverse=True)
     return out[:200]
 
 
 def op_restore_backup(body: dict) -> dict:
     if game_running():
         return {"err": "Game is running! Close it first."}
+    if not isinstance(body, dict):
+        return {"err": "backup not found"}
     fn = body.get("file", "")
-    m = BAK_PAT.match(fn)
+    m = _backup_name_match(fn)
+    if not m:
+        return {"err": "backup not found"}
     src = SAVES / fn
-    if not m or not src.exists():
+    if not src.is_file() or src.is_symlink():
         return {"err": "backup not found"}
     target = SAVES / m.group("target")
     pre = backup(target) if target.exists() else "(none)"
@@ -2891,12 +2922,312 @@ def _scan_item_container(items, tab: str, file_name: str, location: str,
     return changed
 
 
+def _validate_recovery_document(plan: RecoveryPlan) -> tuple[dict, list]:
+    """Run the regular read-only item scanner against a recovered preview."""
+    if plan.status != "recoverable" or plan.recovered_text is None:
+        raise HSSRecoveryError("A recoverable stash plan is required")
+    document = json.loads(plan.recovered_text)
+    if not isinstance(document, dict):
+        raise HSSRecoveryError("Recovered stash root is not an object")
+    issues = []
+    item_count = 0
+    for tab, items in document.items():
+        if tab == "stash_tab_data" or not isinstance(items, dict):
+            continue
+        item_count += len(items)
+        _scan_item_container(
+            items, tab, "stash.hss", f"Shared Stash · {_tab_label(tab)}", issues,
+            positioned=tab != "unique_items", apply=False, state={"fixed": 0},
+        )
+    if item_count != plan.item_count:
+        raise HSSRecoveryError(
+            f"Recovered item count changed ({item_count} != {plan.item_count})"
+        )
+    return document, issues
+
+
+def inspect_stash_hss_recovery(path: Path | None = None) -> tuple[RecoveryPlan, list]:
+    """Return a read-only recovery plan plus ordinary health findings."""
+    stash_path = path or (SAVES / "stash.hss")
+    raw = stash_path.read_bytes()
+    plan = analyze_stash_hss(raw, XOR_KEY)
+    issues = []
+    if plan.status == "recoverable":
+        try:
+            _, issues = _validate_recovery_document(plan)
+        except Exception as exc:
+            return RecoveryPlan(
+                status="unsupported",
+                source_sha256=plan.source_sha256,
+                source_size=plan.source_size,
+                decoded_size=plan.decoded_size,
+                nonzero_high_bytes=plan.nonzero_high_bytes,
+                trailing_codepoints=plan.trailing_codepoints,
+                diagnostics=(f"Recovered preview failed the item health gate: {exc}",),
+            ), []
+        if any(issue["severity"] == "error" for issue in issues):
+            return RecoveryPlan(
+                status="unsupported",
+                source_sha256=plan.source_sha256,
+                source_size=plan.source_size,
+                decoded_size=plan.decoded_size,
+                nonzero_high_bytes=plan.nonzero_high_bytes,
+                trailing_codepoints=plan.trailing_codepoints,
+                diagnostics=("Recovered preview contains structural item errors.",),
+            ), issues
+    return plan, issues
+
+
+def _hss_recovery_mutation_gate() -> dict | None:
+    """Protect recovery without decoding a stash needed by a pending Vault row."""
+    if game_running():
+        return {"err": "Hero Siege is running. Close it before HSS recovery."}
+    vault_path = Path(VAULT_DB_FILE).expanduser().resolve()
+    if not vault_path.exists():
+        return None
+    try:
+        pending = vault_store().list_pending_transfers()
+    except Exception as exc:
+        return {"err": f"Infinite Vault state could not be verified: {exc}"}
+    if pending:
+        return {
+            "err": "An Infinite Vault transfer is pending. HSS recovery was blocked to protect item ownership. Nothing was changed."
+        }
+    return None
+
+
+def _write_recovery_temp(stash_path: Path, payload: bytes) -> Path:
+    handle = tempfile.NamedTemporaryFile(
+        mode="wb", dir=stash_path.parent, prefix=".stash.hss.recovery-",
+        suffix=".tmp", delete=False,
+    )
+    temp_path = Path(handle.name)
+    try:
+        with handle:
+            handle.write(payload)
+            handle.flush()
+            os.fsync(handle.fileno())
+        return temp_path
+    except Exception:
+        try:
+            temp_path.unlink()
+        except FileNotFoundError:
+            pass
+        raise
+
+
+def _verify_recovery_output(raw: bytes, source_plan: RecoveryPlan) -> RecoveryPlan:
+    if hashlib.sha256(raw).hexdigest().upper() != source_plan.output_sha256:
+        raise HSSRecoveryError("Recovered output hash differs from the preview")
+    verified = analyze_stash_hss(raw, XOR_KEY)
+    if verified.status != "healthy":
+        raise HSSRecoveryError("Recovered output does not pass strict HSS validation")
+    if (
+        verified.root_key_count != source_plan.root_key_count
+        or verified.item_count != source_plan.item_count
+        or verified.items_by_container != source_plan.items_by_container
+        or verified.item_manifest_sha256 != source_plan.item_manifest_sha256
+    ):
+        raise HSSRecoveryError("Recovered output changed the validated item manifest")
+    return verified
+
+
+def _create_recovery_backup(stash_path: Path, raw: bytes, source_sha256: str) -> Path:
+    stamp = datetime.now().strftime("%Y%m%d_%H%M%S_%f")
+    backup_path = stash_path.with_name(stash_path.name + f".pre_recovery_{stamp}")
+    try:
+        with backup_path.open("xb") as stream:
+            stream.write(raw)
+            stream.flush()
+            os.fsync(stream.fileno())
+        if _file_sha256(backup_path).upper() != source_sha256 or backup_path.read_bytes() != raw:
+            raise HSSRecoveryError("Recovery backup verification failed")
+        return backup_path
+    except Exception:
+        try:
+            backup_path.unlink()
+        except FileNotFoundError:
+            pass
+        raise
+
+
+def _restore_recovery_backup(stash_path: Path, backup_path: Path,
+                             expected_sha256: str,
+                             expected_current_sha256: str) -> None:
+    backup_raw = backup_path.read_bytes()
+    if hashlib.sha256(backup_raw).hexdigest().upper() != expected_sha256:
+        raise HSSRecoveryError("Recovery rollback backup no longer matches the source")
+    current_raw = stash_path.read_bytes()
+    if hashlib.sha256(current_raw).hexdigest().upper() != expected_current_sha256:
+        raise HSSRecoveryError(
+            "Active stash changed after recovery; rollback was refused to avoid overwriting a newer external write"
+        )
+    rollback_path = _write_recovery_temp(stash_path, backup_raw)
+    try:
+        _runtime_save_barrier()
+        current_raw = stash_path.read_bytes()
+        if hashlib.sha256(current_raw).hexdigest().upper() != expected_current_sha256:
+            raise HSSRecoveryError(
+                "Active stash changed before rollback; rollback was refused to avoid overwriting a newer external write"
+            )
+        os.replace(rollback_path, stash_path)
+        rollback_path = None
+        if _file_sha256(stash_path).upper() != expected_sha256:
+            raise HSSRecoveryError("Recovery rollback verification failed")
+    finally:
+        if rollback_path is not None:
+            try:
+                rollback_path.unlink()
+            except FileNotFoundError:
+                pass
+
+
+def op_recover_stash_hss(body: dict) -> dict:
+    """Apply one previewed recovery while the caller holds save/stash locks."""
+    if not isinstance(body, dict):
+        return {"err": "HSS recovery request must be a JSON object."}
+    if body.get("file") != "stash.hss":
+        return {"err": "Only the active stash.hss can be recovered."}
+    expected_sha256 = body.get("expectedSha256")
+    if not isinstance(expected_sha256, str) or not re.fullmatch(
+            r"[0-9A-Fa-f]{64}", expected_sha256):
+        return {"err": "A valid recovery preview SHA-256 is required."}
+    expected_sha256 = expected_sha256.upper()
+    blocked = _hss_recovery_mutation_gate()
+    if blocked:
+        return blocked
+
+    stash_path = SAVES / "stash.hss"
+    if not stash_path.exists():
+        return {"err": "stash.hss is missing. Nothing was changed."}
+    source_raw = stash_path.read_bytes()
+    source_sha256 = hashlib.sha256(source_raw).hexdigest().upper()
+    if source_sha256 != expected_sha256:
+        return {"err": "stash.hss changed after the recovery preview. Nothing was written; scan again."}
+
+    plan, preview_issues = inspect_stash_hss_recovery(stash_path)
+    if plan.status != "recoverable":
+        if plan.status == "healthy":
+            return {"err": "stash.hss is already healthy. Nothing was changed."}
+        return {"err": "This file does not match a proven HSS recovery profile. Nothing was changed."}
+    if plan.source_sha256 != expected_sha256:
+        return {"err": "stash.hss changed after the recovery preview. Nothing was written; scan again."}
+    if any(issue["severity"] == "error" for issue in preview_issues):
+        return {"err": "The recovery preview contains structural item errors. Nothing was changed."}
+
+    try:
+        output_raw = materialize_recovery(source_raw, plan, XOR_KEY)
+        _verify_recovery_output(output_raw, plan)
+    except Exception as exc:
+        return {"err": f"Recovery preview verification failed: {exc}. Nothing was changed."}
+
+    candidate_path = None
+    backup_path = None
+    replaced = False
+    try:
+        candidate_path = _write_recovery_temp(stash_path, output_raw)
+        _verify_recovery_output(candidate_path.read_bytes(), plan)
+        candidate_document = json.loads(decode_hss(candidate_path))
+        if candidate_document != json.loads(plan.recovered_text):
+            raise HSSRecoveryError("Candidate JSON differs from the validated preview")
+
+        blocked = _hss_recovery_mutation_gate()
+        if blocked:
+            return blocked
+        current_raw = stash_path.read_bytes()
+        if current_raw != source_raw or _file_sha256(stash_path).upper() != expected_sha256:
+            return {"err": "stash.hss changed during recovery. Nothing was written; scan again."}
+
+        backup_path = _create_recovery_backup(stash_path, source_raw, expected_sha256)
+        blocked = _hss_recovery_mutation_gate()
+        if blocked:
+            return {**blocked, "backup": backup_path.name}
+        if stash_path.read_bytes() != source_raw:
+            return {"err": "stash.hss changed before replacement. Nothing was written; scan again.",
+                    "backup": backup_path.name}
+
+        _runtime_save_barrier()
+        if stash_path.read_bytes() != source_raw:
+            return {"err": "stash.hss changed at the replacement barrier. Nothing was written; scan again.",
+                    "backup": backup_path.name}
+        os.replace(candidate_path, stash_path)
+        candidate_path = None
+        replaced = True
+        final_raw = stash_path.read_bytes()
+        verified = _verify_recovery_output(final_raw, plan)
+        final_document = json.loads(decode_hss(stash_path))
+        _, final_health = _validate_recovery_document(
+            RecoveryPlan(
+                status="recoverable",
+                source_sha256=verified.source_sha256,
+                source_size=verified.source_size,
+                decoded_size=verified.decoded_size,
+                root_key_count=verified.root_key_count,
+                item_count=verified.item_count,
+                items_by_container=verified.items_by_container,
+                item_manifest_sha256=verified.item_manifest_sha256,
+                recovered_text=decode_hss(stash_path),
+            )
+        )
+        if final_document != json.loads(plan.recovered_text) or any(
+                issue["severity"] == "error" for issue in final_health):
+            raise HSSRecoveryError("Final on-disk health verification failed")
+
+        return {
+            "ok": "stash.hss recovered and verified.",
+            "file": "stash.hss",
+            "profile": plan.profile,
+            "backup": backup_path.name,
+            "sourceSha256": expected_sha256,
+            "writtenSha256": verified.source_sha256,
+            "itemRecordsPreserved": plan.item_count,
+            "itemManifestSha256": plan.item_manifest_sha256,
+            "changesApplied": len(plan.changes),
+            "warnings": sum(1 for issue in final_health if issue["severity"] == "warning"),
+        }
+    except Exception as exc:
+        if replaced and backup_path is not None:
+            try:
+                _restore_recovery_backup(
+                    stash_path, backup_path, expected_sha256, plan.output_sha256
+                )
+                return {
+                    "err": f"Recovery verification failed: {exc}. The original stash.hss was restored from backup.",
+                    "backup": backup_path.name,
+                    "rolledBack": True,
+                }
+            except Exception as rollback_exc:
+                return {
+                    "err": f"Recovery verification failed ({exc}) and automatic rollback also failed ({rollback_exc}). Use the untouched backup immediately.",
+                    "backup": backup_path.name,
+                    "rolledBack": False,
+                }
+        return {"err": f"Recovery failed before replacement: {exc}. The active stash was not changed.",
+                **({"backup": backup_path.name} if backup_path is not None else {})}
+    finally:
+        if candidate_path is not None:
+            try:
+                candidate_path.unlink()
+            except FileNotFoundError:
+                pass
+
+
+def _stash_recovery_available() -> bool:
+    try:
+        plan, _ = inspect_stash_hss_recovery(SAVES / "stash.hss")
+        return plan.status == "recoverable"
+    except Exception:
+        return False
+
+
 def scan_save_health(apply: bool = False) -> dict:
-    if apply and game_running():
+    running = game_running()
+    if apply and running:
         return {"err": "Game is running. Close Hero Siege before applying repairs."}
 
     issues = []
     backups = []
+    recoveries = []
     state = {"fixed": 0, "files": 0, "items": 0}
 
     stash_path = SAVES / "stash.hss"
@@ -2921,8 +3252,25 @@ def scan_save_health(apply: bool = False) -> dict:
             if apply and stash_changed:
                 backups.append(write_stash(stash))
         except Exception as exc:
-            _health_issue(issues, "error", "file_decode", "stash.hss", "Shared Stash",
-                          f"File could not be decoded: {exc}")
+            try:
+                plan, recovery_issues = inspect_stash_hss_recovery(stash_path)
+            except Exception:
+                plan, recovery_issues = None, []
+            if plan is not None and plan.status == "recoverable":
+                state["files"] += 1
+                state["items"] += plan.item_count
+                _health_issue(
+                    issues, "error", "file_decode_recoverable", "stash.hss", "Shared Stash",
+                    "Strict HSS decoding failed, but the file matches a proven recovery profile. Review and apply the explicit HSS Recovery preview below.",
+                )
+                preview = plan.as_dict(file_name="stash.hss", can_apply=not running)
+                preview["healthWarnings"] = sum(
+                    1 for issue in recovery_issues if issue["severity"] == "warning"
+                )
+                recoveries.append(preview)
+            else:
+                _health_issue(issues, "error", "file_decode", "stash.hss", "Shared Stash",
+                              f"File could not be decoded: {exc}")
 
     for slot, char_path in _character_paths():
         try:
@@ -2979,7 +3327,7 @@ def scan_save_health(apply: bool = False) -> dict:
         "summary": {"files": state["files"], "items": state["items"],
                     "errors": errors, "warnings": warnings, "fixable": fixable},
         "issues": issues, "fixed": state["fixed"], "backups": backups,
-        "gameRunning": game_running(),
+        "recoveries": recoveries, "gameRunning": running,
     }
 
 
@@ -3171,6 +3519,7 @@ class H(BaseHTTPRequestHandler):
         self.send_response(code)
         self.send_header("Content-Type", "application/json; charset=utf-8")
         self.send_header("Cache-Control", "no-store")
+        self.send_header("X-Content-Type-Options", "nosniff")
         self.send_header("Content-Length", str(len(b)))
         self.end_headers()
         self.wfile.write(b)
@@ -3184,6 +3533,10 @@ class H(BaseHTTPRequestHandler):
             self.send_response(200)
             self.send_header("Content-Type", "text/html; charset=utf-8")
             self.send_header("Cache-Control", "no-store")
+            self.send_header("Content-Security-Policy", "frame-ancestors 'none'")
+            self.send_header("X-Frame-Options", "DENY")
+            self.send_header("X-Content-Type-Options", "nosniff")
+            self.send_header("Referrer-Policy", "no-referrer")
             self.send_header("Content-Length", str(len(b)))
             self.end_headers()
             self.wfile.write(b)
@@ -3225,12 +3578,23 @@ class H(BaseHTTPRequestHandler):
         elif u.path.startswith("/api/char/"):
             self._json(read_char(int(u.path.rsplit("/", 1)[1])))
         elif u.path == "/api/stash":
-            self._json(read_stash())
+            try:
+                self._json(read_stash())
+            except Exception as exc:
+                self._json({
+                    "err": f"Shared Stash unavailable: {exc}",
+                    "code": "stash_hss_unreadable",
+                    "recoveryAvailable": _stash_recovery_available(),
+                }, 500)
         elif u.path == "/api/vault/meta":
             try:
                 self._json(vault_meta())
             except Exception as exc:
-                self._json({"err": f"Infinite Vault unavailable: {exc}"}, 500)
+                self._json({
+                    "err": f"Infinite Vault unavailable: {exc}",
+                    "code": "stash_hss_unreadable",
+                    "recoveryAvailable": _stash_recovery_available(),
+                }, 500)
         elif u.path == "/api/vault/items":
             try:
                 self._json(vault_items(parse_qs(u.query, keep_blank_values=True)))
@@ -3299,6 +3663,8 @@ class H(BaseHTTPRequestHandler):
             self._json(op_delete(body))
         elif path == "/api/health/fix":
             self._json(op_fix_save_health())
+        elif path == "/api/health/recover":
+            self._json(op_recover_stash_hss(body))
         elif path == "/api/vault/deposit":
             self._json(op_vault_deposit(body))
         elif path == "/api/vault/withdraw":
@@ -3323,7 +3689,8 @@ class H(BaseHTTPRequestHandler):
             "/api/makerelic", "/api/makestackable", "/api/makes10access",
             "/api/modify", "/api/delete", "/api/health/fix",
         }
-        mutates_save = path in ordinary_save_routes or (
+        hss_recovery_route = path == "/api/health/recover"
+        mutates_save = path in ordinary_save_routes or hss_recovery_route or (
             path == "/api/loadout" and body.get("action") == "apply"
         )
         try:
@@ -3338,7 +3705,12 @@ class H(BaseHTTPRequestHandler):
                     if peer_error:
                         self._json({"err": peer_error})
                         return
-                    if mutates_save:
+                    if hss_recovery_route:
+                        blocked = _hss_recovery_mutation_gate()
+                        if blocked:
+                            self._json(blocked)
+                            return
+                    elif mutates_save:
                         blocked = _vault_save_mutation_gate(stash_lock_held=True)
                         if blocked:
                             self._json(blocked)
@@ -3536,6 +3908,7 @@ input,select{background:#0b111a;color:#dfe7f0;border-color:#2d3b50;border-radius
 .tool-intro{max-width:920px;margin-bottom:16px;padding:13px 15px;border:1px solid #2f4058;border-radius:10px;background:linear-gradient(110deg,rgba(54,200,232,.07),rgba(241,184,75,.035));color:#96a5b9;font-size:12px}.tool-intro b{color:#dce7f2}
 .health-summary{display:grid;grid-template-columns:repeat(5,minmax(0,1fr));gap:9px;max-width:920px;margin:0 0 15px}.health-metric{min-width:0;padding:12px 10px;border:1px solid #2d3b50;border-radius:10px;background:linear-gradient(145deg,#141d29,#0d141e)}.health-metric span{display:block;color:#718097;font-size:8px;font-weight:800;letter-spacing:.8px;text-transform:uppercase;white-space:nowrap}.health-metric b{display:block;margin-top:3px;font-size:22px;color:#eff5fb}.health-metric.error b{color:#ff7378}.health-metric.warn b{color:#ffc16e}.health-metric.fix b{color:#63dfb1}
 .health-actions{display:flex;gap:9px;align-items:center;margin-bottom:15px}.health-state{font-size:11px;color:#7f8da1}.health-list{display:flex;flex-direction:column;gap:7px;max-width:920px}.health-issue{display:grid;grid-template-columns:72px minmax(0,1fr);gap:11px;padding:11px 13px;border:1px solid #2c3a4e;border-radius:9px;background:#101824}.health-issue.error{border-left:3px solid #ff6268}.health-issue.warning{border-left:3px solid #f1b84b}.health-sev{font-size:9px;font-weight:900;letter-spacing:1px;color:#8290a4}.health-issue.error .health-sev{color:#ff7d82}.health-issue.warning .health-sev{color:#f4c66f}.health-msg{color:#dce5ef;font-size:12px}.health-loc{margin-top:3px;color:#6f7e93;font-size:10px}.health-fixable{color:#63dfb1;font-weight:800}.health-clean{max-width:920px;padding:30px;text-align:center;border:1px solid rgba(82,221,169,.28);border-radius:14px;background:rgba(37,172,125,.06);color:#72dfb7}.health-clean b{display:block;font-size:18px;margin-bottom:4px}
+.recovery-card{max-width:920px;margin:0 0 15px;padding:15px;border:1px solid rgba(255,161,79,.5);border-left:4px solid #ff9f4d;border-radius:11px;background:linear-gradient(145deg,rgba(84,43,17,.35),rgba(25,22,24,.8))}.recovery-card h3{margin:0 0 6px;color:#ffb36f;font-size:15px}.recovery-card p{margin:5px 0;color:#d9c7ba;font-size:12px}.recovery-facts{display:flex;flex-wrap:wrap;gap:7px;margin:10px 0}.recovery-facts span{padding:5px 8px;border:1px solid #59412e;border-radius:7px;background:#191416;color:#e8d9c0;font-size:10px}.recovery-repairs{margin:8px 0 12px;padding-left:18px;color:#bfae9f;font-size:11px}.recovery-button{background:#6c351b!important;border-color:#c66c35!important;color:#fff1e7!important}.recovery-button:disabled{opacity:.45;cursor:not-allowed}
 .finder-bar{display:grid;grid-template-columns:minmax(190px,1fr) minmax(105px,135px) minmax(105px,135px) auto;gap:8px;max-width:980px;margin-bottom:14px}.finder-bar input,.finder-bar select{height:39px;min-width:0}.finder-count{margin:4px 0 11px;color:#77869a;font-size:11px}.finder-list{display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:8px;max-width:980px}.found-card{display:grid;grid-template-columns:38px minmax(0,1fr) auto;gap:10px;align-items:center;min-height:61px;padding:9px 10px;border:1px solid #2b394d;border-radius:10px;background:linear-gradient(145deg,#141d29,#0d141e)}.found-card img{width:34px;height:34px;object-fit:contain;image-rendering:pixelated;filter:drop-shadow(0 4px 7px rgba(0,0,0,.5))}.found-icon{width:34px;height:34px;display:grid;place-items:center;border:1px solid #34445a;border-radius:7px;color:#66768b}.found-name{font-weight:750;font-size:12px}.found-loc{margin-top:2px;color:#718096;font-size:10px}.locate-btn{padding:6px 9px;border:1px solid #3b526c;border-radius:7px;background:#162436;color:#a8ddec;cursor:pointer;font-size:10px;font-weight:800}.locate-btn:hover{border-color:#55bad0;background:#1d3348;color:#e2f9ff}.found-empty{max-width:920px;padding:28px;border:1px dashed #334258;border-radius:12px;text-align:center;color:#718096}
 .found-pulse{position:relative!important;z-index:15!important;animation:foundPulse 1.2s ease-in-out 3;box-shadow:0 0 0 2px #53d7ef,0 0 24px rgba(83,215,239,.65)!important}@keyframes foundPulse{50%{filter:brightness(1.65);transform:scale(1.04)}}
 .vault-toolbar{display:grid;grid-template-columns:minmax(180px,1fr) minmax(150px,220px) minmax(130px,180px) auto;gap:9px;align-items:center;max-width:1120px;margin:0 0 13px}.vault-toolbar input,.vault-toolbar select{height:39px;min-width:0}.vault-manage{display:flex;gap:7px;flex-wrap:wrap;max-width:1120px;margin-bottom:13px}.vault-mini{min-height:33px;padding:6px 10px;border:1px solid #33465e;border-radius:7px;background:#142033;color:#b9d8e4;cursor:pointer;font-size:10px;font-weight:800}.vault-mini:hover{border-color:#55bad0;color:#effcff}.vault-mini.danger{color:#ff999d;border-color:#643b45}.vault-summary{display:flex;align-items:center;justify-content:space-between;gap:12px;max-width:1120px;margin:8px 0 12px;color:#8190a5;font-size:11px}.vault-list{display:grid;grid-template-columns:repeat(auto-fill,minmax(245px,1fr));gap:10px;max-width:1120px}.vault-card{position:relative;display:grid;grid-template-columns:54px minmax(0,1fr);gap:11px;min-height:92px;padding:12px;border:1px solid #2e3f55;border-radius:11px;background:radial-gradient(circle at 0 0,rgba(54,200,232,.055),transparent 38%),linear-gradient(145deg,#151f2d,#0d151f);box-shadow:0 8px 22px rgba(0,0,0,.16);transition:border-color .14s,transform .14s}.vault-card:hover{border-color:#536f8d;transform:translateY(-1px)}.vault-card img,.vault-card-icon{width:52px;height:52px;object-fit:contain;image-rendering:pixelated;filter:drop-shadow(0 5px 8px rgba(0,0,0,.55))}.vault-card-icon{display:grid;place-items:center;border:1px solid #354860;border-radius:9px;color:#6c7f96;font-size:20px}.vault-name{font-weight:800;font-size:13px;line-height:1.2}.vault-meta{margin-top:4px;color:#718198;font-size:10px;line-height:1.45}.vault-actions{grid-column:1/-1;display:flex;gap:6px;justify-content:flex-end;margin-top:2px}.vault-return{padding:6px 9px;border:1px solid rgba(82,221,169,.38);border-radius:7px;background:rgba(37,172,125,.09);color:#85e7bf;cursor:pointer;font-size:10px;font-weight:800}.vault-return:hover{background:rgba(37,172,125,.16);border-color:#52dda9}.vault-return:disabled{opacity:.4;cursor:not-allowed}.vault-pager{display:flex;justify-content:center;gap:8px;max-width:1120px;margin:16px 0}.vault-empty{max-width:1120px;padding:38px 24px;border:1px dashed #34465d;border-radius:13px;text-align:center;color:#75869c}.vault-warning{max-width:1120px;margin-bottom:13px;padding:10px 13px;border:1px solid rgba(255,153,76,.35);border-radius:9px;background:rgba(255,132,45,.07);color:#ffb47d;font-size:11px}.unique-list{display:grid;grid-template-columns:repeat(auto-fill,minmax(190px,1fr));gap:7px;max-width:1120px;margin-bottom:16px}.unique-card{display:grid;grid-template-columns:34px minmax(0,1fr);gap:8px;align-items:center;min-height:54px;padding:8px;border:1px solid #2b3b50;border-radius:8px;background:#101923;cursor:pointer}.unique-card:hover{border-color:#526b88}.unique-card img{width:32px;height:32px;object-fit:contain;image-rendering:pixelated}.unique-card .muted{font-size:9px}
@@ -4022,7 +4395,10 @@ async function openVault(reset=true){
   const md=document.getElementById('mid');
   md.innerHTML='<h2>Infinite Vault</h2><div class="tool-intro"><b>Opening your local vault...</b> Items are stored in a separate SQLite database beside your Hero Siege data.</div>';
   vaultMeta=await j('/api/vault/meta');
-  if(vaultMeta.err){md.innerHTML=`<h2>Infinite Vault</h2><div class="vault-warning">${esc(vaultMeta.err)}</div>`;return}
+  if(vaultMeta.err){
+    md.innerHTML=`<h2>Infinite Vault</h2><div class="vault-warning">${esc(vaultMeta.err)}</div>${vaultMeta.recoveryAvailable?'<button class="act recovery-button" id="vaulthealth" style="margin-top:12px">OPEN SAVE HEALTH CHECK</button>':''}`;
+    const health=document.getElementById('vaulthealth');if(health)health.onclick=openHealth;return
+  }
   if(vaultState.collectionId!=='all'&&!(vaultMeta.collections||[]).some(c=>String(c.id)===String(vaultState.collectionId)))vaultState.collectionId='all';
   const transferTabs=vaultMeta.transferTabs||[];
   if(!transferTabs.some(row=>row.tab===vaultState.withdrawTab))vaultState.withdrawTab=transferTabs.length?transferTabs[0].tab:'';
@@ -4124,6 +4500,10 @@ async function openStash(){
   gridReg={}; gridSeq=0;
   document.querySelectorAll('.charbtn').forEach(b=>b.classList.remove('sel'));
   const md=document.getElementById('mid');
+  if(stashData.err){
+    md.innerHTML=`<h2>Stash (shared)</h2><div class="vault-warning">${esc(stashData.err)}</div>${stashData.recoveryAvailable?'<button class="act recovery-button" id="stashhealth" style="margin-top:12px">OPEN SAVE HEALTH CHECK</button>':''}`;
+    const health=document.getElementById('stashhealth');if(health)health.onclick=openHealth;return
+  }
   const order=Object.keys(stashData).sort((a,b)=>a.localeCompare(b,undefined,{numeric:true,sensitivity:'base'}));
   let h='<h2>Stash (shared)</h2>'+TIPBAR+STASH_DRAG_TIP;
   for(const tab of order){
@@ -4352,6 +4732,7 @@ function renderHealth(report){
   const md=document.getElementById('mid');
   if(report.err){md.innerHTML=`<h2>Save Health Check</h2><div class="health-issue error"><div class="health-sev">ERROR</div><div class="health-msg">${esc(report.err)}</div></div>`;return;}
   const s=report.summary||{files:0,items:0,errors:0,warnings:0,fixable:0};
+  const recoveries=report.recoveries||[];
   let h=`<h2>Save Health Check</h2>
     <div class="tool-intro"><b>Season 10 preflight validation.</b> Scans save encoding, item addresses, grid placement, equipment slots, sockets and stack values. A normal scan never writes to disk.</div>
     <div class="health-summary">
@@ -4362,6 +4743,15 @@ function renderHealth(report){
       <div class="health-metric fix"><span>Safe fixes</span><b>${s.fixable}</b></div>
     </div>
     <div class="health-actions"><button class="act" id="healthscan" style="margin:0">Scan again</button><button class="act" id="healthfix" style="margin:0" ${(s.fixable===0||report.gameRunning)?'disabled':''}>Fix safe issues</button><span class="health-state">${report.gameRunning?'Hero Siege is running — repairs are locked.':'Repairs create a backup before every changed file.'}</span></div>`;
+  recoveries.forEach((recovery,index)=>{
+    const repairs=(recovery.repairs||[]).map(row=>`<li>${esc(row.message||row.code)} <span class="muted">(${row.count||1})</span></li>`).join('');
+    h+=`<div class="recovery-card"><h3>&#9888; ${esc(recovery.file)} can be recovered safely</h3>
+      <p>The editor matched the proven <b>${esc(recovery.profile)}</b> profile. The validated preview preserves <b>${recovery.itemRecords||0}/${recovery.itemRecords||0}</b> item records.</p>
+      <div class="recovery-facts"><span>${recovery.topLevelFields||0} top-level fields</span><span>${recovery.nonzeroHighByteCount||0} encoding anomalies</span><span>SHA-256 ${esc((recovery.sourceSha256||'').slice(0,12))}...</span></div>
+      <ul class="recovery-repairs">${repairs}</ul>
+      <button class="act recovery-button" id="hssrecover${index}" style="margin:0" ${recovery.canApply?'':'disabled'}>RECOVER ${esc((recovery.file||'stash.hss').toUpperCase())}</button>
+      <span class="health-state" style="margin-left:9px">${recovery.canApply?'Creates an exact timestamped backup, then verifies the replacement.':'Close Hero Siege before recovery.'}</span></div>`;
+  });
   if(report.fixed)h+=`<div class="tool-intro" style="border-color:rgba(82,221,169,.35);color:#72dfb7"><b>${report.fixed} safe repair(s) applied.</b> Backups: ${esc((report.backups||[]).join(', ')||'none')}</div>`;
   if(!(report.issues||[]).length)h+='<div class="health-clean"><b>&#10003; Save structure looks healthy</b>No structural Season 10 issues were detected.</div>';
   else h+='<div class="health-list">'+report.issues.map(issue=>`<div class="health-issue ${issue.severity}"><div class="health-sev">${esc(issue.severity.toUpperCase())}</div><div><div class="health-msg">${esc(issue.message)} ${issue.fixable?'<span class="health-fixable">SAFE FIX</span>':''}</div><div class="health-loc">${esc(issue.location)} &middot; ${esc(issue.file)}${issue.item?' &middot; '+esc(issue.item):''}</div></div></div>`).join('')+'</div>';
@@ -4373,6 +4763,16 @@ function renderHealth(report){
     fix.disabled=true;fix.textContent='Repairing...';
     renderHealth(await j('/api/health/fix',{method:'POST',body:'{}'}));
   };
+  recoveries.forEach((recovery,index)=>{
+    const button=document.getElementById(`hssrecover${index}`);if(!button)return;
+    button.onclick=async()=>{
+      if(!confirm(`Recover ${recovery.file}?\n\nThe validated preview preserves ${recovery.itemRecords||0}/${recovery.itemRecords||0} item records.\nThe current file will be copied to a timestamped backup before replacement.\n\nHero Siege must remain closed.`))return;
+      button.disabled=true;button.textContent='RECOVERING...';
+      const result=await j('/api/health/recover',{method:'POST',body:JSON.stringify({file:recovery.file,expectedSha256:recovery.sourceSha256})});
+      if(result.err)alert(result.err);else alert(`${result.ok}\n${result.itemRecordsPreserved||0} item records preserved.\nBackup: ${result.backup||'created'}`);
+      await openHealth();
+    };
+  });
 }
 
 async function openBackups(){
@@ -4384,10 +4784,11 @@ async function openBackups(){
   let h=`<h2>Backups <span class="muted">(${baks.length} latest)</span></h2>
   <div class="muted" style="margin-bottom:8px">Every change made by this editor creates one of these automatically. Restoring also backs up the current state first.</div>`;
   h+='<table style="border-collapse:collapse;font-size:12px">';
-  h+='<tr style="color:#937f6a;text-align:left"><th style="padding:4px 14px 4px 0">Time</th><th style="padding:4px 14px 4px 0">File</th><th style="padding:4px 14px 4px 0">Size</th><th></th></tr>';
+  h+='<tr style="color:#937f6a;text-align:left"><th style="padding:4px 14px 4px 0">Time</th><th style="padding:4px 14px 4px 0">File</th><th style="padding:4px 14px 4px 0">Type</th><th style="padding:4px 14px 4px 0">Size</th><th></th></tr>';
   for(const b of baks){
     const ts=`${b.ts.slice(6,8)}.${b.ts.slice(4,6)}.${b.ts.slice(0,4)} ${b.ts.slice(9,11)}:${b.ts.slice(11,13)}:${b.ts.slice(13,15)}`;
-    h+=`<tr style="border-top:1px solid #2a1518"><td style="padding:4px 14px 4px 0">${ts}</td><td style="padding:4px 14px 4px 0">${esc(b.target)}</td><td style="padding:4px 14px 4px 0" class="muted">${(b.size/1024).toFixed(1)} KB</td>
+    const kind=b.kind==='pre_recovery'?'Recovery source':'Automatic';
+    h+=`<tr style="border-top:1px solid #2a1518"><td style="padding:4px 14px 4px 0">${ts}</td><td style="padding:4px 14px 4px 0">${esc(b.target)}</td><td style="padding:4px 14px 4px 0" class="muted">${kind}</td><td style="padding:4px 14px 4px 0" class="muted">${(b.size/1024).toFixed(1)} KB</td>
     <td><button class="act" style="margin:0;padding:3px 10px;font-size:11px" data-bak="${esc(b.file)}">Restore</button></td></tr>`;
   }
   h+='</table>';

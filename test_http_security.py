@@ -161,6 +161,18 @@ class HttpBoundaryTests(unittest.TestCase):
         self.assertIn("'Content-Type':'application/json'", editor.HTML)
         self.assertIn("'X-Hero-Siege-Item-Editor':'1'", editor.HTML)
 
+    def test_html_cannot_be_framed_and_responses_disable_sniffing(self):
+        connection = http.client.HTTPConnection("127.0.0.1", self.port, timeout=3)
+        connection.request("GET", "/", headers={"Host": f"127.0.0.1:{self.port}"})
+        raw_response = connection.getresponse()
+        raw_response.read()
+        self.assertEqual(raw_response.status, 200)
+        self.assertEqual(raw_response.getheader("X-Frame-Options"), "DENY")
+        self.assertEqual(raw_response.getheader("Content-Security-Policy"),
+                         "frame-ancestors 'none'")
+        self.assertEqual(raw_response.getheader("X-Content-Type-Options"), "nosniff")
+        connection.close()
+
 
 if __name__ == "__main__":
     unittest.main()
