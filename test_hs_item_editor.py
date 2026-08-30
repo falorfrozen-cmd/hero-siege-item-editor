@@ -990,6 +990,89 @@ class ItemEditorSeason10Tests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "inventory field not found"):
             editor.write_char_inventory(1, inventory)
 
+    def test_cross_file_move_game_start_during_backups_leaves_both_files_unchanged(self):
+        stash_path = self.saves / "stash.hss"
+        bags_path = self.saves / "inventory_order_1.hss"
+        stash = json.loads(editor.decode_hss(stash_path))
+        key = "0-0-424242-7"
+        stash["stash_tab_1"][key] = {
+            "pos": [0.0, 0.0],
+            "data": editor.make_data(catalog_row("rings_parasite_loop")),
+        }
+        stash_path.write_text(
+            editor.encode_hss(json.dumps(stash)), encoding="ascii"
+        )
+        stash_before = stash_path.read_bytes()
+        bags_before = bags_path.read_bytes()
+
+        running = {"value": False, "backup_count": 0}
+        real_backup = editor.backup
+
+        def backup_then_start_game(path):
+            backup_name = real_backup(path)
+            running["backup_count"] += 1
+            running["value"] = True
+            return backup_name
+
+        with (
+            patch.object(editor, "INSTANCE_GUARD_ACTIVE", True),
+            patch.object(editor, "_active_peer_editor_error", return_value=None),
+            patch.object(editor, "game_running", side_effect=lambda: running["value"]),
+            patch.object(editor, "backup", side_effect=backup_then_start_game),
+        ):
+            with self.assertRaisesRegex(RuntimeError, "Game started before the save write"):
+                editor.op_move({
+                    "from": {"type": "stash", "tab": "stash_tab_1"},
+                    "to": {"type": "bag", "slot": 1, "tab": "inventory_tab_0"},
+                    "key": key,
+                    "pos": [0, 0],
+                })
+
+        self.assertEqual(running["backup_count"], 2)
+        self.assertEqual(stash_path.read_bytes(), stash_before)
+        self.assertEqual(bags_path.read_bytes(), bags_before)
+        stash_after = json.loads(editor.decode_hss(stash_path))
+        bags_after = json.loads(editor.decode_hss(bags_path))
+        self.assertIn(key, stash_after["stash_tab_1"])
+        self.assertEqual(bags_after["inventory_tab_0"], {})
+
+    def test_cross_file_move_second_replace_failure_keeps_destination_copy(self):
+        stash_path = self.saves / "stash.hss"
+        bags_path = self.saves / "inventory_order_1.hss"
+        stash = json.loads(editor.decode_hss(stash_path))
+        key = "0-0-424243-7"
+        stash["stash_tab_1"][key] = {
+            "pos": [0.0, 0.0],
+            "data": editor.make_data(catalog_row("rings_parasite_loop")),
+        }
+        stash_path.write_text(
+            editor.encode_hss(json.dumps(stash)), encoding="ascii"
+        )
+
+        real_atomic_write = editor.atomic_write_text
+        writes = {"count": 0}
+
+        def fail_second_replace(path, text, encoding):
+            writes["count"] += 1
+            if writes["count"] == 2:
+                raise OSError("injected second replace failure")
+            return real_atomic_write(path, text, encoding)
+
+        with patch.object(editor, "atomic_write_text", side_effect=fail_second_replace):
+            with self.assertRaisesRegex(OSError, "injected second replace failure"):
+                editor.op_move({
+                    "from": {"type": "stash", "tab": "stash_tab_1"},
+                    "to": {"type": "bag", "slot": 1, "tab": "inventory_tab_0"},
+                    "key": key,
+                    "pos": [0, 0],
+                })
+
+        self.assertEqual(writes["count"], 2)
+        stash_after = json.loads(editor.decode_hss(stash_path))
+        bags_after = json.loads(editor.decode_hss(bags_path))
+        self.assertIn(key, stash_after["stash_tab_1"])
+        self.assertIn(key, bags_after["inventory_tab_0"])
+
     def test_stackables_use_native_s10_shape_in_dedicated_bags(self):
         cases = [
             ("keys_aztec_key", "inventory_key_tab", 12, 40),

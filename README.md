@@ -8,7 +8,31 @@ A local/offline save editor for **Hero Siege** (Pixel Prone Games). Manage items
 
 Single file, no install, no Python needed. Just run it.
 
-## What's new in v2.7.2
+## What's new in v2.8.0
+
+- **Infinite Vault:** move items from every grid-backed Shared Stash tab — all
+  numbered tabs (currently 1-19), Material, and Socket — into an unlimited,
+  searchable local library with named collections, then return them to any of
+  those grids.
+- Crash-safe two-phase transfers keep an exact SQLite copy until the matching
+  stash write is proven. Interrupted operations recover on the next vault
+  open; ambiguous states preserve the item and stop for inspection.
+- Stable request IDs prevent double-clicks and network retries from creating
+  duplicate vault or stash items.
+- The Global Item Finder now includes Infinite Vault results and can locate
+  their collection card.
+- All save writes and Vault recovery use the same cross-process stash lock;
+  another/older editor instance is detected and blocked before mutation.
+- The localhost API now rejects foreign Host/Origin, non-JSON, and requests
+  missing the editor-only header before they can reach save operations.
+
+The v2.7.2 Perfect/Best Roll, Dice skill selection, and shared-stash drag-scroll
+features remain included.
+
+See [the v2.8.0 release notes](RELEASE_NOTES_v2.8.0.md) and the
+[Infinite Vault engineering record](INFINITE_VAULT_DESIGN.md).
+
+## Previously added in v2.7.2
 
 - Give supported equipment its real **Exact Max** roll, or the mathematically
   **Best Possible** roll when the game cannot max every stat at the same time.
@@ -19,8 +43,8 @@ Single file, no install, no Python needed. Just run it.
 - Safer cancelled drags, naturally ordered stash tabs, and strict game-build
   checks so build-specific seeds are never applied to an unverified update.
 
-See [the v2.7.2 release notes](RELEASE_NOTES_v2.7.2.md) for the plain-language
-explanation and safety details.
+See [the v2.7.2 release notes](RELEASE_NOTES_v2.7.2.md) for the Perfect/Best
+Roll and Dice explanation.
 
 ## Features
 
@@ -40,6 +64,9 @@ explanation and safety details.
 - Save Health Check — read-only preflight scan for malformed files, invalid item addresses, grid collisions, equipment-slot mismatches, sockets, and stack values
 - Safe repair mode only relocates deterministic grid conflicts or resets invalid stack amounts; every changed file is backed up first
 - Global Item Finder — search every character, equipment slot, bag, potion belt, personal stash, and shared stash, then jump to the item
+- Infinite Vault — unlimited named SQLite collections connected to every
+  numbered, Material, and Socket Shared Stash grid, with search, paging, exact item preservation, idempotent
+  transfers, automatic recovery, and a pre-mutation database backup
 - Stat tooltip — hover any item to see all stats and level requirements
 - Verified Dice skill targeting — choose any of the 432 skill IDs for **Loaded
   Dice** or any of the 222 game-valid sub-skill IDs for **Overloaded Dice**.
@@ -76,6 +103,9 @@ Your characters and stash are detected automatically (standard Windows save fold
   seed. Newly generated Dice items require the target skill to be selected in
   the Item Catalog first
 - **Drag** an item to move it within/between tabs, or drop it onto an equipment slot to equip
+- **Right-click an item in any numbered, Material, or Socket Shared Stash
+  grid** → **Store in Infinite Vault**; use the Infinite Vault workspace to
+  search, organize, and return it to any compatible grid
 - While dragging through **Shared Stash**, use the mouse wheel; if the native
   browser drag suppresses wheel input, hold the pointer near the top or bottom
   edge for continuous auto-scroll. No save occurs until a valid drop

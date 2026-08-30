@@ -32,6 +32,7 @@ hiddenimports = [
     "generated_pool_model",
     "dice_skill_selector",
     "game_build_identity",
+    "infinite_vault",
 ]
 webview_bundle = collect_all("webview")
 datas += webview_bundle[0]

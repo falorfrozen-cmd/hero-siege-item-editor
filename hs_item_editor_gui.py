@@ -21,6 +21,7 @@ import sys
 import threading
 import time
 import zlib
+from contextlib import contextmanager, nullcontext
 from datetime import datetime
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -58,8 +59,30 @@ try:
 except ModuleNotFoundError:
     from HSItemEditor.game_build_identity import GameBuildGuard
 
+try:
+    from infinite_vault import (
+        InfiniteVault,
+        VaultConflictError,
+        VaultError,
+        VaultNotFoundError,
+        VaultStateError,
+        VaultValidationError,
+        canonical_request_hash,
+    )
+except ModuleNotFoundError:
+    from HSItemEditor.infinite_vault import (
+        InfiniteVault,
+        VaultConflictError,
+        VaultError,
+        VaultNotFoundError,
+        VaultStateError,
+        VaultValidationError,
+        canonical_request_hash,
+    )
+
 ROOT = Path.home() / "AppData" / "Local" / "Hero_Siege"
 SAVES = ROOT / "hs2saves"
+VAULT_DB_FILE = ROOT / "hs_infinite_vault.sqlite3"
 
 
 def _resource_base() -> Path:
@@ -76,9 +99,11 @@ def _resource_base() -> Path:
 BASE = _resource_base()
 CATALOG_FILE = BASE / "hs_full_catalog.json"
 PORT = 8765
-APP_VERSION = "2.7.2-s10"
+APP_VERSION = "2.8.0-s10"
 APPLICATION_ID = "hero-siege-item-editor"
 CATALOG_PROFILE = "Season 10"
+MAX_POST_BYTES = 2 * 1024 * 1024
+EDITOR_REQUEST_HEADER = "X-Hero-Siege-Item-Editor"
 if DICE_EXPECTED_GAME_EXE_SHA256 != EXPECTED_GAME_EXE_SHA256:
     raise RuntimeError("roll and Dice databases target different Hero Siege builds")
 GAME_BUILD_GUARD = GameBuildGuard(EXPECTED_GAME_EXE_SHA256)
@@ -100,6 +125,15 @@ FORGE_LOCK = threading.Lock()
 # cycle.  ThreadingHTTPServer can execute two clicks concurrently, so serialize
 # the complete operation instead of merely relying on atomic final replaces.
 SAVE_WRITE_LOCK = threading.RLock()
+_VAULT_STORE = None
+_VAULT_STORE_PATH = None
+_VAULT_STORE_LOCK = threading.RLock()
+# Runtime peer checks are enabled only by ``main`` after this process has
+# acquired its listening port.  Keeping the default disabled makes imported
+# library/unit-test operations deterministic and side-effect free.
+INSTANCE_GUARD_ACTIVE = False
+INSTANCE_PORT = None
+INSTANCE_RESERVED_PORTS = frozenset()
 
 XOR_KEY = bytes([
     0xE3, 0x95, 0x3D, 0xB1, 0x01, 0x6B, 0xB6, 0x58,
@@ -311,6 +345,137 @@ def atomic_write_text(path: Path, text: str, encoding: str) -> None:
             temp.unlink()
         except FileNotFoundError:
             pass
+
+
+def vault_store() -> InfiniteVault:
+    """Return a lazy, path-sensitive vault handle.
+
+    Laziness prevents imports and read-only editor screens from creating user
+    data.  The path sensitivity is also essential for the temporary-save test
+    suite and for portable copies of the editor.
+    """
+    global _VAULT_STORE, _VAULT_STORE_PATH
+    path = Path(VAULT_DB_FILE).expanduser().resolve()
+    with _VAULT_STORE_LOCK:
+        if _VAULT_STORE is None or _VAULT_STORE_PATH != path:
+            _VAULT_STORE = InfiniteVault(path)
+            _VAULT_STORE_PATH = path
+        return _VAULT_STORE
+
+
+def _file_sha256(path: Path) -> str:
+    return hashlib.sha256(path.read_bytes()).hexdigest()
+
+
+@contextmanager
+def _exclusive_save_file(path: Path, timeout: float = 15.0):
+    """Serialize save work across cooperating editor processes.
+
+    ``SAVE_WRITE_LOCK`` covers threads in this process.  This one-byte OS lock
+    covers separate processes running this release.  A legacy/second-instance
+    guard separately refuses uncooperative older releases.  The OS releases
+    the lock automatically after a crash.
+    """
+    lock_path = path.with_name(path.name + ".itemeditor.lock")
+    lock_path.parent.mkdir(parents=True, exist_ok=True)
+    stream = lock_path.open("a+b")
+    try:
+        if stream.seek(0, os.SEEK_END) == 0:
+            stream.write(b"\0")
+            stream.flush()
+        deadline = time.monotonic() + timeout
+        while True:
+            try:
+                stream.seek(0)
+                if os.name == "nt":
+                    import msvcrt
+                    msvcrt.locking(stream.fileno(), msvcrt.LK_NBLCK, 1)
+                else:  # pragma: no cover - Windows is the supported runtime.
+                    import fcntl
+                    fcntl.flock(stream.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+                break
+            except (OSError, BlockingIOError):
+                if time.monotonic() >= deadline:
+                    raise TimeoutError("another Item Editor is changing the shared stash")
+                time.sleep(0.05)
+        try:
+            yield
+        finally:
+            stream.seek(0)
+            if os.name == "nt":
+                import msvcrt
+                msvcrt.locking(stream.fileno(), msvcrt.LK_UNLCK, 1)
+            else:  # pragma: no cover
+                import fcntl
+                fcntl.flock(stream.fileno(), fcntl.LOCK_UN)
+    finally:
+        stream.close()
+
+
+def _vault_request_id(value) -> str:
+    if not isinstance(value, str) or not re.fullmatch(r"[A-Za-z0-9_-]{16,128}", value):
+        raise VaultValidationError("requestId must be a 16-128 character stable id")
+    return value
+
+
+VAULT_SHARED_GRID_TAB_RE = re.compile(
+    r"(?:stash_tab_[1-9]\d*|material_tab(?:_[1-9]\d*)?|socket_tab(?:_[1-9]\d*)?)"
+)
+
+
+def _is_vault_shared_grid_tab(tab) -> bool:
+    return isinstance(tab, str) and VAULT_SHARED_GRID_TAB_RE.fullmatch(tab) is not None
+
+
+def _vault_shared_grid_label(tab: str) -> str:
+    match = re.fullmatch(r"stash_tab_([1-9]\d*)", tab)
+    if match:
+        return f"Shared Stash Tab {int(match.group(1))}"
+    match = re.fullmatch(r"(material|socket)_tab(?:_([1-9]\d*))?", tab)
+    if match:
+        base = "Material Tab" if match.group(1) == "material" else "Socket Tab"
+        return f"{base} {int(match.group(2))}" if match.group(2) else base
+    return tab
+
+
+def _vault_stash_tab(ref, label: str) -> str:
+    if not isinstance(ref, dict) or ref.get("type") != "stash":
+        raise VaultValidationError(f"{label} must be a Shared Stash target")
+    tab = ref.get("tab")
+    if not _is_vault_shared_grid_tab(tab):
+        raise VaultValidationError(
+            f"{label} must be a normal, Material, or Socket Shared Stash grid"
+        )
+    return tab
+
+
+def _vault_transfer_tabs() -> list:
+    """Return only native grid containers that exist in this stash document."""
+    try:
+        stash = json.loads(decode_hss(SAVES / "stash.hss"))
+    except (OSError, ValueError, json.JSONDecodeError):
+        return []
+    tabs = [
+        tab for tab, items in stash.items()
+        if _is_vault_shared_grid_tab(tab) and isinstance(items, dict)
+    ]
+
+    def sort_key(tab: str):
+        match = re.fullmatch(r"stash_tab_([1-9]\d*)", tab)
+        if match:
+            return 0, int(match.group(1)), tab
+        if tab.startswith("material_tab"):
+            return 1, 0, tab
+        return 2, 0, tab
+
+    return [
+        {"tab": tab, "label": _vault_shared_grid_label(tab)}
+        for tab in sorted(tabs, key=sort_key)
+    ]
+
+
+def _vault_item_json(entry: dict) -> str:
+    return json.dumps(entry, ensure_ascii=False, separators=(",", ":"), allow_nan=False)
 
 
 CAT = json.loads(CATALOG_FILE.read_text(encoding="utf-8"))
@@ -695,6 +860,33 @@ def resolve(key: str, data: dict) -> dict:
     return out
 
 
+def _vault_item_payload(record) -> dict:
+    entry = record.decoded_item()
+    key = record.source_item_key or "0-0-0--1"
+    item = resolve(key, entry.get("data", {}))
+    return {
+        "id": record.id,
+        "collectionId": record.collection_id,
+        "collectionName": record.collection_name,
+        "name": item.get("name", "Unknown item"),
+        "rar": item.get("rar", "?"),
+        "cls": item.get("cls"),
+        "clsName": item.get("clsName") or CLASS_NAMES.get(item.get("cls"), "Unknown"),
+        "cid": item.get("cid"),
+        "rwcid": item.get("rwcid"),
+        "spr": item.get("spr"),
+        "w": item.get("w", 1),
+        "h": item.get("h", 1),
+        "stack": item.get("stack"),
+        "raw": entry.get("data", {}),
+        "rollProfile": item.get("rollProfile"),
+        "skillSelector": item.get("skillSelector"),
+        "sourceLabel": record.source or "Shared Stash",
+        "sourceItemKey": record.source_item_key,
+        "createdAt": record.created_at,
+    }
+
+
 def list_characters() -> list:
     chars = []
     for p in sorted(SAVES.glob("herosiege*.hss")):
@@ -942,21 +1134,40 @@ def make_data(r: dict, equipped_g=None, skill_id: object = None) -> dict:
     return d
 
 
-def write_stash(data: dict) -> str:
+def _encoded_stash_document(data: dict) -> str:
+    return encode_hss(json.dumps(data, separators=(", ", ": ")))
+
+
+def _runtime_save_barrier() -> None:
+    """Fail closed if the game or a peer editor appeared before replacement."""
+    if not INSTANCE_GUARD_ACTIVE:
+        return
+    if game_running():
+        raise RuntimeError("Game started before the save write. Close it and retry.")
+    peer_error = _active_peer_editor_error()
+    if peer_error:
+        raise RuntimeError(peer_error)
+
+
+def write_stash(data: dict, *, check_runtime: bool = True) -> str:
     p = SAVES / "stash.hss"
     bk = backup(p)
-    atomic_write_text(p, encode_hss(json.dumps(data, separators=(", ", ": "))), "ascii")
+    if check_runtime:
+        _runtime_save_barrier()
+    atomic_write_text(p, _encoded_stash_document(data), "ascii")
     return bk
 
 
-def write_bags(slot: int, data: dict) -> str:
+def write_bags(slot: int, data: dict, *, check_runtime: bool = True) -> str:
     p = SAVES / f"inventory_order_{slot}.hss"
     bk = backup(p)
+    if check_runtime:
+        _runtime_save_barrier()
     atomic_write_text(p, encode_hss(json.dumps(data, separators=(", ", ": "))), "ascii")
     return bk
 
 
-def write_char_inventory(slot: int, inv: dict) -> str:
+def _encoded_char_inventory_document(slot: int, inv: dict) -> tuple[Path, str | None]:
     p = SAVES / f"herosiege{slot}.hss"
     txt = decode_hss(p)
     blob = base64.b64encode(json.dumps(inv, separators=(", ", ": ")).encode()).decode()
@@ -969,9 +1180,18 @@ def write_char_inventory(slot: int, inv: dict) -> str:
     if replacements != 1:
         raise ValueError(f"inventory field not found in herosiege{slot}.hss")
     if new == txt:
+        return p, None
+    return p, encode_hss(new)
+
+
+def write_char_inventory(slot: int, inv: dict, *, check_runtime: bool = True) -> str:
+    p, encoded = _encoded_char_inventory_document(slot, inv)
+    if encoded is None:
         return ""
     bk = backup(p)
-    atomic_write_text(p, encode_hss(new), "ascii")
+    if check_runtime:
+        _runtime_save_barrier()
+    atomic_write_text(p, encoded, "ascii")
     return bk
 
 
@@ -990,6 +1210,454 @@ def pos_free(items: dict, tab: str, pos, w: int, h: int, skip_key=None) -> bool:
         if not (x0 + w <= x or x + it["w"] <= x0 or y0 + h <= y or y + it["h"] <= y0):
             return False
     return True
+
+
+def _vault_transfer_result(transfer, backup_name: str = "") -> dict:
+    if transfer.status == "conflict":
+        return {"err": "Infinite Vault transfer needs recovery: " + (transfer.error or "state conflict")}
+    if transfer.status == "cancelled":
+        return {"err": "The interrupted transfer was safely cancelled; the original item was kept."}
+    result = {
+        "ok": "Infinite Vault transfer completed",
+        "itemId": transfer.item_id,
+        "transfer": transfer.as_dict(),
+    }
+    if backup_name:
+        result["backup"] = backup_name
+    return result
+
+
+def _reconcile_vault_transfers_locked(stash_path: Path) -> dict:
+    """Resolve pending journal rows while SAVE and stash OS locks are held."""
+    if game_running():
+        return {"recovered": 0, "conflicts": 0, "pending": None, "deferred": True}
+    if not stash_path.exists():
+        return {"recovered": 0, "conflicts": 1, "pending": None,
+                "err": "stash.hss is missing; pending vault transfers were left untouched"}
+    recovered = 0
+    current_hash = _file_sha256(stash_path)
+    stash = json.loads(decode_hss(stash_path))
+    store = vault_store()
+    pending = store.list_pending_transfers()
+    for transfer in pending:
+        previous = transfer.status
+        if current_hash in {transfer.stash_before_sha256, transfer.stash_after_sha256}:
+            updated = store.reconcile_transfer(transfer.request_id, current_hash)
+        elif transfer.direction == "deposit":
+            expected = transfer.decoded_item()
+            source_entries = stash.get(transfer.source_tab, {})
+            source_entry = (
+                source_entries.get(transfer.source_key)
+                if isinstance(source_entries, dict) else None
+            )
+            exact_source_exists = source_entry == expected
+            outcome = "cancelled" if exact_source_exists else "committed"
+            updated = store.resolve_transfer_by_evidence(
+                transfer.request_id, outcome, current_hash,
+                "exact journaled source entry exists" if exact_source_exists
+                else "exact journaled source entry is absent",
+            )
+        else:
+            entries = stash.get(transfer.target_tab, {})
+            candidate = entries.get(transfer.target_key) if isinstance(entries, dict) else None
+            expected = transfer.decoded_item()
+            if transfer.target_pos is not None:
+                expected["pos"] = [float(transfer.target_pos[0]), float(transfer.target_pos[1])]
+            if candidate == expected:
+                updated = store.resolve_transfer_by_evidence(
+                    transfer.request_id, "committed", current_hash,
+                    "exact prepared target entry exists",
+                )
+            elif candidate is None:
+                updated = store.resolve_transfer_by_evidence(
+                    transfer.request_id, "cancelled", current_hash,
+                    "prepared target key is absent",
+                )
+            else:
+                updated = store.resolve_transfer_by_evidence(
+                    transfer.request_id, "cancelled", current_hash,
+                    "prepared target key contains a different item",
+                )
+        if updated.status in {"committed", "cancelled"} and previous not in {"committed", "cancelled"}:
+            recovered += 1
+    remaining = store.list_pending_transfers()
+    return {
+        "recovered": recovered,
+        "conflicts": sum(1 for row in remaining if row.status == "conflict"),
+        "pending": len(remaining),
+    }
+
+
+def reconcile_vault_transfers() -> dict:
+    """Resolve transactions interrupted between SQLite and stash replacement."""
+    path = Path(VAULT_DB_FILE).expanduser().resolve()
+    if not path.exists():
+        return {"recovered": 0, "conflicts": 0, "pending": 0}
+    peer_error = _active_peer_editor_error()
+    if peer_error:
+        return {"recovered": 0, "conflicts": 0, "pending": None, "err": peer_error}
+    stash_path = SAVES / "stash.hss"
+    with SAVE_WRITE_LOCK:
+        with _exclusive_save_file(stash_path):
+            peer_error = _active_peer_editor_error()
+            if peer_error:
+                return {"recovered": 0, "conflicts": 0, "pending": None, "err": peer_error}
+            return _reconcile_vault_transfers_locked(stash_path)
+
+
+def _vault_save_mutation_gate(*, stash_lock_held: bool = False) -> dict | None:
+    """Reconcile the cross-store journal before any ordinary save mutation."""
+    if not Path(VAULT_DB_FILE).expanduser().resolve().exists():
+        return None
+    recovery = (
+        _reconcile_vault_transfers_locked(SAVES / "stash.hss")
+        if stash_lock_held else reconcile_vault_transfers()
+    )
+    if recovery.get("deferred"):
+        return {"err": "Game is running! Close it before editing saves."}
+    if recovery.get("err"):
+        return {"err": recovery["err"]}
+    if recovery.get("pending") or recovery.get("conflicts"):
+        return {
+            "err": "An interrupted Infinite Vault transfer must be recovered before another save change. Open Infinite Vault for details."
+        }
+    return None
+
+
+def vault_meta() -> dict:
+    running = game_running()
+    recovery = {"conflicts": 0, "pending": 0}
+    if not running:
+        recovery = reconcile_vault_transfers()
+    store = vault_store()
+    if running:
+        pending_rows = store.list_pending_transfers()
+        recovery = {
+            "pending": len(pending_rows),
+            "conflicts": sum(1 for row in pending_rows if row.status == "conflict"),
+        }
+    collections = store.list_collections()
+    default = next((row for row in collections if row.name == "Vault"),
+                   collections[0] if collections else None)
+    return {
+        "collections": [row.as_dict() for row in collections],
+        "defaultCollectionId": default.id if default else None,
+        "total": store.count_items(status="available"),
+        "gameRunning": running,
+        "pending": recovery.get("pending"),
+        "conflicts": recovery.get("conflicts", 0),
+        "databaseName": Path(VAULT_DB_FILE).name,
+        "transferTabs": _vault_transfer_tabs(),
+    }
+
+
+def vault_items(query: dict) -> dict:
+    try:
+        limit = max(1, min(200, int(query.get("limit", [120])[0])))
+        offset = max(0, int(query.get("offset", [0])[0]))
+    except (TypeError, ValueError):
+        raise VaultValidationError("invalid vault pagination")
+    search = query.get("q", [""])[0]
+    collection_raw = query.get("collectionId", [None])[0]
+    collection = None
+    if collection_raw not in (None, "", "all"):
+        try:
+            collection = int(collection_raw)
+        except (TypeError, ValueError):
+            raise VaultValidationError("invalid collectionId")
+    store = vault_store()
+    rows = store.list_items(
+        collection=collection, search=search, status="available",
+        limit=min(500, limit + 1), offset=offset,
+    )
+    has_more = len(rows) > limit
+    rows = rows[:limit]
+    if search and search.strip():
+        total = offset + len(rows) + (1 if has_more else 0)
+    else:
+        total = store.count_items(collection=collection, status="available")
+    return {
+        "items": [_vault_item_payload(row) for row in rows],
+        "total": total,
+        "offset": offset,
+        "limit": limit,
+        "hasMore": has_more,
+    }
+
+
+def op_vault_collections(body: dict) -> dict:
+    try:
+        action = body.get("action")
+        store = vault_store()
+        if action == "create":
+            row = store.create_collection(body.get("name"))
+            return {"ok": f"Collection created: {row.name}", "collection": row.as_dict()}
+        if action == "rename":
+            row = store.rename_collection(int(body.get("collectionId")), body.get("name"))
+            return {"ok": f"Collection renamed: {row.name}", "collection": row.as_dict()}
+        if action == "delete":
+            collections = store.list_collections()
+            if len(collections) <= 1:
+                return {"err": "The last vault collection cannot be deleted."}
+            collection_id = int(body.get("collectionId"))
+            name = next((row.name for row in collections if row.id == collection_id), "collection")
+            store.delete_collection(collection_id)
+            return {"ok": f"Empty collection deleted: {name}"}
+        return {"err": "unknown vault collection action"}
+    except (VaultError, TypeError, ValueError) as exc:
+        return {"err": str(exc)}
+
+
+def op_vault_item(body: dict) -> dict:
+    try:
+        if body.get("action") != "move":
+            return {"err": "unknown vault item action"}
+        row = vault_store().move_item(body.get("itemId"), int(body.get("collectionId")))
+        return {"ok": f"Moved to {row.collection_name}", "item": _vault_item_payload(row)}
+    except (VaultError, TypeError, ValueError) as exc:
+        return {"err": str(exc)}
+
+
+def _existing_vault_request(store, request_id: str, request_hash: str, direction: str):
+    try:
+        transfer = store.get_transfer(request_id)
+    except VaultNotFoundError:
+        return None
+    if transfer.direction != direction or transfer.request_hash != request_hash:
+        raise VaultConflictError("requestId was already used for different transfer data")
+    return transfer
+
+
+def op_vault_deposit(body: dict) -> dict:
+    """Move one exact item from a grid-backed shared-stash tab into SQLite."""
+    peer_error = _active_peer_editor_error()
+    if peer_error:
+        return {"err": peer_error}
+    if game_running():
+        return {"err": "Game is running! Close it before using Infinite Vault."}
+    try:
+        source = body.get("source")
+        tab = _vault_stash_tab(source, "source")
+        key = body.get("key")
+        if not isinstance(key, str) or not key or len(key) > 512:
+            raise VaultValidationError("invalid source item key")
+        request_id = _vault_request_id(body.get("requestId"))
+        collection_id = int(body.get("collectionId"))
+        request_hash = canonical_request_hash({
+            "direction": "deposit", "source": {"type": "stash", "tab": tab},
+            "key": key, "collectionId": collection_id,
+        })
+        with SAVE_WRITE_LOCK:
+            store = vault_store()
+            prior = _existing_vault_request(store, request_id, request_hash, "deposit")
+            if prior is not None:
+                if prior.status in {"prepared", "conflict"}:
+                    stash_path = SAVES / "stash.hss"
+                    with _exclusive_save_file(stash_path):
+                        peer_error = _active_peer_editor_error()
+                        if peer_error:
+                            return {"err": peer_error}
+                        if game_running():
+                            return {"err": "Game started while the transfer was waiting. Close it and retry."}
+                        prior = store.reconcile_transfer(request_id, _file_sha256(stash_path))
+                result = _vault_transfer_result(prior)
+                if prior.status == "committed":
+                    result["ok"] = "Item is already stored in Infinite Vault"
+                    result["item"] = _vault_item_payload(store.get_item(prior.item_id))
+                return result
+            recovery = reconcile_vault_transfers()
+            if recovery.get("deferred"):
+                return {"err": "Game started while the transfer was being prepared. Close it and retry."}
+            if recovery.get("err"):
+                return {"err": recovery["err"]}
+            if recovery.get("conflicts"):
+                return {"err": "A previous Infinite Vault transfer needs recovery before a new transfer can start."}
+            stash_path = SAVES / "stash.hss"
+            with _exclusive_save_file(stash_path):
+                peer_error = _active_peer_editor_error()
+                if peer_error:
+                    return {"err": peer_error}
+                if game_running():
+                    return {"err": "Game started while the transfer was waiting. Close it and retry."}
+                before_hash = _file_sha256(stash_path)
+                stash = json.loads(decode_hss(stash_path))
+                items = stash.get(tab)
+                if not isinstance(items, dict) or key not in items:
+                    return {"err": "item to store was not found in the selected shared-stash tab"}
+                entry = items[key]
+                if not isinstance(entry, dict) or not isinstance(entry.get("data"), dict):
+                    return {"err": "the selected stash record is malformed"}
+                raw_item_json = _vault_item_json(entry)
+                resolved = resolve(key, entry["data"])
+                del items[key]
+                encoded_after = _encoded_stash_document(stash)
+                after_hash = hashlib.sha256(encoded_after.encode("ascii")).hexdigest()
+                transfer = store.prepare_deposit(
+                    collection_id, raw_item_json,
+                    request_id=request_id, request_hash=request_hash,
+                    source_tab=tab, source_key=key,
+                    stash_before_sha256=before_hash, stash_after_sha256=after_hash,
+                    label=resolved.get("name"),
+                    source=_vault_shared_grid_label(tab),
+                )
+                if transfer.status != "prepared":
+                    return _vault_transfer_result(transfer)
+                peer_error = _active_peer_editor_error()
+                if peer_error:
+                    store.reconcile_transfer(request_id, _file_sha256(stash_path))
+                    return {"err": peer_error}
+                if game_running():
+                    store.reconcile_transfer(request_id, _file_sha256(stash_path))
+                    return {"err": "Game started before the stash write. The prepared vault copy was safely cancelled."}
+                if _file_sha256(stash_path) != before_hash:
+                    updated = store.reconcile_transfer(request_id, _file_sha256(stash_path))
+                    return _vault_transfer_result(updated)
+                try:
+                    backup_name = backup(stash_path)
+                    if game_running():
+                        store.reconcile_transfer(request_id, _file_sha256(stash_path))
+                        return {"err": "Game started during backup. The prepared vault copy was safely cancelled."}
+                    peer_error = _active_peer_editor_error()
+                    if peer_error:
+                        store.reconcile_transfer(request_id, _file_sha256(stash_path))
+                        return {"err": peer_error}
+                    if _file_sha256(stash_path) != before_hash:
+                        updated = store.reconcile_transfer(request_id, _file_sha256(stash_path))
+                        return _vault_transfer_result(updated, backup_name)
+                    atomic_write_text(stash_path, encoded_after, "ascii")
+                except Exception:
+                    store.reconcile_transfer(request_id, _file_sha256(stash_path))
+                    raise
+                observed = _file_sha256(stash_path)
+                committed = store.commit_deposit(request_id, observed)
+                result = _vault_transfer_result(committed, backup_name)
+                if committed.status == "committed":
+                    result["ok"] = f"{resolved.get('name', 'Item')} stored in Infinite Vault"
+                    result["item"] = _vault_item_payload(store.get_item(committed.item_id))
+                return result
+    except VaultError as exc:
+        return {"err": str(exc)}
+    except (KeyError, TypeError, ValueError, OSError, json.JSONDecodeError) as exc:
+        return {"err": f"Infinite Vault deposit failed: {exc}"}
+
+
+def op_vault_withdraw(body: dict) -> dict:
+    """Return one vault item to a grid-backed shared-stash tab without loss."""
+    peer_error = _active_peer_editor_error()
+    if peer_error:
+        return {"err": peer_error}
+    if game_running():
+        return {"err": "Game is running! Close it before using Infinite Vault."}
+    try:
+        tab = _vault_stash_tab(body.get("target"), "target")
+        item_id = body.get("itemId")
+        request_id = _vault_request_id(body.get("requestId"))
+        request_hash = canonical_request_hash({
+            "direction": "withdrawal", "itemId": item_id,
+            "target": {"type": "stash", "tab": tab},
+        })
+        with SAVE_WRITE_LOCK:
+            store = vault_store()
+            prior = _existing_vault_request(store, request_id, request_hash, "withdrawal")
+            if prior is not None:
+                if prior.status in {"prepared", "conflict"}:
+                    stash_path = SAVES / "stash.hss"
+                    with _exclusive_save_file(stash_path):
+                        peer_error = _active_peer_editor_error()
+                        if peer_error:
+                            return {"err": peer_error}
+                        if game_running():
+                            return {"err": "Game started while the transfer was waiting. Close it and retry."}
+                        prior = store.reconcile_transfer(request_id, _file_sha256(stash_path))
+                result = _vault_transfer_result(prior)
+                if prior.status == "committed":
+                    result["ok"] = "Item is already back in Shared Stash"
+                return result
+            recovery = reconcile_vault_transfers()
+            if recovery.get("deferred"):
+                return {"err": "Game started while the transfer was being prepared. Close it and retry."}
+            if recovery.get("err"):
+                return {"err": recovery["err"]}
+            if recovery.get("conflicts"):
+                return {"err": "A previous Infinite Vault transfer needs recovery before a new transfer can start."}
+            stash_path = SAVES / "stash.hss"
+            with _exclusive_save_file(stash_path):
+                peer_error = _active_peer_editor_error()
+                if peer_error:
+                    return {"err": peer_error}
+                if game_running():
+                    return {"err": "Game started while the transfer was waiting. Close it and retry."}
+                before_hash = _file_sha256(stash_path)
+                stash = json.loads(decode_hss(stash_path))
+                items = stash.get(tab)
+                if not isinstance(items, dict):
+                    return {"err": "selected shared-stash tab does not exist"}
+                record = store.get_item(item_id)
+                entry = record.decoded_item()
+                if not isinstance(entry.get("data"), dict):
+                    raise VaultValidationError("stored item record is malformed")
+                source_key = record.source_item_key or ""
+                try:
+                    cls = int(source_key.rsplit("-", 1)[1])
+                except (ValueError, IndexError):
+                    cls = int(resolve("0-0-0--1", entry["data"]).get("cls", -1))
+                target_key = source_key if source_key and source_key not in items else fresh_key(cls, items)
+                resolved = resolve(target_key, entry["data"])
+                original_pos = entry.get("pos")
+                if (isinstance(original_pos, list) and len(original_pos) >= 2
+                        and pos_free(items, tab, original_pos, resolved["w"], resolved["h"])):
+                    pos = [float(int(original_pos[0])), float(int(original_pos[1]))]
+                else:
+                    pos = find_free_pos(items, tab, resolved["w"], resolved["h"])
+                if pos is None:
+                    return {"err": f"No space in {_vault_shared_grid_label(tab)}. The item is still safe in Infinite Vault."}
+                entry["pos"] = pos
+                items[target_key] = entry
+                encoded_after = _encoded_stash_document(stash)
+                after_hash = hashlib.sha256(encoded_after.encode("ascii")).hexdigest()
+                transfer = store.prepare_withdrawal(
+                    item_id, request_id=request_id, request_hash=request_hash,
+                    target_tab=tab, target_key=target_key, target_pos=(int(pos[0]), int(pos[1])),
+                    stash_before_sha256=before_hash, stash_after_sha256=after_hash,
+                )
+                if transfer.status != "prepared":
+                    return _vault_transfer_result(transfer)
+                peer_error = _active_peer_editor_error()
+                if peer_error:
+                    store.reconcile_transfer(request_id, _file_sha256(stash_path))
+                    return {"err": peer_error}
+                if game_running():
+                    store.reconcile_transfer(request_id, _file_sha256(stash_path))
+                    return {"err": "Game started before the stash write. The vault item remains safely stored."}
+                if _file_sha256(stash_path) != before_hash:
+                    updated = store.reconcile_transfer(request_id, _file_sha256(stash_path))
+                    return _vault_transfer_result(updated)
+                try:
+                    backup_name = backup(stash_path)
+                    if game_running():
+                        store.reconcile_transfer(request_id, _file_sha256(stash_path))
+                        return {"err": "Game started during backup. The vault item remains safely stored."}
+                    peer_error = _active_peer_editor_error()
+                    if peer_error:
+                        store.reconcile_transfer(request_id, _file_sha256(stash_path))
+                        return {"err": peer_error}
+                    if _file_sha256(stash_path) != before_hash:
+                        updated = store.reconcile_transfer(request_id, _file_sha256(stash_path))
+                        return _vault_transfer_result(updated, backup_name)
+                    atomic_write_text(stash_path, encoded_after, "ascii")
+                except Exception:
+                    store.reconcile_transfer(request_id, _file_sha256(stash_path))
+                    raise
+                observed = _file_sha256(stash_path)
+                committed = store.commit_withdrawal(request_id, observed)
+                result = _vault_transfer_result(store.get_transfer(request_id), backup_name)
+                if committed.status == "committed":
+                    result["ok"] = f"{resolved.get('name', 'Item')} returned to {_vault_shared_grid_label(tab)}"
+                return result
+    except VaultError as exc:
+        return {"err": str(exc)}
+    except (KeyError, TypeError, ValueError, OSError, json.JSONDecodeError) as exc:
+        return {"err": f"Infinite Vault withdrawal failed: {exc}"}
 
 
 def file_key(ref: dict):
@@ -1025,15 +1693,36 @@ class FileCtx:
         tab = ref.get("tab") or ref["type"]
         return d.setdefault(tab, {})
 
-    def save_all(self) -> list:
-        baks = []
-        for fk, d in self.loaded.items():
+    def save_all(self, destination_first=None) -> list:
+        """Commit a multi-file edit without a source-first loss window.
+
+        All potentially slow backups complete before the final runtime safety
+        check.  Destination-first replacement means a process/power failure
+        between two atomic replaces can leave a duplicate, never delete the
+        only active copy of a moved item.
+        """
+        keys = list(self.loaded)
+        if destination_first in self.loaded:
+            keys.remove(destination_first)
+            keys.insert(0, destination_first)
+        plans = []
+        for fk in keys:
+            d = self.loaded[fk]
             if fk[0] == "stash":
-                baks.append(write_stash(d))
+                plans.append((SAVES / "stash.hss", _encoded_stash_document(d)))
             elif fk[0] == "bag":
-                baks.append(write_bags(fk[1], d))
+                plans.append((
+                    SAVES / f"inventory_order_{fk[1]}.hss",
+                    encode_hss(json.dumps(d, separators=(", ", ": "))),
+                ))
             else:
-                baks.append(write_char_inventory(fk[1], d))
+                path, encoded = _encoded_char_inventory_document(fk[1], d)
+                if encoded is not None:
+                    plans.append((path, encoded))
+        baks = [backup(path) for path, _encoded in plans]
+        _runtime_save_barrier()
+        for path, encoded in plans:
+            atomic_write_text(path, encoded, "ascii")
         return baks
 
 
@@ -1076,7 +1765,9 @@ def op_move(body: dict) -> dict:
         if key in eq:
             key = fresh_key(int(key.rsplit("-", 1)[1]), eq)
         eq[key] = entry
-        baks = ctx.save_all()
+        baks = ctx.save_all(destination_first=file_key({
+            "type": "equipped", "slot": int(to["slot"])
+        }))
         return {"ok": f"{it['name']} equipped -> {SLOT_NAMES.get(g, g)}", "backup": ", ".join(baks)}
 
     dst = ctx.items(to)
@@ -1093,7 +1784,7 @@ def op_move(body: dict) -> dict:
             key = fresh_key(int(key.rsplit("-", 1)[1]), dst)
     entry["pos"] = [float(int(pos[0])), float(int(pos[1]))]
     dst[key] = entry
-    baks = ctx.save_all()
+    baks = ctx.save_all(destination_first=file_key(to))
     return {"ok": f"{it['name']} moved -> [{int(pos[0])},{int(pos[1])}]", "backup": ", ".join(baks)}
 
 
@@ -1671,6 +2362,7 @@ def op_restore_backup(body: dict) -> dict:
         return {"err": "backup not found"}
     target = SAVES / m.group("target")
     pre = backup(target) if target.exists() else "(none)"
+    _runtime_save_barrier()
     shutil.copy2(src, target)
     return {"ok": f"restored {m.group('target')} from {m.group('ts')}", "backup": f"pre-restore: {pre}"}
 
@@ -2385,6 +3077,26 @@ def find_owned_items(query: str) -> dict:
         except Exception:
             pass
 
+    vault_path = Path(VAULT_DB_FILE).expanduser().resolve()
+    if vault_path.exists():
+        try:
+            for record in vault_store().search_items(query, status="available", limit=500):
+                item = _vault_item_payload(record)
+                location = f"Infinite Vault · {record.collection_name}"
+                results.append({
+                    "id": record.id,
+                    "name": item["name"], "rar": item["rar"],
+                    "clsName": item["clsName"], "stack": item["stack"],
+                    "spr": item["spr"], "cid": item["cid"],
+                    "key": record.source_item_key or "", "location": location,
+                    "target": {"view": "vault", "collectionId": record.collection_id,
+                               "itemId": record.id},
+                })
+        except VaultError:
+            # A damaged/newer vault must not break save-file search. The Vault
+            # screen reports its precise fail-closed error separately.
+            pass
+
     results.sort(key=lambda row: (row["name"].casefold(), row["location"].casefold()))
     total = len(results)
     return {"items": results[:500], "total": total, "limited": total > 500}
@@ -2396,6 +3108,64 @@ class H(BaseHTTPRequestHandler):
     def log_message(self, *a):
         pass
 
+    def _allowed_authority(self) -> tuple[str, str]:
+        port = int(self.server.server_address[1])
+        return (f"127.0.0.1:{port}", f"localhost:{port}")
+
+    def _require_local_host(self) -> bool:
+        host = (self.headers.get("Host") or "").strip().lower()
+        if host not in self._allowed_authority():
+            # Consume a small rejected POST body before closing the socket.
+            # Otherwise Windows may send a TCP reset before the browser sees
+            # the 403 response because unread request bytes remain queued.
+            if getattr(self, "command", None) == "POST":
+                try:
+                    length = int(self.headers.get("Content-Length", "0"))
+                    if 0 < length <= MAX_POST_BYTES:
+                        self.rfile.read(length)
+                except (TypeError, ValueError, OSError):
+                    pass
+            self._json({"err": "request rejected: invalid local Host"}, 403)
+            return False
+        return True
+
+    def _read_json_post(self):
+        raw_length = self.headers.get("Content-Length")
+        try:
+            length = int(raw_length)
+        except (TypeError, ValueError):
+            self._json({"err": "valid Content-Length required"}, 411)
+            return None
+        if length < 0:
+            self._json({"err": "invalid Content-Length"}, 400)
+            return None
+        if length > MAX_POST_BYTES:
+            self._json({"err": "request body is too large"}, 413)
+            return None
+        raw_body = self.rfile.read(length)
+        media_type = (self.headers.get("Content-Type") or "").split(";", 1)[0].strip().lower()
+        if media_type != "application/json":
+            self._json({"err": "Content-Type must be application/json"}, 415)
+            return None
+        if self.headers.get(EDITOR_REQUEST_HEADER) != "1":
+            self._json({"err": "request rejected: missing editor request header"}, 403)
+            return None
+        origin = self.headers.get("Origin")
+        if origin is not None:
+            host = (self.headers.get("Host") or "").strip().lower()
+            if origin.strip().lower() != f"http://{host}":
+                self._json({"err": "request rejected: invalid Origin"}, 403)
+                return None
+        try:
+            body = json.loads(raw_body or b"{}")
+        except (UnicodeDecodeError, json.JSONDecodeError):
+            self._json({"err": "malformed JSON request"}, 400)
+            return None
+        if not isinstance(body, dict):
+            self._json({"err": "JSON request body must be an object"}, 400)
+            return None
+        return body
+
     def _json(self, obj, code=200):
         b = json.dumps(obj, ensure_ascii=False).encode("utf-8")
         self.send_response(code)
@@ -2406,6 +3176,8 @@ class H(BaseHTTPRequestHandler):
         self.wfile.write(b)
 
     def do_GET(self):
+        if not self._require_local_host():
+            return
         u = urlparse(self.path)
         if u.path == "/":
             b = HTML.encode("utf-8")
@@ -2418,7 +3190,11 @@ class H(BaseHTTPRequestHandler):
         elif u.path == "/api/instance":
             # Lightweight startup handshake: do not enumerate saves or invoke
             # tasklist merely to decide whether a second launcher can reuse us.
-            self._json({"application": APPLICATION_ID, "version": APP_VERSION})
+            self._json({
+                "application": APPLICATION_ID,
+                "version": APP_VERSION,
+                "pid": os.getpid(),
+            })
         elif u.path == "/api/overview":
             self._json({
                 "application": APPLICATION_ID,
@@ -2450,6 +3226,16 @@ class H(BaseHTTPRequestHandler):
             self._json(read_char(int(u.path.rsplit("/", 1)[1])))
         elif u.path == "/api/stash":
             self._json(read_stash())
+        elif u.path == "/api/vault/meta":
+            try:
+                self._json(vault_meta())
+            except Exception as exc:
+                self._json({"err": f"Infinite Vault unavailable: {exc}"}, 500)
+        elif u.path == "/api/vault/items":
+            try:
+                self._json(vault_items(parse_qs(u.query, keep_blank_values=True)))
+            except Exception as exc:
+                self._json({"err": f"Infinite Vault query failed: {exc}"}, 500)
         elif u.path == "/api/sets":
             self._json(SETS)
         elif u.path == "/api/runewords":
@@ -2486,42 +3272,80 @@ class H(BaseHTTPRequestHandler):
         else:
             self._json({"err": "not found"}, 404)
 
+    def _dispatch_post(self, path: str, body: dict) -> None:
+        if path == "/api/add":
+            self._json(op_add(body))
+        elif path == "/api/move":
+            self._json(op_move(body))
+        elif path == "/api/addmany":
+            self._json(op_addmany(body))
+        elif path == "/api/forge":
+            self._json(op_forge(body))
+        elif path == "/api/loadout":
+            self._json(op_loadout(body))
+        elif path == "/api/restorebak":
+            self._json(op_restore_backup(body))
+        elif path == "/api/sockets":
+            self._json(op_sockets(body))
+        elif path == "/api/makerelic":
+            self._json(op_make_relic(body))
+        elif path == "/api/makestackable":
+            self._json(op_make_stackable(body))
+        elif path == "/api/makes10access":
+            self._json(op_make_s10_access(body))
+        elif path == "/api/modify":
+            self._json(op_modify(body))
+        elif path == "/api/delete":
+            self._json(op_delete(body))
+        elif path == "/api/health/fix":
+            self._json(op_fix_save_health())
+        elif path == "/api/vault/deposit":
+            self._json(op_vault_deposit(body))
+        elif path == "/api/vault/withdraw":
+            self._json(op_vault_withdraw(body))
+        elif path == "/api/vault/collections":
+            self._json(op_vault_collections(body))
+        elif path == "/api/vault/item":
+            self._json(op_vault_item(body))
+        else:
+            self._json({"err": "not found"}, 404)
+
     def do_POST(self):
-        n = int(self.headers.get("Content-Length", 0))
-        body = json.loads(self.rfile.read(n) or b"{}")
-        u = urlparse(self.path)
+        if not self._require_local_host():
+            return
+        body = self._read_json_post()
+        if body is None:
+            return
+        path = urlparse(self.path).path
+        ordinary_save_routes = {
+            "/api/add", "/api/move", "/api/addmany", "/api/forge",
+            "/api/restorebak", "/api/sockets",
+            "/api/makerelic", "/api/makestackable", "/api/makes10access",
+            "/api/modify", "/api/delete", "/api/health/fix",
+        }
+        mutates_save = path in ordinary_save_routes or (
+            path == "/api/loadout" and body.get("action") == "apply"
+        )
         try:
             with SAVE_WRITE_LOCK:
-                if u.path == "/api/add":
-                    self._json(op_add(body))
-                elif u.path == "/api/move":
-                    self._json(op_move(body))
-                elif u.path == "/api/addmany":
-                    self._json(op_addmany(body))
-                elif u.path == "/api/forge":
-                    self._json(op_forge(body))
-                elif u.path == "/api/loadout":
-                    self._json(op_loadout(body))
-                elif u.path == "/api/restorebak":
-                    self._json(op_restore_backup(body))
-                elif u.path == "/api/sockets":
-                    self._json(op_sockets(body))
-                elif u.path == "/api/makerelic":
-                    self._json(op_make_relic(body))
-                elif u.path == "/api/makestackable":
-                    self._json(op_make_stackable(body))
-                elif u.path == "/api/makes10access":
-                    self._json(op_make_s10_access(body))
-                elif u.path == "/api/modify":
-                    self._json(op_modify(body))
-                elif u.path == "/api/delete":
-                    self._json(op_delete(body))
-                elif u.path == "/api/health/fix":
-                    self._json(op_fix_save_health())
-                else:
-                    self._json({"err": "not found"}, 404)
-        except Exception as e:
-            self._json({"err": f"error: {e}"}, 500)
+                peer_error = _active_peer_editor_error()
+                if peer_error:
+                    self._json({"err": peer_error})
+                    return
+                lock = _exclusive_save_file(SAVES / "stash.hss") if mutates_save else nullcontext()
+                with lock:
+                    peer_error = _active_peer_editor_error()
+                    if peer_error:
+                        self._json({"err": peer_error})
+                        return
+                    if mutates_save:
+                        blocked = _vault_save_mutation_gate(stash_lock_held=True)
+                        if blocked:
+                            self._json(blocked)
+                            return
+                    self._dispatch_post(path, body)
+        except Exception as exc:
+            self._json({"err": f"error: {exc}"}, 500)
 
 
 HTML = r"""<!DOCTYPE html>
@@ -2714,6 +3538,7 @@ input,select{background:#0b111a;color:#dfe7f0;border-color:#2d3b50;border-radius
 .health-actions{display:flex;gap:9px;align-items:center;margin-bottom:15px}.health-state{font-size:11px;color:#7f8da1}.health-list{display:flex;flex-direction:column;gap:7px;max-width:920px}.health-issue{display:grid;grid-template-columns:72px minmax(0,1fr);gap:11px;padding:11px 13px;border:1px solid #2c3a4e;border-radius:9px;background:#101824}.health-issue.error{border-left:3px solid #ff6268}.health-issue.warning{border-left:3px solid #f1b84b}.health-sev{font-size:9px;font-weight:900;letter-spacing:1px;color:#8290a4}.health-issue.error .health-sev{color:#ff7d82}.health-issue.warning .health-sev{color:#f4c66f}.health-msg{color:#dce5ef;font-size:12px}.health-loc{margin-top:3px;color:#6f7e93;font-size:10px}.health-fixable{color:#63dfb1;font-weight:800}.health-clean{max-width:920px;padding:30px;text-align:center;border:1px solid rgba(82,221,169,.28);border-radius:14px;background:rgba(37,172,125,.06);color:#72dfb7}.health-clean b{display:block;font-size:18px;margin-bottom:4px}
 .finder-bar{display:grid;grid-template-columns:minmax(190px,1fr) minmax(105px,135px) minmax(105px,135px) auto;gap:8px;max-width:980px;margin-bottom:14px}.finder-bar input,.finder-bar select{height:39px;min-width:0}.finder-count{margin:4px 0 11px;color:#77869a;font-size:11px}.finder-list{display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:8px;max-width:980px}.found-card{display:grid;grid-template-columns:38px minmax(0,1fr) auto;gap:10px;align-items:center;min-height:61px;padding:9px 10px;border:1px solid #2b394d;border-radius:10px;background:linear-gradient(145deg,#141d29,#0d141e)}.found-card img{width:34px;height:34px;object-fit:contain;image-rendering:pixelated;filter:drop-shadow(0 4px 7px rgba(0,0,0,.5))}.found-icon{width:34px;height:34px;display:grid;place-items:center;border:1px solid #34445a;border-radius:7px;color:#66768b}.found-name{font-weight:750;font-size:12px}.found-loc{margin-top:2px;color:#718096;font-size:10px}.locate-btn{padding:6px 9px;border:1px solid #3b526c;border-radius:7px;background:#162436;color:#a8ddec;cursor:pointer;font-size:10px;font-weight:800}.locate-btn:hover{border-color:#55bad0;background:#1d3348;color:#e2f9ff}.found-empty{max-width:920px;padding:28px;border:1px dashed #334258;border-radius:12px;text-align:center;color:#718096}
 .found-pulse{position:relative!important;z-index:15!important;animation:foundPulse 1.2s ease-in-out 3;box-shadow:0 0 0 2px #53d7ef,0 0 24px rgba(83,215,239,.65)!important}@keyframes foundPulse{50%{filter:brightness(1.65);transform:scale(1.04)}}
+.vault-toolbar{display:grid;grid-template-columns:minmax(180px,1fr) minmax(150px,220px) minmax(130px,180px) auto;gap:9px;align-items:center;max-width:1120px;margin:0 0 13px}.vault-toolbar input,.vault-toolbar select{height:39px;min-width:0}.vault-manage{display:flex;gap:7px;flex-wrap:wrap;max-width:1120px;margin-bottom:13px}.vault-mini{min-height:33px;padding:6px 10px;border:1px solid #33465e;border-radius:7px;background:#142033;color:#b9d8e4;cursor:pointer;font-size:10px;font-weight:800}.vault-mini:hover{border-color:#55bad0;color:#effcff}.vault-mini.danger{color:#ff999d;border-color:#643b45}.vault-summary{display:flex;align-items:center;justify-content:space-between;gap:12px;max-width:1120px;margin:8px 0 12px;color:#8190a5;font-size:11px}.vault-list{display:grid;grid-template-columns:repeat(auto-fill,minmax(245px,1fr));gap:10px;max-width:1120px}.vault-card{position:relative;display:grid;grid-template-columns:54px minmax(0,1fr);gap:11px;min-height:92px;padding:12px;border:1px solid #2e3f55;border-radius:11px;background:radial-gradient(circle at 0 0,rgba(54,200,232,.055),transparent 38%),linear-gradient(145deg,#151f2d,#0d151f);box-shadow:0 8px 22px rgba(0,0,0,.16);transition:border-color .14s,transform .14s}.vault-card:hover{border-color:#536f8d;transform:translateY(-1px)}.vault-card img,.vault-card-icon{width:52px;height:52px;object-fit:contain;image-rendering:pixelated;filter:drop-shadow(0 5px 8px rgba(0,0,0,.55))}.vault-card-icon{display:grid;place-items:center;border:1px solid #354860;border-radius:9px;color:#6c7f96;font-size:20px}.vault-name{font-weight:800;font-size:13px;line-height:1.2}.vault-meta{margin-top:4px;color:#718198;font-size:10px;line-height:1.45}.vault-actions{grid-column:1/-1;display:flex;gap:6px;justify-content:flex-end;margin-top:2px}.vault-return{padding:6px 9px;border:1px solid rgba(82,221,169,.38);border-radius:7px;background:rgba(37,172,125,.09);color:#85e7bf;cursor:pointer;font-size:10px;font-weight:800}.vault-return:hover{background:rgba(37,172,125,.16);border-color:#52dda9}.vault-return:disabled{opacity:.4;cursor:not-allowed}.vault-pager{display:flex;justify-content:center;gap:8px;max-width:1120px;margin:16px 0}.vault-empty{max-width:1120px;padding:38px 24px;border:1px dashed #34465d;border-radius:13px;text-align:center;color:#75869c}.vault-warning{max-width:1120px;margin-bottom:13px;padding:10px 13px;border:1px solid rgba(255,153,76,.35);border-radius:9px;background:rgba(255,132,45,.07);color:#ffb47d;font-size:11px}.unique-list{display:grid;grid-template-columns:repeat(auto-fill,minmax(190px,1fr));gap:7px;max-width:1120px;margin-bottom:16px}.unique-card{display:grid;grid-template-columns:34px minmax(0,1fr);gap:8px;align-items:center;min-height:54px;padding:8px;border:1px solid #2b3b50;border-radius:8px;background:#101923;cursor:pointer}.unique-card:hover{border-color:#526b88}.unique-card img{width:32px;height:32px;object-fit:contain;image-rendering:pixelated}.unique-card .muted{font-size:9px}
 @media(max-width:1260px){body{grid-template-columns:232px minmax(500px,1fr) 350px}.top-actions{min-width:280px}.brand{min-width:195px}.version{max-width:175px}#mid{padding-left:17px;padding-right:17px}.finder-bar{grid-template-columns:1fr 1fr}.finder-bar #ofq,.finder-bar #ofgo{grid-column:1/-1}.access-grid{grid-template-columns:1fr}}
 </style></head><body>
 <header id="topbar">
@@ -2732,6 +3557,7 @@ input,select{background:#0b111a;color:#dfe7f0;border-color:#2d3b50;border-radius
   <div class="side-caption">WORKSPACE</div>
   <button class="tabbtn" data-view="finder">&#128269;&nbsp; Global Item Finder</button>
   <button class="tabbtn" data-view="stash">&#128451;&nbsp; Shared Stash</button>
+  <button class="tabbtn" data-view="vault">&#8734;&nbsp; Infinite Vault</button>
   <button class="tabbtn" data-view="sets">&#9876;&nbsp; Set Collection</button>
   <button class="tabbtn" data-view="runewords">&#10038;&nbsp; Runeword Forge</button>
   <button class="tabbtn" data-view="relics">&#128302;&nbsp; Relic Lab</button>
@@ -2764,6 +3590,7 @@ input,select{background:#0b111a;color:#dfe7f0;border-color:#2d3b50;border-radius
 </aside>
 <script>
 let CAT=[], SETS_DB=[], RW_DB=[], chars=[], view=null, sel=null, curChar=null, charData=null, stashData=null;
+let vaultState={collectionId:'all',q:'',offset:0,limit:120,withdrawTab:'stash_tab_1',queryToken:0,highlightItem:null};
 const DICE_TARGET_CACHE={};
 const DICE_ADD_SELECTION={};
 const CLS={0:"Helmet",1:"Body Armor",2:"Boots",3:"Weapon",4:"Gloves",5:"Amulet",6:"Shield",7:"Ring",8:"Belt",10:"Charm",11:"Potion / Codex",12:"Key",13:"Boss Part / Tarot",14:"Material",15:"Rune / Gem / Orb",16:"Relic",18:"Flask",19:"Essence Vault","-2":"Runeword"};
@@ -2771,9 +3598,15 @@ const SLOTS={0:"Helmet",1:"Body Armor",2:"Boots",3:"Weapon I",4:"Gloves",5:"Amul
 const DIMS={inventory_tab:[15,6],inventory_charms:[3,11],inventory_key_tab:[15,6],inventory_material_tab:[15,6],inventory_socket_tab:[15,6],inventory_relic_tab:[15,6],inventory_tarot_tab:[15,6],inventory_vault_tab:[15,6],inventory_vault_active:[15,6],stash_tab:[17,18],material_tab:[17,18],socket_tab:[17,18],potions:[5,2],personal_stash:[17,18]};
 const BAG_LABELS={inventory_tab_0:"Main",inventory_tab_1:"Extra 1",inventory_tab_2:"Extra 2",inventory_tab_3:"Extra 3",inventory_tab_4:"Extra 4",inventory_socket_tab:"Runes & Gems",inventory_material_tab:"Materials",inventory_key_tab:"Keys",inventory_relic_tab:"Relics",inventory_tarot_tab:"Tarot",inventory_vault_tab:"Essence Vaults",inventory_vault_active_0:"Active Vault",inventory_charms:"Charms",personal_stash:"Personal Stash"};
 const CELL=26;
-const TIPBAR=`<div class="tipbar">&#128161; <b>Right-click any item</b> for: Verified MAX / Best Roll, Dice skill target, Edit sockets, Random reroll, Duplicate, Edit stack, Delete &nbsp;&middot;&nbsp; <b>Verified item profiles are applied automatically when available</b> &nbsp;&middot;&nbsp; <b>Drag</b> items to move them or drop onto an equipment slot</div>`;
+const TIPBAR=`<div class="tipbar">&#128161; <b>Right-click any item</b> for: Store in Infinite Vault, Verified MAX / Best Roll, Dice skill target, Edit sockets, Random reroll, Duplicate, Edit stack, Delete &nbsp;&middot;&nbsp; <b>Verified item profiles are applied automatically when available</b> &nbsp;&middot;&nbsp; <b>Drag</b> items to move them or drop onto an equipment slot</div>`;
 const STASH_DRAG_TIP=`<div class="tipbar">&#8597; <b>Moving between stash tabs:</b> while holding an item, use the mouse wheel or keep the pointer near the top/bottom edge to auto-scroll. The item is saved only when dropped on a valid cell.</div>`;
-async function j(u,opt){const r=await fetch(u,opt);return r.json()}
+async function j(u,opt={}){
+  const cfg={...opt};
+  if((cfg.method||'GET').toUpperCase()==='POST'){
+    cfg.headers={'Content-Type':'application/json','X-Hero-Siege-Item-Editor':'1',...(cfg.headers||{})};
+  }
+  const r=await fetch(u,cfg);return r.json()
+}
 async function boot(){
   CAT=await j('/api/catalog'); SETS_DB=await j('/api/sets'); RW_DB=await j('/api/runewords');
   const fsetEl=document.getElementById('fset');
@@ -2804,6 +3637,7 @@ async function boot(){
     document.getElementById('status').textContent=o.gameRunning?'GAME RUNNING - VIEW ONLY, WRITING LOCKED':'GAME CLOSED - EDITING ENABLED';
     document.getElementById('status').className=o.gameRunning?'warn':'';},5000);
   document.querySelector('[data-view=stash]').onclick=openStash;
+  document.querySelector('[data-view=vault]').onclick=()=>openVault(true);
   document.querySelector('[data-view=finder]').onclick=openFinder;
   document.querySelector('[data-view=sets]').onclick=openSets;
   document.querySelector('[data-view=runewords]').onclick=openRunewords;
@@ -2838,6 +3672,10 @@ function gridHTML(tab,items,delTarget){
       style="left:${p[0]*CELL}px;top:${p[1]*CELL}px;width:${(it.w||1)*CELL-2}px;height:${(it.h||1)*CELL-2}px">${inner}${it.stack?`<span class="stk">x${it.stack}</span>`:''}</div>`;
   });
   return h+'</div>';
+}
+function uniqueListHTML(items,delTarget){
+  if(!items.length)return '<div class="muted">This auto-sorted tab is empty.</div>';
+  return `<div class="unique-list">${items.map(it=>`<div class="unique-card" data-item-preview data-del='${attr(JSON.stringify(delTarget))}' data-key="${attr(it.key)}" data-cid="${it.cid??''}" data-rwcid="${it.rwcid??''}" data-roll="${attr(JSON.stringify(it.rollProfile||null))}" data-skill="${attr(JSON.stringify(it.skillSelector||null))}" data-raw='${attr(JSON.stringify(it.raw||{}))}'>${it.spr?`<img src="/icons/${attr(it.spr)}.png?v=2" loading="lazy">`:'<div class="found-icon">&#9671;</div>'}<div><div class="r-${attr(it.rar||'_')}">${esc(it.name)}</div><div class="muted">right-click for actions</div></div></div>`).join('')}</div>`;
 }
 function occFree(g,x,y,w,h,skipKey){
   if(x<0||y<0||x+w>g.cols||y+h>g.rows)return false;
@@ -3143,7 +3981,7 @@ function setupTip(){
   }
   document.addEventListener('mousemove',e=>{
     if(dragInfo){tip.style.display='none';return}
-    const el=e.target.closest('.item,.dslot[draggable],.res,.rwname');
+    const el=e.target.closest('.item,.dslot[draggable],.res,.rwname,[data-item-preview]');
     if(!el){tip.style.display='none';return}
     const rwcid=el.dataset.rwcid;
     let cid=(rwcid!==''&&rwcid!=null)?rwcid:el.dataset.cid;
@@ -3160,7 +3998,127 @@ function setupTip(){
 }
 const SUBN={1:"Sword",2:"Dagger",3:"Mace",4:"Axe",5:"Claw",6:"Polearm",7:"Chainsaw",8:"Staff",9:"Cane",10:"Wand",11:"Book",12:"Spellblade",13:"Bow",14:"Gun",15:"Flask",16:"Throwing",17:"Universal"}
 function short(n){return n&&n.length>22?n.slice(0,20)+'..':(n||'?')}
-function esc(s){return (s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/"/g,'&quot;')}
+function esc(s){return String(s??'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;')}
+function attr(s){return esc(s).replace(/'/g,'&#39;')}
+function requestId(){return (globalThis.crypto&&globalThis.crypto.randomUUID)?globalThis.crypto.randomUUID():('req_'+Date.now().toString(36)+'_'+Math.random().toString(36).slice(2)+Math.random().toString(36).slice(2))}
+function isVaultTransferTab(tab){return /^(?:stash_tab_[1-9]\d*|material_tab(?:_[1-9]\d*)?|socket_tab(?:_[1-9]\d*)?)$/.test(tab||'')}
+function vaultTabLabel(tab){
+  const listed=vaultMeta&&(vaultMeta.transferTabs||[]).find(row=>row.tab===tab);
+  if(listed)return listed.label;
+  const normal=/^stash_tab_([1-9]\d*)$/.exec(tab||'');if(normal)return `Shared Stash Tab ${+normal[1]}`;
+  const special=/^(material|socket)_tab(?:_([1-9]\d*))?$/.exec(tab||'');
+  if(special)return `${special[1]==='material'?'Material Tab':'Socket Tab'}${special[2]?' '+(+special[2]):''}`;
+  return tab||'Shared Stash';
+}
+let vaultMeta=null;
+function vaultCollectionOptions(collections,selected){
+  return (collections||[]).map(c=>`<option value="${c.id}" ${String(c.id)===String(selected)?'selected':''}>${esc(c.name)} (${c.itemCount||0})</option>`).join('');
+}
+async function openVault(reset=true){
+  view='vault';curChar=null;gridReg={};gridSeq=0;
+  document.querySelectorAll('.charbtn').forEach(b=>b.classList.remove('sel'));
+  if(reset)vaultState.offset=0;
+  try{vaultState.withdrawTab=localStorage.getItem('hsVaultWithdrawTab')||vaultState.withdrawTab}catch(e){}
+  const md=document.getElementById('mid');
+  md.innerHTML='<h2>Infinite Vault</h2><div class="tool-intro"><b>Opening your local vault...</b> Items are stored in a separate SQLite database beside your Hero Siege data.</div>';
+  vaultMeta=await j('/api/vault/meta');
+  if(vaultMeta.err){md.innerHTML=`<h2>Infinite Vault</h2><div class="vault-warning">${esc(vaultMeta.err)}</div>`;return}
+  if(vaultState.collectionId!=='all'&&!(vaultMeta.collections||[]).some(c=>String(c.id)===String(vaultState.collectionId)))vaultState.collectionId='all';
+  const transferTabs=vaultMeta.transferTabs||[];
+  if(!transferTabs.some(row=>row.tab===vaultState.withdrawTab))vaultState.withdrawTab=transferTabs.length?transferTabs[0].tab:'';
+  const returnOptions=transferTabs.map(row=>`<option value="${attr(row.tab)}" ${vaultState.withdrawTab===row.tab?'selected':''}>Return to ${esc(row.label)}</option>`).join('');
+  let h=`<h2>Infinite Vault <span class="muted">(${vaultMeta.total||0} items)</span></h2>
+    <div class="tool-intro"><b>Unlimited named collections, connected to every grid-backed Shared Stash tab.</b> Right-click an item in a normal, Material, or Socket tab to store it here. Returning an item automatically finds the first free space in the selected tab.</div>
+    ${vaultMeta.gameRunning?'<div class="vault-warning">Hero Siege is running. Your vault is viewable, but transfers are locked until the game is closed.</div>':''}
+    ${(vaultMeta.conflicts||0)?`<div class="vault-warning"><b>${vaultMeta.conflicts} transfer needs attention.</b> No item was discarded; close the game and reopen this page to retry recovery.</div>`:''}
+    <div class="vault-toolbar">
+      <input id="vaultq" value="${attr(vaultState.q)}" placeholder="Search this vault..." aria-label="Search Infinite Vault">
+      <select id="vaultcollection"><option value="all">All collections (${vaultMeta.total||0})</option>${vaultCollectionOptions(vaultMeta.collections,vaultState.collectionId)}</select>
+      <select id="vaultreturn" title="Return items to this shared-stash tab" ${returnOptions?'':'disabled'}>${returnOptions||'<option>No compatible stash grid found</option>'}</select>
+      <button class="vault-mini" id="vaultrefresh">REFRESH</button>
+    </div>
+    <div class="vault-manage"><button class="vault-mini" id="vaultnew">+ NEW COLLECTION</button><button class="vault-mini" id="vaultrename" ${vaultState.collectionId==='all'?'disabled':''}>RENAME</button><button class="vault-mini danger" id="vaultdelete" ${vaultState.collectionId==='all'?'disabled':''}>DELETE EMPTY</button></div>
+    <div class="vault-summary"><span id="vaultcount">Loading items...</span><span>Database: ${esc(vaultMeta.databaseName||'hs_infinite_vault.sqlite3')}</span></div>
+    <div id="vaultitems"><div class="vault-empty">Loading...</div></div>`;
+  md.innerHTML=h;
+  document.getElementById('vaultcollection').value=String(vaultState.collectionId);
+  let timer=null;
+  document.getElementById('vaultq').oninput=e=>{vaultState.q=e.target.value;vaultState.offset=0;clearTimeout(timer);timer=setTimeout(loadVaultItems,220)};
+  document.getElementById('vaultcollection').onchange=e=>{vaultState.collectionId=e.target.value==='all'?'all':+e.target.value;vaultState.offset=0;openVault(false)};
+  document.getElementById('vaultreturn').onchange=e=>{vaultState.withdrawTab=e.target.value;try{localStorage.setItem('hsVaultWithdrawTab',vaultState.withdrawTab)}catch(err){}};
+  document.getElementById('vaultrefresh').onclick=()=>openVault(false);
+  document.getElementById('vaultnew').onclick=()=>manageVaultCollection('create');
+  document.getElementById('vaultrename').onclick=()=>manageVaultCollection('rename');
+  document.getElementById('vaultdelete').onclick=()=>manageVaultCollection('delete');
+  await loadVaultItems();
+}
+async function loadVaultItems(){
+  const token=++vaultState.queryToken;
+  const params=new URLSearchParams({q:vaultState.q,offset:String(vaultState.offset),limit:String(vaultState.limit)});
+  if(vaultState.collectionId!=='all')params.set('collectionId',String(vaultState.collectionId));
+  const payload=await j('/api/vault/items?'+params.toString());
+  if(token!==vaultState.queryToken||view!=='vault')return;
+  renderVaultItems(payload);
+}
+function renderVaultItems(payload){
+  const host=document.getElementById('vaultitems'),count=document.getElementById('vaultcount');if(!host||!count)return;
+  if(payload.err){count.textContent='Vault query failed';host.innerHTML=`<div class="vault-warning">${esc(payload.err)}</div>`;return}
+  const rows=payload.items||[],total=payload.total||0;
+  const start=total?payload.offset+1:0,end=Math.min(total,payload.offset+rows.length);
+  count.textContent=`Showing ${start}-${end} of ${total}`;
+  if(!rows.length){host.innerHTML='<div class="vault-empty">No items match this collection or search.</div>';return}
+  host.innerHTML=`<div class="vault-list">${rows.map(row=>`<article class="vault-card" data-item-preview data-vault-id="${attr(row.id)}" data-cid="${row.cid??''}" data-rwcid="${row.rwcid??''}" data-roll="${attr(JSON.stringify(row.rollProfile||null))}" data-skill="${attr(JSON.stringify(row.skillSelector||null))}" data-raw='${attr(JSON.stringify(row.raw||{}))}'>
+      ${row.spr?`<img src="/icons/${attr(row.spr)}.png?v=2" loading="lazy">`:'<div class="vault-card-icon">&#9671;</div>'}
+      <div><div class="vault-name r-${attr(row.rar||'_')}">${esc(row.name)}</div><div class="vault-meta">${esc(row.collectionName)} &middot; ${esc(row.clsName||'Unknown type')}<br>${esc(row.sourceLabel||'Shared Stash')}</div></div>
+      <div class="vault-actions"><button class="vault-mini" data-vault-move="${attr(row.id)}" data-current-collection="${row.collectionId}">MOVE</button><button class="vault-return" data-vault-return="${attr(row.id)}" ${vaultMeta&&vaultMeta.gameRunning?'disabled':''}>RETURN TO STASH</button></div>
+    </article>`).join('')}</div>
+    <div class="vault-pager"><button class="vault-mini" id="vaultprev" ${payload.offset<=0?'disabled':''}>PREVIOUS</button><button class="vault-mini" id="vaultnext" ${payload.offset+rows.length>=total?'disabled':''}>NEXT</button></div>`;
+  host.querySelectorAll('[data-vault-return]').forEach(btn=>btn.onclick=()=>withdrawVaultItem(btn.dataset.vaultReturn,btn));
+  host.querySelectorAll('[data-vault-move]').forEach(btn=>btn.onclick=()=>moveVaultItem(btn.dataset.vaultMove,+btn.dataset.currentCollection));
+  document.getElementById('vaultprev').onclick=()=>{vaultState.offset=Math.max(0,vaultState.offset-vaultState.limit);loadVaultItems()};
+  document.getElementById('vaultnext').onclick=()=>{vaultState.offset+=vaultState.limit;loadVaultItems()};
+  if(vaultState.highlightItem){const card=[...host.querySelectorAll('[data-vault-id]')].find(el=>el.dataset.vaultId===vaultState.highlightItem);if(card){card.scrollIntoView({behavior:'smooth',block:'center'});card.classList.add('found-pulse');setTimeout(()=>card.classList.remove('found-pulse'),3800);vaultState.highlightItem=null}}
+}
+async function withdrawVaultItem(itemId,btn){
+  if(!vaultState.withdrawTab){flash({err:'No compatible Shared Stash grid was found.'});return}
+  if(!confirm(`Return this item to ${vaultTabLabel(vaultState.withdrawTab)}?`))return;
+  btn.disabled=true;btn.textContent='RETURNING...';
+  btn.dataset.requestId=btn.dataset.requestId||requestId();
+  try{
+    const r=await j('/api/vault/withdraw',{method:'POST',body:JSON.stringify({itemId,target:{type:'stash',tab:vaultState.withdrawTab},requestId:btn.dataset.requestId})});
+    flash(r);if(!r.err){delete btn.dataset.requestId;await openVault(false);return}
+  }catch(e){flash({err:'Transfer interrupted. The item is still protected; press Return again to resume.'})}
+  btn.disabled=false;btn.textContent='RETURN TO STASH';
+}
+async function moveVaultItem(itemId,currentId){
+  const choices=(vaultMeta.collections||[]).filter(c=>c.id!==currentId);
+  if(!choices.length){flash({err:'Create another collection first.'});return}
+  const name=prompt('Move to collection:\n'+choices.map(c=>c.name).join('\n'),choices[0].name);if(name==null)return;
+  const target=choices.find(c=>c.name.toLocaleLowerCase()===name.trim().toLocaleLowerCase());if(!target){flash({err:'Collection not found.'});return}
+  const r=await j('/api/vault/item',{method:'POST',body:JSON.stringify({action:'move',itemId,collectionId:target.id})});flash(r);if(!r.err)openVault(false);
+}
+async function manageVaultCollection(action){
+  let body={action};
+  const current=(vaultMeta.collections||[]).find(c=>String(c.id)===String(vaultState.collectionId));
+  if(action==='create'){const name=prompt('New collection name:');if(name==null)return;body.name=name}
+  else if(action==='rename'){if(!current)return;const name=prompt('Rename collection:',current.name);if(name==null)return;body.collectionId=current.id;body.name=name}
+  else{if(!current||!confirm(`Delete empty collection "${current.name}"?`))return;body.collectionId=current.id}
+  const r=await j('/api/vault/collections',{method:'POST',body:JSON.stringify(body)});flash(r);if(!r.err){if(action==='delete')vaultState.collectionId='all';openVault(false)}
+}
+async function openVaultDepositDialog(target,key,el){
+  const old=document.getElementById('sockmodal');if(old)old.remove();
+  const meta=await j('/api/vault/meta');if(meta.err){flash(meta);return}
+  if(meta.gameRunning){flash({err:'Hero Siege is running. Close it before transferring items.'});return}
+  const modal=document.createElement('div');modal.id='sockmodal';
+  const cid=el&&el.dataset?el.dataset.cid:null,row=(cid!==''&&cid!=null)?CAT[+cid]:null;
+  modal.innerHTML=`<div id="sockbox"><h3>Store in Infinite Vault</h3><div class="muted" style="margin:6px 0 12px">${esc(row?row.name:'This exact item')} will be removed from Shared Stash only after its full record is safely stored.</div><div class="jlrow"><label>Collection</label><select id="vaultdepositcollection">${vaultCollectionOptions(meta.collections,meta.defaultCollectionId)}</select></div><div class="flex" style="margin-top:14px"><button class="act" id="vaultdepositgo" style="margin:0;background:#234a2a;border-color:#3da55e">STORE ITEM</button><button class="act" id="vaultdepositcancel" style="margin:0">CANCEL</button></div></div>`;
+  document.body.appendChild(modal);document.getElementById('vaultdepositcancel').onclick=()=>modal.remove();
+  const go=document.getElementById('vaultdepositgo');
+  go.onclick=async()=>{go.disabled=true;go.textContent='STORING...';go.dataset.requestId=go.dataset.requestId||requestId();
+    try{const r=await j('/api/vault/deposit',{method:'POST',body:JSON.stringify({source:target,key,collectionId:+document.getElementById('vaultdepositcollection').value,requestId:go.dataset.requestId})});flash(r);if(!r.err){modal.remove();refresh();return}}
+    catch(e){flash({err:'Transfer interrupted. Your item remains protected; press Store Item again to resume.'})}
+    go.disabled=false;go.textContent='STORE ITEM';};
+}
 async function openStash(){
   view='stash'; curChar=null; stashData=await j('/api/stash');
   gridReg={}; gridSeq=0;
@@ -3172,7 +4130,8 @@ async function openStash(){
     const items=stashData[tab];
     h+=`<h2 data-find-tab="${esc(tab)}">${tab} <span class="muted">(${items.length})</span></h2>`;
     if(tab==='unique_items'){
-      h+=`<div class="muted">auto-sorted tab &middot; ${items.length} records (no grid positions)</div>`;
+      h+=`<div class="muted" style="margin-bottom:7px">auto-sorted tab &middot; ${items.length} records (no grid positions)</div>`;
+      h+=uniqueListHTML(items,{type:'stash',tab});
       continue;
     }
     h+=gridHTML(tab,items,{type:'stash',tab});
@@ -3320,11 +4279,11 @@ async function openFinder(){
   document.querySelectorAll('.charbtn').forEach(b=>b.classList.remove('sel'));
   const md=document.getElementById('mid');
   md.innerHTML=`<h2>Global Item Finder</h2>
-    <div class="tool-intro"><b>Search items you already own</b> across every character, equipment slot, bag and shared stash. This tool is read-only.</div>
+    <div class="tool-intro"><b>Search items you already own</b> across every character, equipment slot, bag, shared stash and Infinite Vault. This tool is read-only.</div>
     <div class="finder-bar">
       <input id="ofq" placeholder="Type at least 2 characters..." aria-label="Search owned items" autofocus>
       <select id="ofrar"><option value="">All rarities</option><option>Angelic</option><option>Unholy</option><option>Heroic</option><option>Satanic</option><option>Runeword</option><option>Normal</option></select>
-      <select id="ofscope"><option value="">Everywhere</option><option value="stash">Shared stash</option><option value="char">Characters</option></select>
+      <select id="ofscope"><option value="">Everywhere</option><option value="stash">Shared stash</option><option value="vault">Infinite Vault</option><option value="char">Characters</option></select>
       <button class="act" id="ofgo" style="margin:0">Search</button>
     </div>
     <div id="ofcount" class="finder-count">Enter an item name, rarity, type or location.</div>
@@ -3364,6 +4323,11 @@ async function locateOwnedItem(index){
     document.querySelectorAll('.tabbtn').forEach(x=>x.classList.remove('sel'));
     document.querySelector('[data-view=stash]').classList.add('sel');
     await openStash();
+  }else if(target.view==='vault'){
+    document.querySelectorAll('.tabbtn').forEach(x=>x.classList.remove('sel'));
+    document.querySelector('[data-view=vault]').classList.add('sel');
+    vaultState.collectionId=target.collectionId||'all';vaultState.q=row.id||'';vaultState.offset=0;vaultState.highlightItem=target.itemId||row.id;
+    await openVault(false);
   }else if(target.view==='char'){
     document.querySelectorAll('.tabbtn').forEach(x=>x.classList.remove('sel'));
     if(target.section==='bag'||target.section==='personal_stash')bagTab=target.tab;
@@ -3371,7 +4335,7 @@ async function locateOwnedItem(index){
     await openChar(+target.slot,charButton||null);
   }
   await new Promise(resolve=>setTimeout(resolve,30));
-  const item=[...document.querySelectorAll('[data-key]')].find(el=>el.dataset.key===target.key);
+  const item=target.view==='vault'?[...document.querySelectorAll('[data-vault-id]')].find(el=>el.dataset.vaultId===(target.itemId||row.id||'')):[...document.querySelectorAll('[data-key]')].find(el=>el.dataset.key===target.key);
   if(item){item.scrollIntoView({behavior:'smooth',block:'center',inline:'center'});item.classList.add('found-pulse');setTimeout(()=>item.classList.remove('found-pulse'),3800);return;}
   const heading=[...document.querySelectorAll('[data-find-tab]')].find(el=>el.dataset.findTab===target.tab);
   if(heading){heading.scrollIntoView({behavior:'smooth',block:'center'});heading.classList.add('found-pulse');setTimeout(()=>heading.classList.remove('found-pulse'),3800);}
@@ -3592,6 +4556,7 @@ function showCtx(x,y,target,key,el){
     document.addEventListener('click',()=>{m.style.display='none'});}
   const isEq=target.type==='equipped';
   const acts=[];
+  if(target.type==='stash'&&isVaultTransferTab(target.tab))acts.push(['Store in Infinite Vault...','VAULT','']);
   if(!isEq)acts.push(['Duplicate','duplicate','']);
   let rollProfile=null;
   try{rollProfile=JSON.parse((el&&el.dataset&&el.dataset.roll)||'null')}catch(e){}
@@ -3612,6 +4577,8 @@ function showCtx(x,y,target,key,el){
       if(act==='DELETE'){
         if(!confirm('DELETE this item?'))return;
         r=await j('/api/delete',{method:'POST',body:JSON.stringify({target,key})});
+      }else if(act==='VAULT'){
+        openVaultDepositDialog(target,key,el);return;
       }else if(act==='SOCKETS'){
         openSocketEditor(target,key,el);return;
       }else if(act==='SKILL'){
@@ -3627,10 +4594,10 @@ function showCtx(x,y,target,key,el){
     };
   });
   m.style.display='block';
-  m.style.left=Math.min(x,innerWidth-190)+'px';
-  m.style.top=Math.min(y,innerHeight-160)+'px';
+  m.style.left=Math.max(6,Math.min(x,innerWidth-m.offsetWidth-8))+'px';
+  m.style.top=Math.max(6,Math.min(y,innerHeight-m.offsetHeight-8))+'px';
 }
-function refresh(){ if(view==='stash')openStash(); else if(view==='sets')openSets(); else if(view==='char')openChar(curChar,document.querySelector('.charbtn.sel')) }
+function refresh(){ if(view==='stash')openStash(); else if(view==='vault')openVault(false); else if(view==='sets')openSets(); else if(view==='char')openChar(curChar,document.querySelector('.charbtn.sel')) }
 function search(){
   const q=document.getElementById('q').value.toLowerCase();
   const fk=document.getElementById('fkind').value, fc=document.getElementById('fcls').value;
@@ -3750,50 +4717,182 @@ def _open_window(port: int) -> bool:
         return False
 
 
-def _served_version(port: int):
-    """Return the version of an existing editor server, if the port is ours."""
+def _editor_identity(port: int, timeout: float = 1.0):
+    """Return a validated local Item Editor identity, including legacy peers."""
     try:
-        with urlopen(f"http://127.0.0.1:{port}/api/instance", timeout=1) as response:
+        with urlopen(f"http://127.0.0.1:{port}/api/instance", timeout=timeout) as response:
             identity = json.loads(response.read())
-            if identity.get("application") != APPLICATION_ID:
+            if not isinstance(identity, dict) or identity.get("application") != APPLICATION_ID:
                 return None
             version = identity.get("version")
-            return version if isinstance(version, str) else None
+            if not isinstance(version, str) or not version:
+                return None
+            pid = identity.get("pid")
+            if isinstance(pid, bool) or not isinstance(pid, int) or pid <= 0:
+                pid = None
+            return {"version": version, "pid": pid, "port": int(port)}
     except Exception:
         return None
 
 
-def main():
-    import threading
-    srv = None
-    port = PORT
+def _served_version(port: int):
+    """Return the version of an existing editor server, if the port is ours."""
+    identity = _editor_identity(port)
+    return identity["version"] if identity else None
+
+
+def _peer_editor_error(
+    exclude_port: int | None = None, *, exclude_ports=()
+) -> str | None:
+    """Find another editor process, treating PID-less legacy builds as peers."""
+    own_pid = os.getpid()
+    excluded = set(exclude_ports)
+    if exclude_port is not None:
+        excluded.add(exclude_port)
     for candidate in range(PORT, PORT + 10):
+        if candidate in excluded:
+            continue
+        identity = _editor_identity(candidate, timeout=0.2)
+        if identity is None or identity.get("pid") == own_pid:
+            continue
+        pid_text = f", PID {identity['pid']}" if identity.get("pid") else ""
+        return (
+            f"Another Hero Siege Item Editor (v{identity['version']}{pid_text}) "
+            f"is running on port {candidate}. Close it before editing saves."
+        )
+    return None
+
+
+def _active_peer_editor_error() -> str | None:
+    if not INSTANCE_GUARD_ACTIVE:
+        return None
+    if INSTANCE_RESERVED_PORTS:
+        return _peer_editor_error(exclude_ports=INSTANCE_RESERVED_PORTS)
+    return _peer_editor_error(exclude_port=INSTANCE_PORT)
+
+
+def _show_startup_error(message: str) -> None:
+    """Display a visible startup failure without requiring a console window."""
+    if os.name == "nt":
         try:
-            srv = ThreadingHTTPServer(("127.0.0.1", candidate), H)
-            port = candidate
-            break
-        except OSError:
-            # Reuse only an instance that actually runs this source version.
-            # Otherwise move to a free port instead of opening a stale editor.
-            if _served_version(candidate) == APP_VERSION:
-                _open_window(candidate)
-                return
-    if srv is None:
-        raise OSError(f"no free editor port in {PORT}..{PORT + 9}")
-    server_thread = threading.Thread(target=srv.serve_forever, daemon=True)
-    server_thread.start()
+            import ctypes
+            ctypes.windll.user32.MessageBoxW(
+                0, message, "Hero Siege Item Editor", 0x10
+            )
+            return
+        except Exception:
+            pass
+    print(f"Hero Siege Item Editor: {message}", file=sys.stderr)
+
+
+def main():
+    global INSTANCE_GUARD_ACTIVE, INSTANCE_PORT, INSTANCE_RESERVED_PORTS
+    servers = []
+    server_threads = []
+    reserved_ports = []
+    port = PORT
+    reuse_port = None
+    startup_error = None
+    try:
+        with _exclusive_save_file(ROOT / "editor-startup", timeout=5.0):
+            for candidate in range(PORT, PORT + 10):
+                identity = _editor_identity(candidate, timeout=0.2)
+                if identity is None:
+                    continue
+                if identity["version"] == APP_VERSION and identity.get("pid") is not None:
+                    reuse_port = candidate
+                else:
+                    startup_error = (
+                        f"Item Editor v{identity['version']} is already running. "
+                        f"Close it before starting v{APP_VERSION}."
+                    )
+                break
+
+            if reuse_port is None and startup_error is None:
+                for candidate in range(PORT, PORT + 10):
+                    try:
+                        candidate_server = ThreadingHTTPServer(("127.0.0.1", candidate), H)
+                        if not servers:
+                            port = candidate
+                        servers.append(candidate_server)
+                        reserved_ports.append(candidate)
+                    except OSError:
+                        identity = _editor_identity(candidate, timeout=0.2)
+                        if identity is None:
+                            startup_error = (
+                                f"Local editor port {candidate} is occupied by an "
+                                "unidentified or legacy process. Close it before "
+                                f"starting Item Editor v{APP_VERSION}."
+                            )
+                        elif identity["version"] == APP_VERSION and identity.get("pid") is not None:
+                            reuse_port = candidate
+                        else:
+                            startup_error = (
+                                f"Item Editor v{identity['version']} is already running. "
+                                f"Close it before starting v{APP_VERSION}."
+                            )
+                        break
+
+            if not servers and reuse_port is None and startup_error is None:
+                startup_error = f"No free editor port in {PORT}..{PORT + 9}."
+
+            if (reuse_port is not None or startup_error is not None) and servers:
+                for candidate_server in servers:
+                    candidate_server.server_close()
+                servers.clear()
+                reserved_ports.clear()
+
+            if servers:
+                INSTANCE_PORT = port
+                INSTANCE_RESERVED_PORTS = frozenset(reserved_ports)
+                INSTANCE_GUARD_ACTIVE = True
+                for candidate_server in servers:
+                    thread = threading.Thread(
+                        target=candidate_server.serve_forever, daemon=True
+                    )
+                    server_threads.append(thread)
+                    thread.start()
+                peer_error = _peer_editor_error(
+                    exclude_ports=INSTANCE_RESERVED_PORTS
+                )
+                if peer_error:
+                    startup_error = peer_error
+                    INSTANCE_GUARD_ACTIVE = False
+                    INSTANCE_PORT = None
+                    INSTANCE_RESERVED_PORTS = frozenset()
+                    for candidate_server in servers:
+                        candidate_server.shutdown()
+                        candidate_server.server_close()
+                    servers.clear()
+                    server_threads.clear()
+    except (OSError, TimeoutError) as exc:
+        startup_error = f"Could not acquire the editor startup lock: {exc}"
+
+    if reuse_port is not None:
+        _open_window(reuse_port)
+        return
+    if startup_error is not None:
+        _show_startup_error(startup_error)
+        return
+    if not servers or not server_threads:
+        _show_startup_error("The local editor server could not be started.")
+        return
     try:
         native_window = _open_window(port)
         if not native_window:
             # A browser launch is non-blocking.  Keep the source/fallback
             # process (and therefore the daemon HTTP thread) alive until the
             # user interrupts it instead of immediately serving a dead URL.
-            server_thread.join()
+            server_threads[0].join()
     except KeyboardInterrupt:
         pass
     finally:
-        srv.shutdown()
-        srv.server_close()
+        INSTANCE_GUARD_ACTIVE = False
+        INSTANCE_PORT = None
+        INSTANCE_RESERVED_PORTS = frozenset()
+        for candidate_server in servers:
+            candidate_server.shutdown()
+            candidate_server.server_close()
 
 
 if __name__ == "__main__":

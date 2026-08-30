@@ -33,6 +33,10 @@ class _Response:
 
 
 class LaunchReadinessTests(unittest.TestCase):
+    def setUp(self):
+        editor.INSTANCE_GUARD_ACTIVE = False
+        editor.INSTANCE_PORT = None
+
     def test_resource_base_uses_source_directory(self):
         with patch.object(editor.sys, "frozen", False, create=True):
             self.assertEqual(editor._resource_base(), MODULE_PATH.resolve().parent)
@@ -90,6 +94,80 @@ class LaunchReadinessTests(unittest.TestCase):
         ):
             self.assertEqual(editor._served_version(editor.PORT), editor.APP_VERSION)
 
+    def test_editor_identity_preserves_pid_and_recognizes_pidless_legacy_peer(self):
+        with patch.object(
+            editor,
+            "urlopen",
+            return_value=_Response({
+                "application": editor.APPLICATION_ID,
+                "version": editor.APP_VERSION,
+                "pid": 4321,
+            }),
+        ):
+            self.assertEqual(
+                editor._editor_identity(editor.PORT),
+                {"version": editor.APP_VERSION, "pid": 4321, "port": editor.PORT},
+            )
+
+        with patch.object(
+            editor,
+            "urlopen",
+            return_value=_Response({
+                "application": editor.APPLICATION_ID,
+                "version": "2.7.2",
+            }),
+        ):
+            self.assertEqual(
+                editor._editor_identity(editor.PORT + 1),
+                {"version": "2.7.2", "pid": None, "port": editor.PORT + 1},
+            )
+
+    def test_peer_scan_ignores_own_process_and_excluded_port(self):
+        own_identity = {
+            "version": editor.APP_VERSION,
+            "pid": 1234,
+            "port": editor.PORT,
+        }
+
+        def identity(candidate, timeout=1.0):
+            return own_identity if candidate == editor.PORT else None
+
+        with (
+            patch.object(editor.os, "getpid", return_value=1234),
+            patch.object(editor, "_editor_identity", side_effect=identity) as lookup,
+        ):
+            self.assertIsNone(editor._peer_editor_error())
+            self.assertIsNone(editor._peer_editor_error(exclude_port=editor.PORT))
+
+        self.assertEqual(lookup.call_count, 19)
+        self.assertNotIn(
+            editor.PORT,
+            [call.args[0] for call in lookup.call_args_list[10:]],
+        )
+
+    def test_peer_scan_blocks_other_process_and_pidless_legacy_editor(self):
+        cases = (
+            (editor.APP_VERSION, 9876, "PID 9876"),
+            ("2.7.2", None, "v2.7.2"),
+        )
+        for version, pid, expected in cases:
+            with self.subTest(version=version, pid=pid):
+                peer_port = editor.PORT + 3
+
+                def identity(candidate, timeout=1.0):
+                    if candidate == peer_port:
+                        return {"version": version, "pid": pid, "port": candidate}
+                    return None
+
+                with (
+                    patch.object(editor.os, "getpid", return_value=1234),
+                    patch.object(editor, "_editor_identity", side_effect=identity),
+                ):
+                    error = editor._peer_editor_error()
+
+                self.assertIn(expected, error)
+                self.assertIn(f"port {peer_port}", error)
+
     def test_browser_fallback_is_nonblocking_and_never_opens_a_real_browser(self):
         with (
             patch.dict(sys.modules, {"webview": None}),
@@ -99,22 +177,174 @@ class LaunchReadinessTests(unittest.TestCase):
         open_browser.assert_called_once_with("http://127.0.0.1:9876")
 
     def test_main_keeps_new_server_alive_for_browser_fallback_then_closes_it(self):
-        server = SimpleNamespace(
-            serve_forever=Mock(),
-            shutdown=Mock(),
-            server_close=Mock(),
-        )
-        server_thread = SimpleNamespace(start=Mock(), join=Mock())
+        servers = [SimpleNamespace(
+            serve_forever=Mock(), shutdown=Mock(), server_close=Mock(),
+        ) for _ in range(10)]
+        server_threads = [SimpleNamespace(start=Mock(), join=Mock()) for _ in range(10)]
         with (
-            patch.object(editor, "ThreadingHTTPServer", return_value=server),
-            patch.object(editor.threading, "Thread", return_value=server_thread),
+            patch.object(editor, "_exclusive_save_file", return_value=editor.nullcontext()),
+            patch.object(editor, "_editor_identity", return_value=None),
+            patch.object(editor, "_peer_editor_error", return_value=None),
+            patch.object(editor, "ThreadingHTTPServer", side_effect=servers) as server_factory,
+            patch.object(editor.threading, "Thread", side_effect=server_threads),
             patch.object(editor, "_open_window", return_value=False),
         ):
             editor.main()
-        server_thread.start.assert_called_once_with()
-        server_thread.join.assert_called_once_with()
-        server.shutdown.assert_called_once_with()
-        server.server_close.assert_called_once_with()
+        self.assertEqual(server_factory.call_count, 10)
+        self.assertEqual(
+            {call.args[0][1] for call in server_factory.call_args_list},
+            set(range(editor.PORT, editor.PORT + 10)),
+        )
+        for server_thread in server_threads:
+            server_thread.start.assert_called_once_with()
+        server_threads[0].join.assert_called_once_with()
+        for server_thread in server_threads[1:]:
+            server_thread.join.assert_not_called()
+        for server in servers:
+            server.shutdown.assert_called_once_with()
+            server.server_close.assert_called_once_with()
+
+    def test_main_reuses_same_version_found_on_any_reserved_port(self):
+        peer_port = editor.PORT + 4
+
+        def identity(candidate, timeout=1.0):
+            if candidate == peer_port:
+                return {
+                    "version": editor.APP_VERSION,
+                    "pid": 5678,
+                    "port": candidate,
+                }
+            return None
+
+        with (
+            patch.object(editor, "_exclusive_save_file", return_value=editor.nullcontext()),
+            patch.object(editor, "_editor_identity", side_effect=identity),
+            patch.object(editor, "ThreadingHTTPServer") as server_factory,
+            patch.object(editor, "_open_window", return_value=True) as open_window,
+            patch.object(editor, "_show_startup_error") as show_error,
+        ):
+            editor.main()
+
+        open_window.assert_called_once_with(peer_port)
+        server_factory.assert_not_called()
+        show_error.assert_not_called()
+
+    def test_main_rejects_different_version_instead_of_starting_on_next_port(self):
+        peer_port = editor.PORT + 2
+
+        def identity(candidate, timeout=1.0):
+            if candidate == peer_port:
+                return {"version": "2.7.2", "pid": 5678, "port": candidate}
+            return None
+
+        with (
+            patch.object(editor, "_exclusive_save_file", return_value=editor.nullcontext()),
+            patch.object(editor, "_editor_identity", side_effect=identity),
+            patch.object(editor, "ThreadingHTTPServer") as server_factory,
+            patch.object(editor, "_open_window") as open_window,
+            patch.object(editor, "_show_startup_error") as show_error,
+        ):
+            editor.main()
+
+        server_factory.assert_not_called()
+        open_window.assert_not_called()
+        message = show_error.call_args.args[0]
+        self.assertIn("v2.7.2", message)
+        self.assertIn(editor.APP_VERSION, message)
+
+    def test_main_fails_closed_if_any_reserved_port_is_unidentified(self):
+        first_server = SimpleNamespace(
+            serve_forever=Mock(), shutdown=Mock(), server_close=Mock(),
+        )
+        with (
+            patch.object(editor, "_exclusive_save_file", return_value=editor.nullcontext()),
+            patch.object(editor, "_editor_identity", return_value=None),
+            patch.object(
+                editor, "ThreadingHTTPServer",
+                side_effect=[first_server, OSError("occupied")],
+            ) as server_factory,
+            patch.object(editor.threading, "Thread") as thread_factory,
+            patch.object(editor, "_open_window") as open_window,
+            patch.object(editor, "_show_startup_error") as show_error,
+        ):
+            editor.main()
+
+        self.assertEqual(server_factory.call_count, 2)
+        first_server.server_close.assert_called_once_with()
+        first_server.shutdown.assert_not_called()
+        thread_factory.assert_not_called()
+        open_window.assert_not_called()
+        message = show_error.call_args.args[0]
+        self.assertIn(str(editor.PORT + 1), message)
+        self.assertIn("unidentified or legacy", message)
+
+    def test_main_closes_new_server_if_peer_appears_after_bind(self):
+        servers = [SimpleNamespace(
+            serve_forever=Mock(), shutdown=Mock(), server_close=Mock(),
+        ) for _ in range(10)]
+        server_threads = [SimpleNamespace(start=Mock(), join=Mock()) for _ in range(10)]
+        peer_error = "Another Hero Siege Item Editor appeared."
+        with (
+            patch.object(editor, "_exclusive_save_file", return_value=editor.nullcontext()),
+            patch.object(editor, "_editor_identity", return_value=None),
+            patch.object(editor, "_peer_editor_error", return_value=peer_error),
+            patch.object(editor, "ThreadingHTTPServer", side_effect=servers),
+            patch.object(editor.threading, "Thread", side_effect=server_threads),
+            patch.object(editor, "_open_window") as open_window,
+            patch.object(editor, "_show_startup_error") as show_error,
+        ):
+            editor.main()
+
+        for server_thread in server_threads:
+            server_thread.start.assert_called_once_with()
+            server_thread.join.assert_not_called()
+        for server in servers:
+            server.shutdown.assert_called_once_with()
+            server.server_close.assert_called_once_with()
+        open_window.assert_not_called()
+        show_error.assert_called_once_with(peer_error)
+        self.assertFalse(editor.INSTANCE_GUARD_ACTIVE)
+        self.assertIsNone(editor.INSTANCE_PORT)
+
+    def test_instance_endpoint_reports_process_identity(self):
+        handler = object.__new__(editor.H)
+        handler.path = "/api/instance"
+        handler._require_local_host = Mock(return_value=True)
+        handler._json = Mock()
+        with patch.object(editor.os, "getpid", return_value=2468):
+            handler.do_GET()
+
+        handler._json.assert_called_once_with({
+            "application": editor.APPLICATION_ID,
+            "version": editor.APP_VERSION,
+            "pid": 2468,
+        })
+
+    def test_runtime_peer_guard_rejects_save_and_vault_transfer_before_dispatch(self):
+        for path, body in (
+            ("/api/add", {"cid": 1}),
+            ("/api/vault/deposit", {"tab": "stash_tab_1", "key": "item"}),
+        ):
+            with self.subTest(path=path):
+                handler = object.__new__(editor.H)
+                handler.path = path
+                handler._require_local_host = Mock(return_value=True)
+                handler._read_json_post = Mock(return_value=body)
+                handler._json = Mock()
+                handler._dispatch_post = Mock()
+                peer_error = "Another Hero Siege Item Editor is running."
+                with (
+                    patch.object(editor, "INSTANCE_GUARD_ACTIVE", True),
+                    patch.object(editor, "INSTANCE_PORT", editor.PORT),
+                    patch.object(editor, "_peer_editor_error", return_value=peer_error) as scan,
+                    patch.object(editor, "_exclusive_save_file") as save_lock,
+                ):
+                    handler.do_POST()
+
+                handler._json.assert_called_once_with({"err": peer_error})
+                handler._dispatch_post.assert_not_called()
+                save_lock.assert_not_called()
+                scan.assert_called_once_with(exclude_port=editor.PORT)
 
     def test_roll_database_path_fails_closed_until_generated_asset_is_installed(self):
         with tempfile.TemporaryDirectory() as directory:
