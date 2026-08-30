@@ -1,0 +1,4170 @@
+{
+  "schema": "hero-siege-dice-skill-targets-v1",
+  "catalogProfile": "Season 10 clean-438B",
+  "exeSha256": "438BF4848688C5BE52AC15F26F02B46DA620D90587C28E766A9CEA190F3A7DE4",
+  "seedDomain": {
+    "start": 1,
+    "stop": 1000000000
+  },
+  "rng": {
+    "name": "Hero Siege CPR binary64",
+    "multiplier": 1789570533.0,
+    "increment": 465707.0,
+    "modulus": 2147483648.0,
+    "mask": 1073741823,
+    "maximum": 1073741823.0,
+    "irandomScale": "floor((upperInclusive + 0.99999) * state / 1073741823.0)"
+  },
+  "sources": {
+    "talentIdMap": "HSSaveEditor/hs_save_editor.py:S10_CLASS_TALENT_KEYS + S10_CLASS_TALENT_BLOCK_STARTS",
+    "talentIdMapSha256": "791250D909B5AD148AB90D31911089296508FD359ABAA009FD9A56EC92A3ACAF",
+    "talentNames": "HeroSiege/bin/translationsTalent.csv English column",
+    "talentNamesSha256": "C990F0C860CA2CA8B7D66B4FDBC744C0F49060721678E7AA685A768FB7D40B03",
+    "overloadedReplay": "HSItemEditor/generated_pool_model.py:unique:10:0:89",
+    "overloadedReplaySha256": "7A2E923AC7C4CC228AED99414CDD686B180ABA9D19D342FCF44B6CCDFE3FB100"
+  },
+  "skills": [
+    {
+      "id": 2,
+      "key": "weaponMaster",
+      "name": "Weapon Master",
+      "classId": 1,
+      "className": "Viking",
+      "hasSubskills": false
+    },
+    {
+      "id": 3,
+      "key": "stoneskin",
+      "name": "Stoneskin",
+      "classId": 1,
+      "className": "Viking",
+      "hasSubskills": false
+    },
+    {
+      "id": 4,
+      "key": "bruteForce",
+      "name": "Brute Force",
+      "classId": 1,
+      "className": "Viking",
+      "hasSubskills": false
+    },
+    {
+      "id": 5,
+      "key": "norseResistance",
+      "name": "Norse Resistance",
+      "classId": 1,
+      "className": "Viking",
+      "hasSubskills": false
+    },
+    {
+      "id": 6,
+      "key": "defensiveShout",
+      "name": "Defensive Shout",
+      "classId": 1,
+      "className": "Viking",
+      "hasSubskills": false
+    },
+    {
+      "id": 7,
+      "key": "odinsFury",
+      "name": "Odin's Fury",
+      "classId": 1,
+      "className": "Viking",
+      "hasSubskills": true
+    },
+    {
+      "id": 8,
+      "key": "battleAgility",
+      "name": "Battle Agility",
+      "classId": 1,
+      "className": "Viking",
+      "hasSubskills": false
+    },
+    {
+      "id": 9,
+      "key": "combatOrders",
+      "name": "Combat Orders",
+      "classId": 1,
+      "className": "Viking",
+      "hasSubskills": false
+    },
+    {
+      "id": 10,
+      "key": "seismicSlam",
+      "name": "Seismic Slam",
+      "classId": 1,
+      "className": "Viking",
+      "hasSubskills": true
+    },
+    {
+      "id": 11,
+      "key": "charge",
+      "name": "Charge",
+      "classId": 1,
+      "className": "Viking",
+      "hasSubskills": true
+    },
+    {
+      "id": 12,
+      "key": "zeal",
+      "name": "Zeal",
+      "classId": 1,
+      "className": "Viking",
+      "hasSubskills": true
+    },
+    {
+      "id": 13,
+      "key": "monsterThrow",
+      "name": "Throw!",
+      "classId": 1,
+      "className": "Viking",
+      "hasSubskills": true
+    },
+    {
+      "id": 14,
+      "key": "ymirsChampion",
+      "name": "Ymir's Champion",
+      "classId": 1,
+      "className": "Viking",
+      "hasSubskills": true
+    },
+    {
+      "id": 15,
+      "key": "devastatingCharge",
+      "name": "Devastating Charge",
+      "classId": 1,
+      "className": "Viking",
+      "hasSubskills": false
+    },
+    {
+      "id": 16,
+      "key": "shockwave",
+      "name": "Shockwave",
+      "classId": 1,
+      "className": "Viking",
+      "hasSubskills": true
+    },
+    {
+      "id": 17,
+      "key": "whirlwind",
+      "name": "Whirlwind",
+      "classId": 1,
+      "className": "Viking",
+      "hasSubskills": true
+    },
+    {
+      "id": 18,
+      "key": "berserk",
+      "name": "Berserk",
+      "classId": 1,
+      "className": "Viking",
+      "hasSubskills": true
+    },
+    {
+      "id": 19,
+      "key": "demolishingWinds",
+      "name": "Demolishing Winds",
+      "classId": 1,
+      "className": "Viking",
+      "hasSubskills": false
+    },
+    {
+      "id": 20,
+      "key": "blazingTrail",
+      "name": "Blazing Trail",
+      "classId": 2,
+      "className": "Pyromancer",
+      "hasSubskills": true
+    },
+    {
+      "id": 21,
+      "key": "fireEnchant",
+      "name": "Fire Enchant",
+      "classId": 2,
+      "className": "Pyromancer",
+      "hasSubskills": false
+    },
+    {
+      "id": 22,
+      "key": "phoenixFlight",
+      "name": "Phoenix Flight",
+      "classId": 2,
+      "className": "Pyromancer",
+      "hasSubskills": true
+    },
+    {
+      "id": 23,
+      "key": "infernoSlash",
+      "name": "Inferno Slash",
+      "classId": 2,
+      "className": "Pyromancer",
+      "hasSubskills": true
+    },
+    {
+      "id": 24,
+      "key": "ignite",
+      "name": "Ignite",
+      "classId": 2,
+      "className": "Pyromancer",
+      "hasSubskills": false
+    },
+    {
+      "id": 25,
+      "key": "fireShield",
+      "name": "Fire Shield",
+      "classId": 2,
+      "className": "Pyromancer",
+      "hasSubskills": false
+    },
+    {
+      "id": 26,
+      "key": "searingChains",
+      "name": "Searing Chains",
+      "classId": 2,
+      "className": "Pyromancer",
+      "hasSubskills": false
+    },
+    {
+      "id": 27,
+      "key": "fieryPresence",
+      "name": "Fiery Presence",
+      "classId": 2,
+      "className": "Pyromancer",
+      "hasSubskills": false
+    },
+    {
+      "id": 28,
+      "key": "avatarOfFire",
+      "name": "Avatar of Fire",
+      "classId": 2,
+      "className": "Pyromancer",
+      "hasSubskills": false
+    },
+    {
+      "id": 29,
+      "key": "fireBall",
+      "name": "Fireball",
+      "classId": 2,
+      "className": "Pyromancer",
+      "hasSubskills": true
+    },
+    {
+      "id": 30,
+      "key": "breathOfFire",
+      "name": "Breath of Fire",
+      "classId": 2,
+      "className": "Pyromancer",
+      "hasSubskills": true
+    },
+    {
+      "id": 31,
+      "key": "meteor",
+      "name": "Meteor",
+      "classId": 2,
+      "className": "Pyromancer",
+      "hasSubskills": false
+    },
+    {
+      "id": 32,
+      "key": "scorchingAura",
+      "name": "Scorching Aura",
+      "classId": 2,
+      "className": "Pyromancer",
+      "hasSubskills": true
+    },
+    {
+      "id": 33,
+      "key": "hydra",
+      "name": "Hydra",
+      "classId": 2,
+      "className": "Pyromancer",
+      "hasSubskills": true
+    },
+    {
+      "id": 34,
+      "key": "comet",
+      "name": "Comet",
+      "classId": 2,
+      "className": "Pyromancer",
+      "hasSubskills": true
+    },
+    {
+      "id": 35,
+      "key": "fireNova",
+      "name": "Fire Nova",
+      "classId": 2,
+      "className": "Pyromancer",
+      "hasSubskills": true
+    },
+    {
+      "id": 36,
+      "key": "volcano",
+      "name": "Volcano",
+      "classId": 2,
+      "className": "Pyromancer",
+      "hasSubskills": true
+    },
+    {
+      "id": 37,
+      "key": "armageddon",
+      "name": "Armageddon",
+      "classId": 2,
+      "className": "Pyromancer",
+      "hasSubskills": true
+    },
+    {
+      "id": 38,
+      "key": "trickShot",
+      "name": "Trickshot",
+      "classId": 3,
+      "className": "Marksman",
+      "hasSubskills": true
+    },
+    {
+      "id": 39,
+      "key": "vault",
+      "name": "Vault",
+      "classId": 3,
+      "className": "Marksman",
+      "hasSubskills": true
+    },
+    {
+      "id": 40,
+      "key": "multishot",
+      "name": "Multishot",
+      "classId": 3,
+      "className": "Marksman",
+      "hasSubskills": true
+    },
+    {
+      "id": 41,
+      "key": "arrowRain",
+      "name": "Arrow Rain",
+      "classId": 3,
+      "className": "Marksman",
+      "hasSubskills": true
+    },
+    {
+      "id": 42,
+      "key": "homingMissile",
+      "name": "Homing Missile",
+      "classId": 3,
+      "className": "Marksman",
+      "hasSubskills": false
+    },
+    {
+      "id": 43,
+      "key": "criticalAccuracy",
+      "name": "Critical Accuracy",
+      "classId": 3,
+      "className": "Marksman",
+      "hasSubskills": false
+    },
+    {
+      "id": 44,
+      "key": "arrowRampage",
+      "name": "Arrow Rampage",
+      "classId": 3,
+      "className": "Marksman",
+      "hasSubskills": true
+    },
+    {
+      "id": 45,
+      "key": "agility",
+      "name": "Agility",
+      "classId": 3,
+      "className": "Marksman",
+      "hasSubskills": false
+    },
+    {
+      "id": 46,
+      "key": "volatileShot",
+      "name": "Volatile Shot",
+      "classId": 3,
+      "className": "Marksman",
+      "hasSubskills": true
+    },
+    {
+      "id": 47,
+      "key": "arrowTurret",
+      "name": "Arrow Turret",
+      "classId": 3,
+      "className": "Marksman",
+      "hasSubskills": true
+    },
+    {
+      "id": 48,
+      "key": "fragGrenade",
+      "name": "Frag Grenade",
+      "classId": 3,
+      "className": "Marksman",
+      "hasSubskills": true
+    },
+    {
+      "id": 49,
+      "key": "beacon",
+      "name": "B.E.A.C.O.N.",
+      "classId": 3,
+      "className": "Marksman",
+      "hasSubskills": false
+    },
+    {
+      "id": 50,
+      "key": "cannonTurret",
+      "name": "Cannon Turret",
+      "classId": 3,
+      "className": "Marksman",
+      "hasSubskills": true
+    },
+    {
+      "id": 51,
+      "key": "turretMastery",
+      "name": "Turret Mastery",
+      "classId": 3,
+      "className": "Marksman",
+      "hasSubskills": false
+    },
+    {
+      "id": 52,
+      "key": "landMine",
+      "name": "Landmine",
+      "classId": 3,
+      "className": "Marksman",
+      "hasSubskills": true
+    },
+    {
+      "id": 53,
+      "key": "rocketTurret",
+      "name": "Rocket Turret",
+      "classId": 3,
+      "className": "Marksman",
+      "hasSubskills": true
+    },
+    {
+      "id": 54,
+      "key": "masterMechanic",
+      "name": "Master Mechanic",
+      "classId": 3,
+      "className": "Marksman",
+      "hasSubskills": false
+    },
+    {
+      "id": 55,
+      "key": "gunnerDrone",
+      "name": "Gunner Drone",
+      "classId": 3,
+      "className": "Marksman",
+      "hasSubskills": true
+    },
+    {
+      "id": 56,
+      "key": "buckshot",
+      "name": "Buckshot",
+      "classId": 4,
+      "className": "Pirate",
+      "hasSubskills": true
+    },
+    {
+      "id": 57,
+      "key": "grenado",
+      "name": "Grenade Jump",
+      "classId": 4,
+      "className": "Pirate",
+      "hasSubskills": false
+    },
+    {
+      "id": 58,
+      "key": "explosiveBarrel",
+      "name": "Explosive Barrel",
+      "classId": 4,
+      "className": "Pirate",
+      "hasSubskills": true
+    },
+    {
+      "id": 59,
+      "key": "cannonball",
+      "name": "Cannonball",
+      "classId": 4,
+      "className": "Pirate",
+      "hasSubskills": true
+    },
+    {
+      "id": 60,
+      "key": "explosiveBullet",
+      "name": "Explosive Bullets",
+      "classId": 4,
+      "className": "Pirate",
+      "hasSubskills": true
+    },
+    {
+      "id": 61,
+      "key": "powderTrail",
+      "name": "Powder Trail",
+      "classId": 4,
+      "className": "Pirate",
+      "hasSubskills": true
+    },
+    {
+      "id": 62,
+      "key": "kneeCap",
+      "name": "Kneecap",
+      "classId": 4,
+      "className": "Pirate",
+      "hasSubskills": false
+    },
+    {
+      "id": 63,
+      "key": "bombBarrage",
+      "name": "Bomb Barrage",
+      "classId": 4,
+      "className": "Pirate",
+      "hasSubskills": true
+    },
+    {
+      "id": 64,
+      "key": "rapidFire",
+      "name": "Rapid Fire",
+      "classId": 4,
+      "className": "Pirate",
+      "hasSubskills": false
+    },
+    {
+      "id": 65,
+      "key": "torrent",
+      "name": "Torrent",
+      "classId": 4,
+      "className": "Pirate",
+      "hasSubskills": true
+    },
+    {
+      "id": 66,
+      "key": "freezeChainShot",
+      "name": "Freezing Chain Shot",
+      "classId": 4,
+      "className": "Pirate",
+      "hasSubskills": true
+    },
+    {
+      "id": 67,
+      "key": "frozenLead",
+      "name": "Frozen Lead",
+      "classId": 4,
+      "className": "Pirate",
+      "hasSubskills": false
+    },
+    {
+      "id": 68,
+      "key": "parrot",
+      "name": "Parrot",
+      "classId": 4,
+      "className": "Pirate",
+      "hasSubskills": true
+    },
+    {
+      "id": 69,
+      "key": "setSail",
+      "name": "Set Sail",
+      "classId": 4,
+      "className": "Pirate",
+      "hasSubskills": false
+    },
+    {
+      "id": 70,
+      "key": "remiges",
+      "name": "Remiges",
+      "classId": 4,
+      "className": "Pirate",
+      "hasSubskills": false
+    },
+    {
+      "id": 71,
+      "key": "anchorSwing",
+      "name": "Anchor Swing",
+      "classId": 4,
+      "className": "Pirate",
+      "hasSubskills": true
+    },
+    {
+      "id": 72,
+      "key": "treasureHunter",
+      "name": "Treasure Hunter",
+      "classId": 4,
+      "className": "Pirate",
+      "hasSubskills": false
+    },
+    {
+      "id": 73,
+      "key": "landAhoy",
+      "name": "Land Ahoy!",
+      "classId": 4,
+      "className": "Pirate",
+      "hasSubskills": true
+    },
+    {
+      "id": 74,
+      "key": "sandCarver",
+      "name": "Sand Carver",
+      "classId": 5,
+      "className": "Nomad",
+      "hasSubskills": true
+    },
+    {
+      "id": 75,
+      "key": "cloudOfSand",
+      "name": "Cloud of Sand",
+      "classId": 5,
+      "className": "Nomad",
+      "hasSubskills": true
+    },
+    {
+      "id": 76,
+      "key": "sandGush",
+      "name": "Sand Gush",
+      "classId": 5,
+      "className": "Nomad",
+      "hasSubskills": true
+    },
+    {
+      "id": 77,
+      "key": "sandEntombment",
+      "name": "Sand Entombment",
+      "classId": 5,
+      "className": "Nomad",
+      "hasSubskills": false
+    },
+    {
+      "id": 78,
+      "key": "oasisAura",
+      "name": "Oasis Aura",
+      "classId": 5,
+      "className": "Nomad",
+      "hasSubskills": false
+    },
+    {
+      "id": 79,
+      "key": "sandTremors",
+      "name": "Sand Tremors",
+      "classId": 5,
+      "className": "Nomad",
+      "hasSubskills": true
+    },
+    {
+      "id": 80,
+      "key": "mysticSand",
+      "name": "Mystic Sand",
+      "classId": 5,
+      "className": "Nomad",
+      "hasSubskills": false
+    },
+    {
+      "id": 81,
+      "key": "dissipatingTornado",
+      "name": "Dissipating Tornado",
+      "classId": 5,
+      "className": "Nomad",
+      "hasSubskills": false
+    },
+    {
+      "id": 82,
+      "key": "sandVortex",
+      "name": "Sand Vortex",
+      "classId": 5,
+      "className": "Nomad",
+      "hasSubskills": true
+    },
+    {
+      "id": 83,
+      "key": "bladeStrike",
+      "name": "Blade Strike",
+      "classId": 5,
+      "className": "Nomad",
+      "hasSubskills": true
+    },
+    {
+      "id": 84,
+      "key": "scimitarCharge",
+      "name": "Scimitar Charge",
+      "classId": 5,
+      "className": "Nomad",
+      "hasSubskills": true
+    },
+    {
+      "id": 85,
+      "key": "eyeOfRa",
+      "name": "Eye of Ra",
+      "classId": 5,
+      "className": "Nomad",
+      "hasSubskills": true
+    },
+    {
+      "id": 86,
+      "key": "sunRay",
+      "name": "Healing Sunrays",
+      "classId": 5,
+      "className": "Nomad",
+      "hasSubskills": false
+    },
+    {
+      "id": 87,
+      "key": "flyingScimitar",
+      "name": "Flying Scimitar",
+      "classId": 5,
+      "className": "Nomad",
+      "hasSubskills": true
+    },
+    {
+      "id": 88,
+      "key": "rupture",
+      "name": "Rupture",
+      "classId": 5,
+      "className": "Nomad",
+      "hasSubskills": false
+    },
+    {
+      "id": 89,
+      "key": "chainSlice",
+      "name": "Chainslice",
+      "classId": 5,
+      "className": "Nomad",
+      "hasSubskills": true
+    },
+    {
+      "id": 90,
+      "key": "phantomBlade",
+      "name": "Phantom Blade",
+      "classId": 5,
+      "className": "Nomad",
+      "hasSubskills": true
+    },
+    {
+      "id": 91,
+      "key": "hemorrhage",
+      "name": "Hemorrhage",
+      "classId": 5,
+      "className": "Nomad",
+      "hasSubskills": false
+    },
+    {
+      "id": 92,
+      "key": "moonshineMolotov",
+      "name": "Moonshine Molotov",
+      "classId": 6,
+      "className": "Redneck",
+      "hasSubskills": true
+    },
+    {
+      "id": 93,
+      "key": "pipeBombs",
+      "name": "Pipe Bombs",
+      "classId": 6,
+      "className": "Redneck",
+      "hasSubskills": true
+    },
+    {
+      "id": 94,
+      "key": "oilSpill",
+      "name": "Oil Spill",
+      "classId": 6,
+      "className": "Redneck",
+      "hasSubskills": false
+    },
+    {
+      "id": 95,
+      "key": "tireFire",
+      "name": "Tire Fire",
+      "classId": 6,
+      "className": "Redneck",
+      "hasSubskills": true
+    },
+    {
+      "id": 96,
+      "key": "spontaneousCombustion",
+      "name": "Spontaneous Combustion",
+      "classId": 6,
+      "className": "Redneck",
+      "hasSubskills": false
+    },
+    {
+      "id": 97,
+      "key": "hillbillyRage",
+      "name": "Hillbilly Rage",
+      "classId": 6,
+      "className": "Redneck",
+      "hasSubskills": false
+    },
+    {
+      "id": 98,
+      "key": "moonshineMadness",
+      "name": "Moonshine Madness",
+      "classId": 6,
+      "className": "Redneck",
+      "hasSubskills": false
+    },
+    {
+      "id": 99,
+      "key": "combustibleOil",
+      "name": "Combustible Oil",
+      "classId": 6,
+      "className": "Redneck",
+      "hasSubskills": false
+    },
+    {
+      "id": 100,
+      "key": "pickupRaid",
+      "name": "Pickup Raid",
+      "classId": 6,
+      "className": "Redneck",
+      "hasSubskills": true
+    },
+    {
+      "id": 101,
+      "key": "chainsawSlash",
+      "name": "Chainsaw Slash",
+      "classId": 6,
+      "className": "Redneck",
+      "hasSubskills": true
+    },
+    {
+      "id": 102,
+      "key": "durableWear",
+      "name": "Durable Wear",
+      "classId": 6,
+      "className": "Redneck",
+      "hasSubskills": false
+    },
+    {
+      "id": 103,
+      "key": "chainsawMassacre",
+      "name": "Chainsaw Massacre",
+      "classId": 6,
+      "className": "Redneck",
+      "hasSubskills": true
+    },
+    {
+      "id": 104,
+      "key": "chainsawMastery",
+      "name": "Chainsaw Mastery",
+      "classId": 6,
+      "className": "Redneck",
+      "hasSubskills": false
+    },
+    {
+      "id": 105,
+      "key": "revvedUp",
+      "name": "Revved Up",
+      "classId": 6,
+      "className": "Redneck",
+      "hasSubskills": false
+    },
+    {
+      "id": 106,
+      "key": "experiencedLogger",
+      "name": "Experienced Logger",
+      "classId": 6,
+      "className": "Redneck",
+      "hasSubskills": false
+    },
+    {
+      "id": 107,
+      "key": "loggersEndurance",
+      "name": "Logger’s Endurance",
+      "classId": 6,
+      "className": "Redneck",
+      "hasSubskills": false
+    },
+    {
+      "id": 108,
+      "key": "rogueChainsaw",
+      "name": "Rogue Chainsaw",
+      "classId": 6,
+      "className": "Redneck",
+      "hasSubskills": true
+    },
+    {
+      "id": 109,
+      "key": "treeTrunkTriumph",
+      "name": "Tree Trunk Triumph",
+      "classId": 6,
+      "className": "Redneck",
+      "hasSubskills": true
+    },
+    {
+      "id": 110,
+      "key": "boneShred",
+      "name": "Bone Shred",
+      "classId": 7,
+      "className": "Necromancer",
+      "hasSubskills": true
+    },
+    {
+      "id": 111,
+      "key": "meatShield",
+      "name": "Meat Shield",
+      "classId": 7,
+      "className": "Necromancer",
+      "hasSubskills": false
+    },
+    {
+      "id": 112,
+      "key": "meatBomb",
+      "name": "Meat Bomb",
+      "classId": 7,
+      "className": "Necromancer",
+      "hasSubskills": true
+    },
+    {
+      "id": 113,
+      "key": "poisonBreath",
+      "name": "Poison Breath",
+      "classId": 7,
+      "className": "Necromancer",
+      "hasSubskills": true
+    },
+    {
+      "id": 114,
+      "key": "boneSpear",
+      "name": "Bone Spear",
+      "classId": 7,
+      "className": "Necromancer",
+      "hasSubskills": true
+    },
+    {
+      "id": 115,
+      "key": "cursedGround",
+      "name": "Cursed Ground",
+      "classId": 7,
+      "className": "Necromancer",
+      "hasSubskills": false
+    },
+    {
+      "id": 116,
+      "key": "boneSpirit",
+      "name": "Bone Spirit",
+      "classId": 7,
+      "className": "Necromancer",
+      "hasSubskills": true
+    },
+    {
+      "id": 117,
+      "key": "corpseExplosion",
+      "name": "Corpse Explosion",
+      "classId": 7,
+      "className": "Necromancer",
+      "hasSubskills": true
+    },
+    {
+      "id": 118,
+      "key": "poisonNova",
+      "name": "Poison Nova",
+      "classId": 7,
+      "className": "Necromancer",
+      "hasSubskills": true
+    },
+    {
+      "id": 119,
+      "key": "amplifyDamage",
+      "name": "Amplify damage",
+      "classId": 7,
+      "className": "Necromancer",
+      "hasSubskills": false
+    },
+    {
+      "id": 120,
+      "key": "raiseSkeletonWarrior",
+      "name": "Raise Skeleton",
+      "classId": 7,
+      "className": "Necromancer",
+      "hasSubskills": true
+    },
+    {
+      "id": 121,
+      "key": "skeletonMastery",
+      "name": "Summon Mastery",
+      "classId": 7,
+      "className": "Necromancer",
+      "hasSubskills": false
+    },
+    {
+      "id": 122,
+      "key": "raiseSkeletonMage",
+      "name": "Raise Skeleton Mage",
+      "classId": 7,
+      "className": "Necromancer",
+      "hasSubskills": true
+    },
+    {
+      "id": 123,
+      "key": "lifeTap",
+      "name": "Life Tap",
+      "classId": 7,
+      "className": "Necromancer",
+      "hasSubskills": false
+    },
+    {
+      "id": 124,
+      "key": "summonFrenzy",
+      "name": "Summon Frenzy",
+      "classId": 7,
+      "className": "Necromancer",
+      "hasSubskills": false
+    },
+    {
+      "id": 125,
+      "key": "summonDamnedLegion",
+      "name": "Summon Damned Legion",
+      "classId": 7,
+      "className": "Necromancer",
+      "hasSubskills": true
+    },
+    {
+      "id": 126,
+      "key": "summonResistances",
+      "name": "Summon Resistances",
+      "classId": 7,
+      "className": "Necromancer",
+      "hasSubskills": false
+    },
+    {
+      "id": 127,
+      "key": "summonVengefulSpirit",
+      "name": "Summon Vengeful Spirit",
+      "classId": 7,
+      "className": "Necromancer",
+      "hasSubskills": true
+    },
+    {
+      "id": 128,
+      "key": "quickSlash",
+      "name": "Quickslash",
+      "classId": 8,
+      "className": "Samurai",
+      "hasSubskills": true
+    },
+    {
+      "id": 129,
+      "key": "battleGlance",
+      "name": "Battle Glance",
+      "classId": 8,
+      "className": "Samurai",
+      "hasSubskills": true
+    },
+    {
+      "id": 130,
+      "key": "evasion",
+      "name": "Evasion",
+      "classId": 8,
+      "className": "Samurai",
+      "hasSubskills": false
+    },
+    {
+      "id": 131,
+      "key": "smokeBomb",
+      "name": "Smoke Bomb",
+      "classId": 8,
+      "className": "Samurai",
+      "hasSubskills": true
+    },
+    {
+      "id": 132,
+      "key": "shurikenThrow",
+      "name": "Shuriken Throw",
+      "classId": 8,
+      "className": "Samurai",
+      "hasSubskills": true
+    },
+    {
+      "id": 133,
+      "key": "warriorsSpirit",
+      "name": "Warrior’s Spirit",
+      "classId": 8,
+      "className": "Samurai",
+      "hasSubskills": false
+    },
+    {
+      "id": 134,
+      "key": "bushido",
+      "name": "Bushido",
+      "classId": 8,
+      "className": "Samurai",
+      "hasSubskills": false
+    },
+    {
+      "id": 135,
+      "key": "explosiveKunai",
+      "name": "Explosive Kunai",
+      "classId": 8,
+      "className": "Samurai",
+      "hasSubskills": true
+    },
+    {
+      "id": 136,
+      "key": "liveByTheSword",
+      "name": "Live by the Sword",
+      "classId": 8,
+      "className": "Samurai",
+      "hasSubskills": false
+    },
+    {
+      "id": 137,
+      "key": "bladeBarrier",
+      "name": "Blade Barrier",
+      "classId": 8,
+      "className": "Samurai",
+      "hasSubskills": true
+    },
+    {
+      "id": 138,
+      "key": "fanOfKnives",
+      "name": "Fan of Knives",
+      "classId": 8,
+      "className": "Samurai",
+      "hasSubskills": false
+    },
+    {
+      "id": 139,
+      "key": "omnislash",
+      "name": "Omnislash",
+      "classId": 8,
+      "className": "Samurai",
+      "hasSubskills": true
+    },
+    {
+      "id": 140,
+      "key": "explodingBolas",
+      "name": "Exploding Bolas",
+      "classId": 8,
+      "className": "Samurai",
+      "hasSubskills": true
+    },
+    {
+      "id": 141,
+      "key": "wayOfTheWarrior",
+      "name": "Way of the Warrior",
+      "classId": 8,
+      "className": "Samurai",
+      "hasSubskills": false
+    },
+    {
+      "id": 142,
+      "key": "forHonor",
+      "name": "For Honor",
+      "classId": 8,
+      "className": "Samurai",
+      "hasSubskills": false
+    },
+    {
+      "id": 143,
+      "key": "shadowStep",
+      "name": "Shadow Step",
+      "classId": 8,
+      "className": "Samurai",
+      "hasSubskills": true
+    },
+    {
+      "id": 144,
+      "key": "burstOfSpeed",
+      "name": "Burst of Speed",
+      "classId": 8,
+      "className": "Samurai",
+      "hasSubskills": false
+    },
+    {
+      "id": 145,
+      "key": "empiresSlash",
+      "name": "Empire’s Slash",
+      "classId": 8,
+      "className": "Samurai",
+      "hasSubskills": true
+    },
+    {
+      "id": 146,
+      "key": "vengeance",
+      "name": "Vengeance",
+      "classId": 9,
+      "className": "Paladin",
+      "hasSubskills": true
+    },
+    {
+      "id": 147,
+      "key": "thunderShield",
+      "name": "Thunder Shield",
+      "classId": 9,
+      "className": "Paladin",
+      "hasSubskills": false
+    },
+    {
+      "id": 148,
+      "key": "lightningFury",
+      "name": "Lightning Fury",
+      "classId": 9,
+      "className": "Paladin",
+      "hasSubskills": true
+    },
+    {
+      "id": 149,
+      "key": "holyShockAura",
+      "name": "Holy Shock Aura",
+      "classId": 9,
+      "className": "Paladin",
+      "hasSubskills": true
+    },
+    {
+      "id": 150,
+      "key": "divineStorm",
+      "name": "Divine Storm",
+      "classId": 9,
+      "className": "Paladin",
+      "hasSubskills": true
+    },
+    {
+      "id": 151,
+      "key": "fanaticismAura",
+      "name": "Fanaticism Aura",
+      "classId": 9,
+      "className": "Paladin",
+      "hasSubskills": false
+    },
+    {
+      "id": 152,
+      "key": "ballLightning",
+      "name": "Ball Lightning",
+      "classId": 9,
+      "className": "Paladin",
+      "hasSubskills": true
+    },
+    {
+      "id": 153,
+      "key": "eyeOfTheStorm",
+      "name": "Eye of the Storm",
+      "classId": 9,
+      "className": "Paladin",
+      "hasSubskills": false
+    },
+    {
+      "id": 154,
+      "key": "thorsFury",
+      "name": "Thor's Fury",
+      "classId": 9,
+      "className": "Paladin",
+      "hasSubskills": false
+    },
+    {
+      "id": 155,
+      "key": "holyBolt",
+      "name": "Holy Bolt",
+      "classId": 9,
+      "className": "Paladin",
+      "hasSubskills": true
+    },
+    {
+      "id": 156,
+      "key": "divineWisdom",
+      "name": "Divine Wisdom",
+      "classId": 9,
+      "className": "Paladin",
+      "hasSubskills": false
+    },
+    {
+      "id": 157,
+      "key": "holyAura",
+      "name": "Holy Aura",
+      "classId": 9,
+      "className": "Paladin",
+      "hasSubskills": false
+    },
+    {
+      "id": 158,
+      "key": "holyHammer",
+      "name": "Holy Hammer",
+      "classId": 9,
+      "className": "Paladin",
+      "hasSubskills": true
+    },
+    {
+      "id": 159,
+      "key": "holyRetribution",
+      "name": "Holy Retribution",
+      "classId": 9,
+      "className": "Paladin",
+      "hasSubskills": false
+    },
+    {
+      "id": 160,
+      "key": "lightsEmbrace",
+      "name": "Light's Embrace",
+      "classId": 9,
+      "className": "Paladin",
+      "hasSubskills": false
+    },
+    {
+      "id": 161,
+      "key": "fistOfTheHeavens",
+      "name": "Fist of the Heavens",
+      "classId": 9,
+      "className": "Paladin",
+      "hasSubskills": true
+    },
+    {
+      "id": 162,
+      "key": "holyNova",
+      "name": "Holy Nova",
+      "classId": 9,
+      "className": "Paladin",
+      "hasSubskills": true
+    },
+    {
+      "id": 163,
+      "key": "theVeneratedOne",
+      "name": "The Venerated One",
+      "classId": 9,
+      "className": "Paladin",
+      "hasSubskills": false
+    },
+    {
+      "id": 164,
+      "key": "noxiousStrike",
+      "name": "Noxious Strike",
+      "classId": 10,
+      "className": "Amazon",
+      "hasSubskills": true
+    },
+    {
+      "id": 165,
+      "key": "causticSpearhead",
+      "name": "Caustic Spearhead",
+      "classId": 10,
+      "className": "Amazon",
+      "hasSubskills": true
+    },
+    {
+      "id": 166,
+      "key": "leapingAmbush",
+      "name": "Leaping Ambush",
+      "classId": 10,
+      "className": "Amazon",
+      "hasSubskills": true
+    },
+    {
+      "id": 167,
+      "key": "deathFromAbove",
+      "name": "Death from Above",
+      "classId": 10,
+      "className": "Amazon",
+      "hasSubskills": true
+    },
+    {
+      "id": 168,
+      "key": "toxicRemains",
+      "name": "Toxic Remains",
+      "classId": 10,
+      "className": "Amazon",
+      "hasSubskills": false
+    },
+    {
+      "id": 169,
+      "key": "masterPoisoner",
+      "name": "Master Poisoner",
+      "classId": 10,
+      "className": "Amazon",
+      "hasSubskills": false
+    },
+    {
+      "id": 170,
+      "key": "jungleCamouflage",
+      "name": "Jungle Camouflage",
+      "classId": 10,
+      "className": "Amazon",
+      "hasSubskills": false
+    },
+    {
+      "id": 171,
+      "key": "thrillOfTheHunt",
+      "name": "Thrill of the Hunt",
+      "classId": 10,
+      "className": "Amazon",
+      "hasSubskills": false
+    },
+    {
+      "id": 172,
+      "key": "envenom",
+      "name": "Envenom",
+      "classId": 10,
+      "className": "Amazon",
+      "hasSubskills": true
+    },
+    {
+      "id": 173,
+      "key": "astropesGift",
+      "name": "Astrope's Gift",
+      "classId": 10,
+      "className": "Amazon",
+      "hasSubskills": true
+    },
+    {
+      "id": 174,
+      "key": "feint",
+      "name": "Feint",
+      "classId": 10,
+      "className": "Amazon",
+      "hasSubskills": false
+    },
+    {
+      "id": 175,
+      "key": "rebound",
+      "name": "Rebound",
+      "classId": 10,
+      "className": "Amazon",
+      "hasSubskills": true
+    },
+    {
+      "id": 176,
+      "key": "spearnage",
+      "name": "Spearnage",
+      "classId": 10,
+      "className": "Amazon",
+      "hasSubskills": true
+    },
+    {
+      "id": 177,
+      "key": "stormDash",
+      "name": "Storm Dash",
+      "classId": 10,
+      "className": "Amazon",
+      "hasSubskills": true
+    },
+    {
+      "id": 178,
+      "key": "thunderGoddessesChosen",
+      "name": "Thunder Goddesses Chosen",
+      "classId": 10,
+      "className": "Amazon",
+      "hasSubskills": false
+    },
+    {
+      "id": 179,
+      "key": "chooserOfTheSlain",
+      "name": "Chooser of the Slain",
+      "classId": 10,
+      "className": "Amazon",
+      "hasSubskills": false
+    },
+    {
+      "id": 180,
+      "key": "thunderFury",
+      "name": "Thunder Fury",
+      "classId": 10,
+      "className": "Amazon",
+      "hasSubskills": true
+    },
+    {
+      "id": 181,
+      "key": "astropesBattleMaiden",
+      "name": "Astrope's Battle Maiden",
+      "classId": 10,
+      "className": "Amazon",
+      "hasSubskills": false
+    },
+    {
+      "id": 182,
+      "key": "triggerFinger",
+      "name": "Trigger Finger",
+      "classId": 11,
+      "className": "Demon Slayer",
+      "hasSubskills": true
+    },
+    {
+      "id": 183,
+      "key": "eagleEye",
+      "name": "Eagle Eye",
+      "classId": 11,
+      "className": "Demon Slayer",
+      "hasSubskills": false
+    },
+    {
+      "id": 184,
+      "key": "execute",
+      "name": "Execute",
+      "classId": 11,
+      "className": "Demon Slayer",
+      "hasSubskills": false
+    },
+    {
+      "id": 185,
+      "key": "bulletHell",
+      "name": "Bullet Hell",
+      "classId": 11,
+      "className": "Demon Slayer",
+      "hasSubskills": true
+    },
+    {
+      "id": 186,
+      "key": "shredderTrap",
+      "name": "Shredder Trap",
+      "classId": 11,
+      "className": "Demon Slayer",
+      "hasSubskills": true
+    },
+    {
+      "id": 187,
+      "key": "possessedBullet",
+      "name": "Possessed Bullet",
+      "classId": 11,
+      "className": "Demon Slayer",
+      "hasSubskills": true
+    },
+    {
+      "id": 188,
+      "key": "demonsPresence",
+      "name": "Demon´s Presence",
+      "classId": 11,
+      "className": "Demon Slayer",
+      "hasSubskills": false
+    },
+    {
+      "id": 189,
+      "key": "concentrationAura",
+      "name": "Concentration Aura",
+      "classId": 11,
+      "className": "Demon Slayer",
+      "hasSubskills": false
+    },
+    {
+      "id": 190,
+      "key": "absoluteMayhem",
+      "name": "Absolute Mayhem",
+      "classId": 11,
+      "className": "Demon Slayer",
+      "hasSubskills": true
+    },
+    {
+      "id": 191,
+      "key": "fastSlices",
+      "name": "Fast Slices",
+      "classId": 11,
+      "className": "Demon Slayer",
+      "hasSubskills": true
+    },
+    {
+      "id": 192,
+      "key": "demonsCalling",
+      "name": "Demon´s Calling",
+      "classId": 11,
+      "className": "Demon Slayer",
+      "hasSubskills": true
+    },
+    {
+      "id": 193,
+      "key": "heartAttack",
+      "name": "Heart Attack",
+      "classId": 11,
+      "className": "Demon Slayer",
+      "hasSubskills": false
+    },
+    {
+      "id": 194,
+      "key": "shadowAnomalies",
+      "name": "Shadow Anomalies",
+      "classId": 11,
+      "className": "Demon Slayer",
+      "hasSubskills": false
+    },
+    {
+      "id": 195,
+      "key": "soulLeech",
+      "name": "Soul Leech",
+      "classId": 11,
+      "className": "Demon Slayer",
+      "hasSubskills": false
+    },
+    {
+      "id": 196,
+      "key": "swordHandler",
+      "name": "Sword Handler",
+      "classId": 11,
+      "className": "Demon Slayer",
+      "hasSubskills": false
+    },
+    {
+      "id": 197,
+      "key": "demonsShield",
+      "name": "Demon´s Shield",
+      "classId": 11,
+      "className": "Demon Slayer",
+      "hasSubskills": false
+    },
+    {
+      "id": 198,
+      "key": "sliceOfShadows",
+      "name": "Slice of Shadows",
+      "classId": 11,
+      "className": "Demon Slayer",
+      "hasSubskills": true
+    },
+    {
+      "id": 199,
+      "key": "demonForm",
+      "name": "Demon Form",
+      "classId": 11,
+      "className": "Demon Slayer",
+      "hasSubskills": false
+    },
+    {
+      "id": 200,
+      "key": "boneFragments",
+      "name": "Bone Fragments",
+      "classId": 12,
+      "className": "Demonspawn",
+      "hasSubskills": true
+    },
+    {
+      "id": 201,
+      "key": "impale",
+      "name": "Impale",
+      "classId": 12,
+      "className": "Demonspawn",
+      "hasSubskills": true
+    },
+    {
+      "id": 202,
+      "key": "ossification",
+      "name": "Ossification",
+      "classId": 12,
+      "className": "Demonspawn",
+      "hasSubskills": false
+    },
+    {
+      "id": 203,
+      "key": "singleOut",
+      "name": "Single Out",
+      "classId": 12,
+      "className": "Demonspawn",
+      "hasSubskills": false
+    },
+    {
+      "id": 204,
+      "key": "boneStorm",
+      "name": "Bone Storm",
+      "classId": 12,
+      "className": "Demonspawn",
+      "hasSubskills": true
+    },
+    {
+      "id": 205,
+      "key": "cartilageBuildUp",
+      "name": "Cartilage Build Up",
+      "classId": 12,
+      "className": "Demonspawn",
+      "hasSubskills": false
+    },
+    {
+      "id": 206,
+      "key": "ominousPresence",
+      "name": "Ominous Aura",
+      "classId": 12,
+      "className": "Demonspawn",
+      "hasSubskills": false
+    },
+    {
+      "id": 207,
+      "key": "spinalTap",
+      "name": "Spinal Tap",
+      "classId": 12,
+      "className": "Demonspawn",
+      "hasSubskills": true
+    },
+    {
+      "id": 208,
+      "key": "boneBarrage",
+      "name": "Bone Barrage",
+      "classId": 12,
+      "className": "Demonspawn",
+      "hasSubskills": true
+    },
+    {
+      "id": 209,
+      "key": "bloodBolts",
+      "name": "Blood Bolts",
+      "classId": 12,
+      "className": "Demonspawn",
+      "hasSubskills": true
+    },
+    {
+      "id": 210,
+      "key": "gutSpread",
+      "name": "Gut Spread",
+      "classId": 12,
+      "className": "Demonspawn",
+      "hasSubskills": false
+    },
+    {
+      "id": 211,
+      "key": "manaPoolAura",
+      "name": "Manapool Aura",
+      "classId": 12,
+      "className": "Demonspawn",
+      "hasSubskills": false
+    },
+    {
+      "id": 212,
+      "key": "manaShield",
+      "name": "Mana Shield",
+      "classId": 12,
+      "className": "Demonspawn",
+      "hasSubskills": false
+    },
+    {
+      "id": 213,
+      "key": "manaDevour",
+      "name": "Mana Devour",
+      "classId": 12,
+      "className": "Demonspawn",
+      "hasSubskills": false
+    },
+    {
+      "id": 214,
+      "key": "demonicPresence",
+      "name": "Demonic Presence",
+      "classId": 12,
+      "className": "Demonspawn",
+      "hasSubskills": false
+    },
+    {
+      "id": 215,
+      "key": "bloodSurge",
+      "name": "Blood Surge",
+      "classId": 12,
+      "className": "Demonspawn",
+      "hasSubskills": true
+    },
+    {
+      "id": 216,
+      "key": "bloodDemons",
+      "name": "Blood Demons",
+      "classId": 12,
+      "className": "Demonspawn",
+      "hasSubskills": false
+    },
+    {
+      "id": 217,
+      "key": "bloodTendrils",
+      "name": "Blood Tendrils",
+      "classId": 12,
+      "className": "Demonspawn",
+      "hasSubskills": false
+    },
+    {
+      "id": 218,
+      "key": "tectonicBoulder",
+      "name": "Tectonic Boulder",
+      "classId": 13,
+      "className": "Shaman",
+      "hasSubskills": true
+    },
+    {
+      "id": 219,
+      "key": "twisters",
+      "name": "Twisters",
+      "classId": 13,
+      "className": "Shaman",
+      "hasSubskills": true
+    },
+    {
+      "id": 220,
+      "key": "rockFragments",
+      "name": "Rock Fragments",
+      "classId": 13,
+      "className": "Shaman",
+      "hasSubskills": true
+    },
+    {
+      "id": 221,
+      "key": "earthBind",
+      "name": "Earth Bind",
+      "classId": 13,
+      "className": "Shaman",
+      "hasSubskills": true
+    },
+    {
+      "id": 222,
+      "key": "tornado",
+      "name": "Tornado",
+      "classId": 13,
+      "className": "Shaman",
+      "hasSubskills": true
+    },
+    {
+      "id": 223,
+      "key": "earthsGrace",
+      "name": "Earth's Grace",
+      "classId": 13,
+      "className": "Shaman",
+      "hasSubskills": false
+    },
+    {
+      "id": 224,
+      "key": "meteorStorm",
+      "name": "Meteor Storm",
+      "classId": 13,
+      "className": "Shaman",
+      "hasSubskills": true
+    },
+    {
+      "id": 225,
+      "key": "naturesProphet",
+      "name": "Nature's Prophet",
+      "classId": 13,
+      "className": "Shaman",
+      "hasSubskills": false
+    },
+    {
+      "id": 226,
+      "key": "fissures",
+      "name": "Fissures",
+      "classId": 13,
+      "className": "Shaman",
+      "hasSubskills": true
+    },
+    {
+      "id": 227,
+      "key": "earthTotem",
+      "name": "Earth Totem",
+      "classId": 13,
+      "className": "Shaman",
+      "hasSubskills": true
+    },
+    {
+      "id": 228,
+      "key": "spiritualGuide",
+      "name": "Spiritual Guide",
+      "classId": 13,
+      "className": "Shaman",
+      "hasSubskills": false
+    },
+    {
+      "id": 229,
+      "key": "stormTotem",
+      "name": "Storm Totem",
+      "classId": 13,
+      "className": "Shaman",
+      "hasSubskills": true
+    },
+    {
+      "id": 230,
+      "key": "spiritWolves",
+      "name": "Spirit Wolves",
+      "classId": 13,
+      "className": "Shaman",
+      "hasSubskills": true
+    },
+    {
+      "id": 231,
+      "key": "scentOfTheWolf",
+      "name": "Scent of the Wolf",
+      "classId": 13,
+      "className": "Shaman",
+      "hasSubskills": false
+    },
+    {
+      "id": 232,
+      "key": "fireTotem",
+      "name": "Fire Totem",
+      "classId": 13,
+      "className": "Shaman",
+      "hasSubskills": true
+    },
+    {
+      "id": 233,
+      "key": "fractalMind",
+      "name": "Fractal Mind",
+      "classId": 13,
+      "className": "Shaman",
+      "hasSubskills": false
+    },
+    {
+      "id": 234,
+      "key": "astralIntellect",
+      "name": "Astral Intellect",
+      "classId": 13,
+      "className": "Shaman",
+      "hasSubskills": false
+    },
+    {
+      "id": 235,
+      "key": "chaosTotem",
+      "name": "Chaos Totem",
+      "classId": 13,
+      "className": "Shaman",
+      "hasSubskills": true
+    },
+    {
+      "id": 236,
+      "key": "satansMark",
+      "name": "Satan’s Mark",
+      "classId": 14,
+      "className": "White Mage",
+      "hasSubskills": true
+    },
+    {
+      "id": 237,
+      "key": "restlessSpirits",
+      "name": "Restless Spirits",
+      "classId": 14,
+      "className": "White Mage",
+      "hasSubskills": true
+    },
+    {
+      "id": 238,
+      "key": "digestSouls",
+      "name": "Digest Souls",
+      "classId": 14,
+      "className": "White Mage",
+      "hasSubskills": false
+    },
+    {
+      "id": 239,
+      "key": "shadowBolt",
+      "name": "Shadow Bolt",
+      "classId": 14,
+      "className": "White Mage",
+      "hasSubskills": true
+    },
+    {
+      "id": 240,
+      "key": "soulSpurn",
+      "name": "Soul Spurn",
+      "classId": 14,
+      "className": "White Mage",
+      "hasSubskills": true
+    },
+    {
+      "id": 241,
+      "key": "martyr",
+      "name": "Martyr",
+      "classId": 14,
+      "className": "White Mage",
+      "hasSubskills": false
+    },
+    {
+      "id": 242,
+      "key": "darkOath",
+      "name": "Dark Oath",
+      "classId": 14,
+      "className": "White Mage",
+      "hasSubskills": true
+    },
+    {
+      "id": 243,
+      "key": "malediction",
+      "name": "Malediction",
+      "classId": 14,
+      "className": "White Mage",
+      "hasSubskills": false
+    },
+    {
+      "id": 244,
+      "key": "blackMass",
+      "name": "Black Mass",
+      "classId": 14,
+      "className": "White Mage",
+      "hasSubskills": true
+    },
+    {
+      "id": 245,
+      "key": "heavenlyFire",
+      "name": "Heavenly Fire",
+      "classId": 14,
+      "className": "White Mage",
+      "hasSubskills": true
+    },
+    {
+      "id": 246,
+      "key": "burstOfLight",
+      "name": "Burst of Light",
+      "classId": 14,
+      "className": "White Mage",
+      "hasSubskills": true
+    },
+    {
+      "id": 247,
+      "key": "flashHeal",
+      "name": "Flash Heal",
+      "classId": 14,
+      "className": "White Mage",
+      "hasSubskills": false
+    },
+    {
+      "id": 248,
+      "key": "benediction",
+      "name": "Benediction",
+      "classId": 14,
+      "className": "White Mage",
+      "hasSubskills": false
+    },
+    {
+      "id": 249,
+      "key": "divineHealing",
+      "name": "Divine Healing",
+      "classId": 14,
+      "className": "White Mage",
+      "hasSubskills": false
+    },
+    {
+      "id": 250,
+      "key": "chainOfHolyLight",
+      "name": "Chain of Holy Lightning",
+      "classId": 14,
+      "className": "White Mage",
+      "hasSubskills": true
+    },
+    {
+      "id": 251,
+      "key": "holyShield",
+      "name": "Holy Shield",
+      "classId": 14,
+      "className": "White Mage",
+      "hasSubskills": false
+    },
+    {
+      "id": 252,
+      "key": "healingZone",
+      "name": "Healing Zone",
+      "classId": 14,
+      "className": "White Mage",
+      "hasSubskills": false
+    },
+    {
+      "id": 253,
+      "key": "manaOrb",
+      "name": "Mana Orb",
+      "classId": 14,
+      "className": "White Mage",
+      "hasSubskills": true
+    },
+    {
+      "id": 254,
+      "key": "heavyBall",
+      "name": "Heavy Ball",
+      "classId": 15,
+      "className": "Marauder",
+      "hasSubskills": true
+    },
+    {
+      "id": 255,
+      "key": "bouncingGrenade",
+      "name": "Bouncing Grenade",
+      "classId": 15,
+      "className": "Marauder",
+      "hasSubskills": true
+    },
+    {
+      "id": 256,
+      "key": "unstableBomb",
+      "name": "Unstable Bomb",
+      "classId": 15,
+      "className": "Marauder",
+      "hasSubskills": false
+    },
+    {
+      "id": 257,
+      "key": "theBigBoom",
+      "name": "The Big Bo-oM",
+      "classId": 15,
+      "className": "Marauder",
+      "hasSubskills": true
+    },
+    {
+      "id": 258,
+      "key": "wreckingBall",
+      "name": "Wrecking Ball",
+      "classId": 15,
+      "className": "Marauder",
+      "hasSubskills": false
+    },
+    {
+      "id": 259,
+      "key": "crazyGrapple",
+      "name": "Crazy Grapple",
+      "classId": 15,
+      "className": "Marauder",
+      "hasSubskills": true
+    },
+    {
+      "id": 260,
+      "key": "flailMastery",
+      "name": "Flail Mastery",
+      "classId": 15,
+      "className": "Marauder",
+      "hasSubskills": false
+    },
+    {
+      "id": 261,
+      "key": "bombardment",
+      "name": "Bombardment",
+      "classId": 15,
+      "className": "Marauder",
+      "hasSubskills": true
+    },
+    {
+      "id": 262,
+      "key": "forceOverwhelming",
+      "name": "Force Overwhelming",
+      "classId": 15,
+      "className": "Marauder",
+      "hasSubskills": false
+    },
+    {
+      "id": 263,
+      "key": "serratedChains",
+      "name": "Serrated Chains",
+      "classId": 15,
+      "className": "Marauder",
+      "hasSubskills": true
+    },
+    {
+      "id": 264,
+      "key": "retiariusNet",
+      "name": "Retiarius Net",
+      "classId": 15,
+      "className": "Marauder",
+      "hasSubskills": true
+    },
+    {
+      "id": 265,
+      "key": "chainTrap",
+      "name": "Chain Trap",
+      "classId": 15,
+      "className": "Marauder",
+      "hasSubskills": true
+    },
+    {
+      "id": 266,
+      "key": "titaniumChains",
+      "name": "Titanium Chains",
+      "classId": 15,
+      "className": "Marauder",
+      "hasSubskills": false
+    },
+    {
+      "id": 267,
+      "key": "masterTrapMaker",
+      "name": "Master Trap Maker",
+      "classId": 15,
+      "className": "Marauder",
+      "hasSubskills": false
+    },
+    {
+      "id": 268,
+      "key": "rendFlesh",
+      "name": "Rend Flesh",
+      "classId": 15,
+      "className": "Marauder",
+      "hasSubskills": false
+    },
+    {
+      "id": 269,
+      "key": "madnessControl",
+      "name": "Madness Control",
+      "classId": 15,
+      "className": "Marauder",
+      "hasSubskills": true
+    },
+    {
+      "id": 270,
+      "key": "resilientGladiator",
+      "name": "Resilient Gladiator",
+      "classId": 15,
+      "className": "Marauder",
+      "hasSubskills": false
+    },
+    {
+      "id": 271,
+      "key": "annihilation",
+      "name": "Annihilation",
+      "classId": 15,
+      "className": "Marauder",
+      "hasSubskills": true
+    },
+    {
+      "id": 272,
+      "key": "surgicalBloodLetting",
+      "name": "Surgical Blood Letting",
+      "classId": 16,
+      "className": "Plague Doctor",
+      "hasSubskills": true
+    },
+    {
+      "id": 273,
+      "key": "malpractice",
+      "name": "Malpractice",
+      "classId": 16,
+      "className": "Plague Doctor",
+      "hasSubskills": false
+    },
+    {
+      "id": 274,
+      "key": "crowMasksPresence",
+      "name": "Crow Mask's Presence",
+      "classId": 16,
+      "className": "Plague Doctor",
+      "hasSubskills": false
+    },
+    {
+      "id": 275,
+      "key": "bloodSustenance",
+      "name": "Blood Sustenance",
+      "classId": 16,
+      "className": "Plague Doctor",
+      "hasSubskills": false
+    },
+    {
+      "id": 276,
+      "key": "miasma",
+      "name": "Miasma",
+      "classId": 16,
+      "className": "Plague Doctor",
+      "hasSubskills": true
+    },
+    {
+      "id": 277,
+      "key": "boosterShot",
+      "name": "Booster Shot",
+      "classId": 16,
+      "className": "Plague Doctor",
+      "hasSubskills": false
+    },
+    {
+      "id": 278,
+      "key": "lifeBloodAura",
+      "name": "Lifeblood Aura",
+      "classId": 16,
+      "className": "Plague Doctor",
+      "hasSubskills": false
+    },
+    {
+      "id": 279,
+      "key": "devoutDoctor",
+      "name": "Devout Doctor",
+      "classId": 16,
+      "className": "Plague Doctor",
+      "hasSubskills": false
+    },
+    {
+      "id": 280,
+      "key": "defunctSurgeon",
+      "name": "Defunct Surgeon",
+      "classId": 16,
+      "className": "Plague Doctor",
+      "hasSubskills": false
+    },
+    {
+      "id": 281,
+      "key": "plagueOfRats",
+      "name": "Plague of Rats",
+      "classId": 16,
+      "className": "Plague Doctor",
+      "hasSubskills": true
+    },
+    {
+      "id": 282,
+      "key": "toxicFlask",
+      "name": "Toxic Flask",
+      "classId": 16,
+      "className": "Plague Doctor",
+      "hasSubskills": true
+    },
+    {
+      "id": 283,
+      "key": "crematus",
+      "name": "Crematus",
+      "classId": 16,
+      "className": "Plague Doctor",
+      "hasSubskills": true
+    },
+    {
+      "id": 284,
+      "key": "oops",
+      "name": "Oops",
+      "classId": 16,
+      "className": "Plague Doctor",
+      "hasSubskills": false
+    },
+    {
+      "id": 285,
+      "key": "chantOfWeakness",
+      "name": "Chant of Weakness",
+      "classId": 16,
+      "className": "Plague Doctor",
+      "hasSubskills": false
+    },
+    {
+      "id": 286,
+      "key": "explodingMice",
+      "name": "Exploding Mice",
+      "classId": 16,
+      "className": "Plague Doctor",
+      "hasSubskills": false
+    },
+    {
+      "id": 287,
+      "key": "jarOfLeeches",
+      "name": "Jar of Leeches",
+      "classId": 16,
+      "className": "Plague Doctor",
+      "hasSubskills": true
+    },
+    {
+      "id": 288,
+      "key": "plagueMaster",
+      "name": "Plague Master",
+      "classId": 16,
+      "className": "Plague Doctor",
+      "hasSubskills": true
+    },
+    {
+      "id": 289,
+      "key": "randyTheRancidRat",
+      "name": "Randy the Rancid Rat",
+      "classId": 16,
+      "className": "Plague Doctor",
+      "hasSubskills": true
+    },
+    {
+      "id": 290,
+      "key": "gloriousStrike",
+      "name": "Glorious Strike",
+      "classId": 17,
+      "className": "Shield Lancer",
+      "hasSubskills": true
+    },
+    {
+      "id": 291,
+      "key": "commendingBanner",
+      "name": "Commending Banner",
+      "classId": 17,
+      "className": "Shield Lancer",
+      "hasSubskills": false
+    },
+    {
+      "id": 292,
+      "key": "battleCharge",
+      "name": "Battle Charge",
+      "classId": 17,
+      "className": "Shield Lancer",
+      "hasSubskills": true
+    },
+    {
+      "id": 293,
+      "key": "lanceThrust",
+      "name": "Lance Thrust",
+      "classId": 17,
+      "className": "Shield Lancer",
+      "hasSubskills": true
+    },
+    {
+      "id": 294,
+      "key": "parry",
+      "name": "Parry",
+      "classId": 17,
+      "className": "Shield Lancer",
+      "hasSubskills": false
+    },
+    {
+      "id": 295,
+      "key": "armorCrush",
+      "name": "Armor Crush",
+      "classId": 17,
+      "className": "Shield Lancer",
+      "hasSubskills": false
+    },
+    {
+      "id": 296,
+      "key": "crushingLance",
+      "name": "Crushing Lance",
+      "classId": 17,
+      "className": "Shield Lancer",
+      "hasSubskills": true
+    },
+    {
+      "id": 297,
+      "key": "lanceThrow",
+      "name": "Lance Throw",
+      "classId": 17,
+      "className": "Shield Lancer",
+      "hasSubskills": false
+    },
+    {
+      "id": 298,
+      "key": "glory",
+      "name": "Glory",
+      "classId": 17,
+      "className": "Shield Lancer",
+      "hasSubskills": false
+    },
+    {
+      "id": 299,
+      "key": "shieldSlam",
+      "name": "Shield Slam",
+      "classId": 17,
+      "className": "Shield Lancer",
+      "hasSubskills": true
+    },
+    {
+      "id": 300,
+      "key": "taunt",
+      "name": "Taunt",
+      "classId": 17,
+      "className": "Shield Lancer",
+      "hasSubskills": false
+    },
+    {
+      "id": 301,
+      "key": "counter",
+      "name": "Counter",
+      "classId": 17,
+      "className": "Shield Lancer",
+      "hasSubskills": true
+    },
+    {
+      "id": 302,
+      "key": "knightsResilience",
+      "name": "Knight's Resilience",
+      "classId": 17,
+      "className": "Shield Lancer",
+      "hasSubskills": false
+    },
+    {
+      "id": 303,
+      "key": "damageReflect",
+      "name": "Damage Reflect",
+      "classId": 17,
+      "className": "Shield Lancer",
+      "hasSubskills": false
+    },
+    {
+      "id": 304,
+      "key": "honedDefenses",
+      "name": "Honed Defenses",
+      "classId": 17,
+      "className": "Shield Lancer",
+      "hasSubskills": true
+    },
+    {
+      "id": 305,
+      "key": "shieldWall",
+      "name": "Shield Wall",
+      "classId": 17,
+      "className": "Shield Lancer",
+      "hasSubskills": true
+    },
+    {
+      "id": 306,
+      "key": "knightsVigor",
+      "name": "Knight´s Vigor",
+      "classId": 17,
+      "className": "Shield Lancer",
+      "hasSubskills": false
+    },
+    {
+      "id": 307,
+      "key": "lastStand",
+      "name": "Last Stand",
+      "classId": 17,
+      "className": "Shield Lancer",
+      "hasSubskills": false
+    },
+    {
+      "id": 308,
+      "key": "sandGuardian",
+      "name": "Sand Guardians",
+      "classId": 19,
+      "className": "Illusionist",
+      "hasSubskills": true
+    },
+    {
+      "id": 309,
+      "key": "piercingSand",
+      "name": "Piercing Sand",
+      "classId": 19,
+      "className": "Illusionist",
+      "hasSubskills": false
+    },
+    {
+      "id": 310,
+      "key": "callForWar",
+      "name": "Call For War",
+      "classId": 19,
+      "className": "Illusionist",
+      "hasSubskills": false
+    },
+    {
+      "id": 311,
+      "key": "linkOfSand",
+      "name": "Link of Sand",
+      "classId": 19,
+      "className": "Illusionist",
+      "hasSubskills": false
+    },
+    {
+      "id": 312,
+      "key": "dissipation",
+      "name": "Dissipation",
+      "classId": 19,
+      "className": "Illusionist",
+      "hasSubskills": false
+    },
+    {
+      "id": 313,
+      "key": "spiritLink",
+      "name": "Spirit Link",
+      "classId": 19,
+      "className": "Illusionist",
+      "hasSubskills": false
+    },
+    {
+      "id": 314,
+      "key": "cheapShot",
+      "name": "Cheapshot",
+      "classId": 19,
+      "className": "Illusionist",
+      "hasSubskills": false
+    },
+    {
+      "id": 315,
+      "key": "circleOfGuardians",
+      "name": "Circle of Guardians",
+      "classId": 19,
+      "className": "Illusionist",
+      "hasSubskills": true
+    },
+    {
+      "id": 316,
+      "key": "combatOrder",
+      "name": "Combat Order",
+      "classId": 19,
+      "className": "Illusionist",
+      "hasSubskills": false
+    },
+    {
+      "id": 317,
+      "key": "ageProliferation",
+      "name": "Age Proliferation",
+      "classId": 19,
+      "className": "Illusionist",
+      "hasSubskills": true
+    },
+    {
+      "id": 318,
+      "key": "gravitationalSlam",
+      "name": "Gravitation Slam",
+      "classId": 19,
+      "className": "Illusionist",
+      "hasSubskills": true
+    },
+    {
+      "id": 319,
+      "key": "splitReality",
+      "name": "Split Reality",
+      "classId": 19,
+      "className": "Illusionist",
+      "hasSubskills": false
+    },
+    {
+      "id": 320,
+      "key": "sandsOfTime",
+      "name": "Sands of Time",
+      "classId": 19,
+      "className": "Illusionist",
+      "hasSubskills": false
+    },
+    {
+      "id": 321,
+      "key": "timeDeceleration",
+      "name": "Time Deceleration",
+      "classId": 19,
+      "className": "Illusionist",
+      "hasSubskills": false
+    },
+    {
+      "id": 322,
+      "key": "dimensionalDisplacement",
+      "name": "Dimensional Displacement",
+      "classId": 19,
+      "className": "Illusionist",
+      "hasSubskills": false
+    },
+    {
+      "id": 323,
+      "key": "precognition",
+      "name": "Precognition",
+      "classId": 19,
+      "className": "Illusionist",
+      "hasSubskills": false
+    },
+    {
+      "id": 324,
+      "key": "expansiveMind",
+      "name": "Expansive Mind",
+      "classId": 19,
+      "className": "Illusionist",
+      "hasSubskills": false
+    },
+    {
+      "id": 325,
+      "key": "temporalHeroes",
+      "name": "Temporal Heroes",
+      "classId": 19,
+      "className": "Illusionist",
+      "hasSubskills": true
+    },
+    {
+      "id": 326,
+      "key": "frozenBoulder",
+      "name": "Frozen Boulder",
+      "classId": 18,
+      "className": "Jötunn",
+      "hasSubskills": true
+    },
+    {
+      "id": 327,
+      "key": "breathOfIce",
+      "name": "Breath of Ice",
+      "classId": 18,
+      "className": "Jötunn",
+      "hasSubskills": true
+    },
+    {
+      "id": 328,
+      "key": "powerOfTheAncients",
+      "name": "Power of the Ancients",
+      "classId": 18,
+      "className": "Jötunn",
+      "hasSubskills": false
+    },
+    {
+      "id": 329,
+      "key": "orbOfFrost",
+      "name": "Orb of Frost",
+      "classId": 18,
+      "className": "Jötunn",
+      "hasSubskills": true
+    },
+    {
+      "id": 330,
+      "key": "frozenHide",
+      "name": "Frozen Hide",
+      "classId": 18,
+      "className": "Jötunn",
+      "hasSubskills": false
+    },
+    {
+      "id": 331,
+      "key": "icicles",
+      "name": "Icicles",
+      "classId": 18,
+      "className": "Jötunn",
+      "hasSubskills": false
+    },
+    {
+      "id": 332,
+      "key": "portalOfIce",
+      "name": "Portal of Ice",
+      "classId": 18,
+      "className": "Jötunn",
+      "hasSubskills": true
+    },
+    {
+      "id": 333,
+      "key": "avatarOfFrost",
+      "name": "Avatar of Frost",
+      "classId": 18,
+      "className": "Jötunn",
+      "hasSubskills": false
+    },
+    {
+      "id": 334,
+      "key": "blizzard",
+      "name": "Blizzard",
+      "classId": 18,
+      "className": "Jötunn",
+      "hasSubskills": true
+    },
+    {
+      "id": 335,
+      "key": "glacialTremors",
+      "name": "Glacial Tremors",
+      "classId": 18,
+      "className": "Jötunn",
+      "hasSubskills": false
+    },
+    {
+      "id": 336,
+      "key": "flashFreeze",
+      "name": "Flash Freeze",
+      "classId": 18,
+      "className": "Jötunn",
+      "hasSubskills": true
+    },
+    {
+      "id": 337,
+      "key": "freezingLeap",
+      "name": "Freezing Leap",
+      "classId": 18,
+      "className": "Jötunn",
+      "hasSubskills": true
+    },
+    {
+      "id": 338,
+      "key": "permaFrost",
+      "name": "Permafrost",
+      "classId": 18,
+      "className": "Jötunn",
+      "hasSubskills": false
+    },
+    {
+      "id": 339,
+      "key": "glacialArmor",
+      "name": "Glacial Armor",
+      "classId": 18,
+      "className": "Jötunn",
+      "hasSubskills": false
+    },
+    {
+      "id": 340,
+      "key": "frostSunder",
+      "name": "Frost Sunder",
+      "classId": 18,
+      "className": "Jötunn",
+      "hasSubskills": true
+    },
+    {
+      "id": 341,
+      "key": "avalanche",
+      "name": "Avalanche",
+      "classId": 18,
+      "className": "Jötunn",
+      "hasSubskills": true
+    },
+    {
+      "id": 342,
+      "key": "absoluteZero",
+      "name": "Absolute Zero",
+      "classId": 18,
+      "className": "Jötunn",
+      "hasSubskills": false
+    },
+    {
+      "id": 343,
+      "key": "theEmbodimentOfAurgelmir",
+      "name": "The Embodiment of Aurgelmir",
+      "classId": 18,
+      "className": "Jötunn",
+      "hasSubskills": false
+    },
+    {
+      "id": 344,
+      "key": "scorchingWhip",
+      "name": "Scorching Whip",
+      "classId": 20,
+      "className": "Exo",
+      "hasSubskills": true
+    },
+    {
+      "id": 345,
+      "key": "whiplash",
+      "name": "Whiplash",
+      "classId": 20,
+      "className": "Exo",
+      "hasSubskills": false
+    },
+    {
+      "id": 346,
+      "key": "solarFlare",
+      "name": "Solar Flare",
+      "classId": 20,
+      "className": "Exo",
+      "hasSubskills": true
+    },
+    {
+      "id": 347,
+      "key": "shineBright",
+      "name": "Shine Bright",
+      "classId": 20,
+      "className": "Exo",
+      "hasSubskills": false
+    },
+    {
+      "id": 348,
+      "key": "solarDash",
+      "name": "Solar Dash",
+      "classId": 20,
+      "className": "Exo",
+      "hasSubskills": true
+    },
+    {
+      "id": 349,
+      "key": "blindingLight",
+      "name": "Blinding Light",
+      "classId": 20,
+      "className": "Exo",
+      "hasSubskills": false
+    },
+    {
+      "id": 350,
+      "key": "solarForm",
+      "name": "Solar Form",
+      "classId": 20,
+      "className": "Exo",
+      "hasSubskills": false
+    },
+    {
+      "id": 351,
+      "key": "solarBurst",
+      "name": "Solar Burst",
+      "classId": 20,
+      "className": "Exo",
+      "hasSubskills": false
+    },
+    {
+      "id": 352,
+      "key": "supernova",
+      "name": "Supernova",
+      "classId": 20,
+      "className": "Exo",
+      "hasSubskills": true
+    },
+    {
+      "id": 353,
+      "key": "collision",
+      "name": "Collision",
+      "classId": 20,
+      "className": "Exo",
+      "hasSubskills": false
+    },
+    {
+      "id": 354,
+      "key": "darkSideofTheMoon",
+      "name": "Dark Side of the Moon",
+      "classId": 20,
+      "className": "Exo",
+      "hasSubskills": false
+    },
+    {
+      "id": 355,
+      "key": "tsunami",
+      "name": "Tsunami",
+      "classId": 20,
+      "className": "Exo",
+      "hasSubskills": true
+    },
+    {
+      "id": 356,
+      "key": "asteroid",
+      "name": "Asteroid",
+      "classId": 20,
+      "className": "Exo",
+      "hasSubskills": true
+    },
+    {
+      "id": 357,
+      "key": "lunarForm",
+      "name": "Lunar Form",
+      "classId": 20,
+      "className": "Exo",
+      "hasSubskills": false
+    },
+    {
+      "id": 358,
+      "key": "lunarOrbit",
+      "name": "Lunar Orbit",
+      "classId": 20,
+      "className": "Exo",
+      "hasSubskills": true
+    },
+    {
+      "id": 359,
+      "key": "bloodMoon",
+      "name": "Blood Moon",
+      "classId": 20,
+      "className": "Exo",
+      "hasSubskills": false
+    },
+    {
+      "id": 360,
+      "key": "moonlight",
+      "name": "Moonlight",
+      "classId": 20,
+      "className": "Exo",
+      "hasSubskills": false
+    },
+    {
+      "id": 361,
+      "key": "blackHole",
+      "name": "Black Hole",
+      "classId": 20,
+      "className": "Exo",
+      "hasSubskills": true
+    },
+    {
+      "id": 362,
+      "key": "slicingThrow",
+      "name": "Slicing Throw",
+      "classId": 21,
+      "className": "Butcher",
+      "hasSubskills": true
+    },
+    {
+      "id": 363,
+      "key": "furiousStrike",
+      "name": "Furious Strike",
+      "classId": 21,
+      "className": "Butcher",
+      "hasSubskills": true
+    },
+    {
+      "id": 364,
+      "key": "holyForm",
+      "name": "Holy Form",
+      "classId": 21,
+      "className": "Butcher",
+      "hasSubskills": false
+    },
+    {
+      "id": 365,
+      "key": "unholyForm",
+      "name": "Unholy Form",
+      "classId": 21,
+      "className": "Butcher",
+      "hasSubskills": false
+    },
+    {
+      "id": 366,
+      "key": "sacrilegiousScorn",
+      "name": "Sacrilegious Scorn",
+      "classId": 21,
+      "className": "Butcher",
+      "hasSubskills": false
+    },
+    {
+      "id": 367,
+      "key": "endingFate",
+      "name": "Ending Fate",
+      "classId": 21,
+      "className": "Butcher",
+      "hasSubskills": false
+    },
+    {
+      "id": 368,
+      "key": "spiritualDuality",
+      "name": "Spiritual Duality",
+      "classId": 21,
+      "className": "Butcher",
+      "hasSubskills": false
+    },
+    {
+      "id": 369,
+      "key": "awakeningFury",
+      "name": "Awakening Fury",
+      "classId": 21,
+      "className": "Butcher",
+      "hasSubskills": false
+    },
+    {
+      "id": 370,
+      "key": "insatiableHunger",
+      "name": "Insatiable Hunger",
+      "classId": 21,
+      "className": "Butcher",
+      "hasSubskills": false
+    },
+    {
+      "id": 371,
+      "key": "chainRip",
+      "name": "Chain Rip",
+      "classId": 21,
+      "className": "Butcher",
+      "hasSubskills": true
+    },
+    {
+      "id": 372,
+      "key": "brutalizingSlash",
+      "name": "Brutalizing Slash",
+      "classId": 21,
+      "className": "Butcher",
+      "hasSubskills": true
+    },
+    {
+      "id": 373,
+      "key": "fuelToFire",
+      "name": "Fuel to Fire",
+      "classId": 21,
+      "className": "Butcher",
+      "hasSubskills": false
+    },
+    {
+      "id": 374,
+      "key": "hungerForBlood",
+      "name": "Hunger For Blood",
+      "classId": 21,
+      "className": "Butcher",
+      "hasSubskills": false
+    },
+    {
+      "id": 375,
+      "key": "butchersHook",
+      "name": "Butchers Hook",
+      "classId": 21,
+      "className": "Butcher",
+      "hasSubskills": true
+    },
+    {
+      "id": 376,
+      "key": "chainSwing",
+      "name": "Chain Swing",
+      "classId": 21,
+      "className": "Butcher",
+      "hasSubskills": true
+    },
+    {
+      "id": 377,
+      "key": "submergedKnives",
+      "name": "Submerged Knives",
+      "classId": 21,
+      "className": "Butcher",
+      "hasSubskills": true
+    },
+    {
+      "id": 378,
+      "key": "enragedMania",
+      "name": "Enraged Mania",
+      "classId": 21,
+      "className": "Butcher",
+      "hasSubskills": false
+    },
+    {
+      "id": 379,
+      "key": "blender",
+      "name": "Blender",
+      "classId": 21,
+      "className": "Butcher",
+      "hasSubskills": true
+    },
+    {
+      "id": 380,
+      "key": "chargedBolts",
+      "name": "Charged Bolts",
+      "classId": 22,
+      "className": "Stormweaver",
+      "hasSubskills": true
+    },
+    {
+      "id": 381,
+      "key": "manaFiend",
+      "name": "Manafiend",
+      "classId": 22,
+      "className": "Stormweaver",
+      "hasSubskills": false
+    },
+    {
+      "id": 382,
+      "key": "pulsingCharge",
+      "name": "Pulsing Charge",
+      "classId": 22,
+      "className": "Stormweaver",
+      "hasSubskills": false
+    },
+    {
+      "id": 383,
+      "key": "lightningSurge",
+      "name": "Lightning Surge",
+      "classId": 22,
+      "className": "Stormweaver",
+      "hasSubskills": true
+    },
+    {
+      "id": 384,
+      "key": "gateway",
+      "name": "Gateway",
+      "classId": 22,
+      "className": "Stormweaver",
+      "hasSubskills": false
+    },
+    {
+      "id": 385,
+      "key": "chainLightning",
+      "name": "Chain Lightning",
+      "classId": 22,
+      "className": "Stormweaver",
+      "hasSubskills": false
+    },
+    {
+      "id": 386,
+      "key": "staticShock",
+      "name": "Static Shock",
+      "classId": 22,
+      "className": "Stormweaver",
+      "hasSubskills": true
+    },
+    {
+      "id": 387,
+      "key": "stormCloud",
+      "name": "Storm Cloud",
+      "classId": 22,
+      "className": "Stormweaver",
+      "hasSubskills": true
+    },
+    {
+      "id": 388,
+      "key": "symphonyOfThunder",
+      "name": "Symphony of Thunder",
+      "classId": 22,
+      "className": "Stormweaver",
+      "hasSubskills": false
+    },
+    {
+      "id": 389,
+      "key": "electricCells",
+      "name": "Electric Cells",
+      "classId": 22,
+      "className": "Stormweaver",
+      "hasSubskills": false
+    },
+    {
+      "id": 390,
+      "key": "stormBolt",
+      "name": "Storm Bolt",
+      "classId": 22,
+      "className": "Stormweaver",
+      "hasSubskills": true
+    },
+    {
+      "id": 391,
+      "key": "highVoltageAura",
+      "name": "High Voltage Aura",
+      "classId": 22,
+      "className": "Stormweaver",
+      "hasSubskills": false
+    },
+    {
+      "id": 392,
+      "key": "loadedPulse",
+      "name": "Loaded Pulse",
+      "classId": 22,
+      "className": "Stormweaver",
+      "hasSubskills": false
+    },
+    {
+      "id": 393,
+      "key": "waveLength",
+      "name": "Wave Length",
+      "classId": 22,
+      "className": "Stormweaver",
+      "hasSubskills": false
+    },
+    {
+      "id": 394,
+      "key": "theBatteryWithin",
+      "name": "The Battery Within",
+      "classId": 22,
+      "className": "Stormweaver",
+      "hasSubskills": false
+    },
+    {
+      "id": 395,
+      "key": "hyperCharged",
+      "name": "Hyper Charged",
+      "classId": 22,
+      "className": "Stormweaver",
+      "hasSubskills": false
+    },
+    {
+      "id": 396,
+      "key": "apocalypticThunder",
+      "name": "Apocalyptic Thunder",
+      "classId": 22,
+      "className": "Stormweaver",
+      "hasSubskills": true
+    },
+    {
+      "id": 397,
+      "key": "afterShock",
+      "name": "Aftershock",
+      "classId": 22,
+      "className": "Stormweaver",
+      "hasSubskills": false
+    },
+    {
+      "id": 398,
+      "key": "slayingRiffs",
+      "name": "Slaying Riffs",
+      "classId": 23,
+      "className": "Bard",
+      "hasSubskills": true
+    },
+    {
+      "id": 399,
+      "key": "insaneRiff",
+      "name": "Insane Riff",
+      "classId": 23,
+      "className": "Bard",
+      "hasSubskills": false
+    },
+    {
+      "id": 400,
+      "key": "visceralGrowl",
+      "name": "Visceral Growl",
+      "classId": 23,
+      "className": "Bard",
+      "hasSubskills": true
+    },
+    {
+      "id": 401,
+      "key": "ampingUp",
+      "name": "Amping Up",
+      "classId": 23,
+      "className": "Bard",
+      "hasSubskills": false
+    },
+    {
+      "id": 402,
+      "key": "sacrilegiousSymphony",
+      "name": "Sacrilegious Symphony",
+      "classId": 23,
+      "className": "Bard",
+      "hasSubskills": true
+    },
+    {
+      "id": 403,
+      "key": "satansMelody",
+      "name": "Satan´s Melody",
+      "classId": 23,
+      "className": "Bard",
+      "hasSubskills": false
+    },
+    {
+      "id": 404,
+      "key": "soundsOfSilence",
+      "name": "Sounds of Silence",
+      "classId": 23,
+      "className": "Bard",
+      "hasSubskills": false
+    },
+    {
+      "id": 405,
+      "key": "highDb",
+      "name": "High dB",
+      "classId": 23,
+      "className": "Bard",
+      "hasSubskills": false
+    },
+    {
+      "id": 406,
+      "key": "progeniesOfTheGreatCataclysm",
+      "name": "Progenies of the Great Cataclysm",
+      "classId": 23,
+      "className": "Bard",
+      "hasSubskills": true
+    },
+    {
+      "id": 407,
+      "key": "headBanger",
+      "name": "Headbanger",
+      "classId": 23,
+      "className": "Bard",
+      "hasSubskills": true
+    },
+    {
+      "id": 408,
+      "key": "crowdPummeler",
+      "name": "Crowd Pummeler",
+      "classId": 23,
+      "className": "Bard",
+      "hasSubskills": false
+    },
+    {
+      "id": 409,
+      "key": "crowdDiver",
+      "name": "Crowd Dive",
+      "classId": 23,
+      "className": "Bard",
+      "hasSubskills": true
+    },
+    {
+      "id": 410,
+      "key": "adrenalineMomentum",
+      "name": "Adrenaline Momentum",
+      "classId": 23,
+      "className": "Bard",
+      "hasSubskills": false
+    },
+    {
+      "id": 411,
+      "key": "cravingForAttention",
+      "name": "Craving For Attention",
+      "classId": 23,
+      "className": "Bard",
+      "hasSubskills": false
+    },
+    {
+      "id": 412,
+      "key": "pyroTechnician",
+      "name": "Pyro Technician",
+      "classId": 23,
+      "className": "Bard",
+      "hasSubskills": true
+    },
+    {
+      "id": 413,
+      "key": "cravingForAnotherKilling",
+      "name": "Craving For Another Killing",
+      "classId": 23,
+      "className": "Bard",
+      "hasSubskills": false
+    },
+    {
+      "id": 414,
+      "key": "antiSocialPitFighter",
+      "name": "Antisocial Pit Fighter",
+      "classId": 23,
+      "className": "Bard",
+      "hasSubskills": false
+    },
+    {
+      "id": 415,
+      "key": "moshpitMassacre",
+      "name": "Moshpit Massacre",
+      "classId": 23,
+      "className": "Bard",
+      "hasSubskills": true
+    },
+    {
+      "id": 416,
+      "key": "carrionWorm",
+      "name": "Carrion Worm",
+      "classId": 24,
+      "className": "Prophet",
+      "hasSubskills": true
+    },
+    {
+      "id": 417,
+      "key": "thornedRoots",
+      "name": "Thorned Roots",
+      "classId": 24,
+      "className": "Prophet",
+      "hasSubskills": true
+    },
+    {
+      "id": 418,
+      "key": "raven",
+      "name": "Summon Raven",
+      "classId": 24,
+      "className": "Prophet",
+      "hasSubskills": true
+    },
+    {
+      "id": 419,
+      "key": "blessedNature",
+      "name": "Blessed Nature",
+      "classId": 24,
+      "className": "Prophet",
+      "hasSubskills": false
+    },
+    {
+      "id": 420,
+      "key": "summonEnt",
+      "name": "Summon Ent",
+      "classId": 24,
+      "className": "Prophet",
+      "hasSubskills": true
+    },
+    {
+      "id": 421,
+      "key": "thornedBranch",
+      "name": "Thorned Branch",
+      "classId": 24,
+      "className": "Prophet",
+      "hasSubskills": true
+    },
+    {
+      "id": 422,
+      "key": "spiritOfForest",
+      "name": "Summon Spirit of The Forest",
+      "classId": 24,
+      "className": "Prophet",
+      "hasSubskills": true
+    },
+    {
+      "id": 423,
+      "key": "deepRooted",
+      "name": "Deep Rooted",
+      "classId": 24,
+      "className": "Prophet",
+      "hasSubskills": false
+    },
+    {
+      "id": 424,
+      "key": "entColossus",
+      "name": "Summon Ent Colossus",
+      "classId": 24,
+      "className": "Prophet",
+      "hasSubskills": true
+    },
+    {
+      "id": 425,
+      "key": "spiritOfWendigo",
+      "name": "Spirit of The Wendigo",
+      "classId": 24,
+      "className": "Prophet",
+      "hasSubskills": true
+    },
+    {
+      "id": 426,
+      "key": "woundingPaw",
+      "name": "Wounding Paw",
+      "classId": 24,
+      "className": "Prophet",
+      "hasSubskills": true
+    },
+    {
+      "id": 427,
+      "key": "skinWalker",
+      "name": "Skinwalker",
+      "classId": 24,
+      "className": "Prophet",
+      "hasSubskills": false
+    },
+    {
+      "id": 428,
+      "key": "leapingCharge",
+      "name": "Leaping Charge",
+      "classId": 24,
+      "className": "Prophet",
+      "hasSubskills": true
+    },
+    {
+      "id": 429,
+      "key": "spiritOfEnt",
+      "name": "Spirit of the Ent",
+      "classId": 24,
+      "className": "Prophet",
+      "hasSubskills": true
+    },
+    {
+      "id": 430,
+      "key": "maelstromOfFrost",
+      "name": "Maelstrom of Frost",
+      "classId": 24,
+      "className": "Prophet",
+      "hasSubskills": true
+    },
+    {
+      "id": 431,
+      "key": "swampsEssence",
+      "name": "Swamp´s Essence",
+      "classId": 24,
+      "className": "Prophet",
+      "hasSubskills": false
+    },
+    {
+      "id": 432,
+      "key": "manaDwelling",
+      "name": "Manadwelling",
+      "classId": 24,
+      "className": "Prophet",
+      "hasSubskills": false
+    },
+    {
+      "id": 433,
+      "key": "spiritOfHawk",
+      "name": "Storm Hawk",
+      "classId": 24,
+      "className": "Prophet",
+      "hasSubskills": true
+    }
+  ],
+  "profiles": {
+    "unique:10:0:31": {
+      "name": "Loaded Dice",
+      "address": {
+        "kind": "unique",
+        "cls": 10,
+        "sub": 0,
+        "b": 31
+      },
+      "statKey": 202,
+      "targetKind": "skill",
+      "algorithm": "first definition cpr_irandom(431)+2; no rejection; +2 All Skills and +12 grant are fixed",
+      "searchedThrough": 429566,
+      "targets": {
+        "2": 3,
+        "3": 2445,
+        "4": 5454,
+        "5": 8463,
+        "6": 11469,
+        "7": 14478,
+        "8": 17484,
+        "9": 20493,
+        "10": 23502,
+        "11": 26508,
+        "12": 29517,
+        "13": 32526,
+        "14": 35532,
+        "15": 38541,
+        "16": 41547,
+        "17": 44556,
+        "18": 47565,
+        "19": 50571,
+        "20": 53580,
+        "21": 56589,
+        "22": 59595,
+        "23": 62604,
+        "24": 65610,
+        "25": 68619,
+        "26": 71628,
+        "27": 74634,
+        "28": 77643,
+        "29": 80652,
+        "30": 83658,
+        "31": 86667,
+        "32": 89673,
+        "33": 92682,
+        "34": 95691,
+        "35": 98697,
+        "36": 101706,
+        "37": 104715,
+        "38": 107721,
+        "39": 110730,
+        "40": 113736,
+        "41": 116745,
+        "42": 119754,
+        "43": 122760,
+        "44": 125769,
+        "45": 128778,
+        "46": 131784,
+        "47": 134793,
+        "48": 137802,
+        "49": 140808,
+        "50": 143817,
+        "51": 146823,
+        "52": 149832,
+        "53": 152841,
+        "54": 155847,
+        "55": 158856,
+        "56": 161865,
+        "57": 164871,
+        "58": 167880,
+        "59": 170886,
+        "60": 173895,
+        "61": 176904,
+        "62": 179910,
+        "63": 182919,
+        "64": 185928,
+        "65": 188934,
+        "66": 191943,
+        "67": 194949,
+        "68": 197958,
+        "69": 200967,
+        "70": 203973,
+        "71": 206982,
+        "72": 209991,
+        "73": 212997,
+        "74": 216006,
+        "75": 219012,
+        "76": 222021,
+        "77": 225030,
+        "78": 228036,
+        "79": 231045,
+        "80": 234054,
+        "81": 237060,
+        "82": 240069,
+        "83": 243075,
+        "84": 246084,
+        "85": 249093,
+        "86": 252099,
+        "87": 255108,
+        "88": 258117,
+        "89": 261123,
+        "90": 264132,
+        "91": 267138,
+        "92": 270147,
+        "93": 273156,
+        "94": 276162,
+        "95": 279171,
+        "96": 282180,
+        "97": 285186,
+        "98": 288195,
+        "99": 291204,
+        "100": 294210,
+        "101": 297219,
+        "102": 300225,
+        "103": 303234,
+        "104": 306243,
+        "105": 309249,
+        "106": 312258,
+        "107": 315267,
+        "108": 318273,
+        "109": 321282,
+        "110": 324288,
+        "111": 327297,
+        "112": 330306,
+        "113": 333312,
+        "114": 336321,
+        "115": 339330,
+        "116": 342336,
+        "117": 345345,
+        "118": 348351,
+        "119": 351360,
+        "120": 354369,
+        "121": 357375,
+        "122": 360384,
+        "123": 363393,
+        "124": 366399,
+        "125": 369408,
+        "126": 372414,
+        "127": 375423,
+        "128": 378432,
+        "129": 381438,
+        "130": 384447,
+        "131": 387456,
+        "132": 390462,
+        "133": 393471,
+        "134": 396477,
+        "135": 399486,
+        "136": 402495,
+        "137": 405501,
+        "138": 408510,
+        "139": 411519,
+        "140": 414525,
+        "141": 417534,
+        "142": 420540,
+        "143": 423549,
+        "144": 426558,
+        "145": 429564,
+        "146": 2,
+        "147": 2447,
+        "148": 5453,
+        "149": 8462,
+        "150": 11468,
+        "151": 14477,
+        "152": 17486,
+        "153": 20492,
+        "154": 23501,
+        "155": 26510,
+        "156": 29516,
+        "157": 32525,
+        "158": 35534,
+        "159": 38540,
+        "160": 41549,
+        "161": 44555,
+        "162": 47564,
+        "163": 50573,
+        "164": 53579,
+        "165": 56588,
+        "166": 59597,
+        "167": 62603,
+        "168": 65612,
+        "169": 68618,
+        "170": 71627,
+        "171": 74636,
+        "172": 77642,
+        "173": 80651,
+        "174": 83660,
+        "175": 86666,
+        "176": 89675,
+        "177": 92681,
+        "178": 95690,
+        "179": 98699,
+        "180": 101705,
+        "181": 104714,
+        "182": 107723,
+        "183": 110729,
+        "184": 113738,
+        "185": 116744,
+        "186": 119753,
+        "187": 122762,
+        "188": 125768,
+        "189": 128777,
+        "190": 131786,
+        "191": 134792,
+        "192": 137801,
+        "193": 140807,
+        "194": 143816,
+        "195": 146825,
+        "196": 149831,
+        "197": 152840,
+        "198": 155849,
+        "199": 158855,
+        "200": 161864,
+        "201": 164870,
+        "202": 167879,
+        "203": 170888,
+        "204": 173894,
+        "205": 176903,
+        "206": 179912,
+        "207": 182918,
+        "208": 185927,
+        "209": 188936,
+        "210": 191942,
+        "211": 194951,
+        "212": 197957,
+        "213": 200966,
+        "214": 203975,
+        "215": 206981,
+        "216": 209990,
+        "217": 212999,
+        "218": 216005,
+        "219": 219014,
+        "220": 222020,
+        "221": 225029,
+        "222": 228038,
+        "223": 231044,
+        "224": 234053,
+        "225": 237062,
+        "226": 240068,
+        "227": 243077,
+        "228": 246083,
+        "229": 249092,
+        "230": 252101,
+        "231": 255107,
+        "232": 258116,
+        "233": 261125,
+        "234": 264131,
+        "235": 267140,
+        "236": 270146,
+        "237": 273155,
+        "238": 276164,
+        "239": 279170,
+        "240": 282179,
+        "241": 285188,
+        "242": 288194,
+        "243": 291203,
+        "244": 294209,
+        "245": 297218,
+        "246": 300227,
+        "247": 303233,
+        "248": 306242,
+        "249": 309251,
+        "250": 312257,
+        "251": 315266,
+        "252": 318272,
+        "253": 321281,
+        "254": 324290,
+        "255": 327296,
+        "256": 330305,
+        "257": 333314,
+        "258": 336320,
+        "259": 339329,
+        "260": 342338,
+        "261": 345344,
+        "262": 348353,
+        "263": 351359,
+        "264": 354368,
+        "265": 357377,
+        "266": 360383,
+        "267": 363392,
+        "268": 366401,
+        "269": 369407,
+        "270": 372416,
+        "271": 375422,
+        "272": 378431,
+        "273": 381440,
+        "274": 384446,
+        "275": 387455,
+        "276": 390464,
+        "277": 393470,
+        "278": 396479,
+        "279": 399485,
+        "280": 402494,
+        "281": 405503,
+        "282": 408509,
+        "283": 411518,
+        "284": 414527,
+        "285": 417533,
+        "286": 420542,
+        "287": 423548,
+        "288": 426557,
+        "289": 429566,
+        "290": 1,
+        "291": 2446,
+        "292": 5455,
+        "293": 8461,
+        "294": 11470,
+        "295": 14476,
+        "296": 17485,
+        "297": 20494,
+        "298": 23500,
+        "299": 26509,
+        "300": 29518,
+        "301": 32524,
+        "302": 35533,
+        "303": 38539,
+        "304": 41548,
+        "305": 44557,
+        "306": 47563,
+        "307": 50572,
+        "308": 53581,
+        "309": 56587,
+        "310": 59596,
+        "311": 62602,
+        "312": 65611,
+        "313": 68620,
+        "314": 71626,
+        "315": 74635,
+        "316": 77644,
+        "317": 80650,
+        "318": 83659,
+        "319": 86668,
+        "320": 89674,
+        "321": 92683,
+        "322": 95689,
+        "323": 98698,
+        "324": 101707,
+        "325": 104713,
+        "326": 107722,
+        "327": 110731,
+        "328": 113737,
+        "329": 116746,
+        "330": 119752,
+        "331": 122761,
+        "332": 125770,
+        "333": 128776,
+        "334": 131785,
+        "335": 134794,
+        "336": 137800,
+        "337": 140809,
+        "338": 143815,
+        "339": 146824,
+        "340": 149833,
+        "341": 152839,
+        "342": 155848,
+        "343": 158857,
+        "344": 161863,
+        "345": 164872,
+        "346": 167878,
+        "347": 170887,
+        "348": 173896,
+        "349": 176902,
+        "350": 179911,
+        "351": 182920,
+        "352": 185926,
+        "353": 188935,
+        "354": 191941,
+        "355": 194950,
+        "356": 197959,
+        "357": 200965,
+        "358": 203974,
+        "359": 206983,
+        "360": 209989,
+        "361": 212998,
+        "362": 216004,
+        "363": 219013,
+        "364": 222022,
+        "365": 225028,
+        "366": 228037,
+        "367": 231046,
+        "368": 234052,
+        "369": 237061,
+        "370": 240070,
+        "371": 243076,
+        "372": 246085,
+        "373": 249091,
+        "374": 252100,
+        "375": 255109,
+        "376": 258115,
+        "377": 261124,
+        "378": 264133,
+        "379": 267139,
+        "380": 270148,
+        "381": 273154,
+        "382": 276163,
+        "383": 279172,
+        "384": 282178,
+        "385": 285187,
+        "386": 288196,
+        "387": 291202,
+        "388": 294211,
+        "389": 297217,
+        "390": 300226,
+        "391": 303235,
+        "392": 306241,
+        "393": 309250,
+        "394": 312259,
+        "395": 315265,
+        "396": 318274,
+        "397": 321280,
+        "398": 324289,
+        "399": 327298,
+        "400": 330304,
+        "401": 333313,
+        "402": 336322,
+        "403": 339328,
+        "404": 342337,
+        "405": 345343,
+        "406": 348352,
+        "407": 351361,
+        "408": 354367,
+        "409": 357376,
+        "410": 360385,
+        "411": 363391,
+        "412": 366400,
+        "413": 369406,
+        "414": 372415,
+        "415": 375424,
+        "416": 378430,
+        "417": 381439,
+        "418": 384448,
+        "419": 387454,
+        "420": 390463,
+        "421": 393472,
+        "422": 396478,
+        "423": 399487,
+        "424": 402493,
+        "425": 405502,
+        "426": 408511,
+        "427": 411517,
+        "428": 414526,
+        "429": 417535,
+        "430": 420541,
+        "431": 423550,
+        "432": 426556,
+        "433": 429565
+      }
+    },
+    "unique:10:0:89": {
+      "name": "Overloaded Dice",
+      "address": {
+        "kind": "unique",
+        "cls": 10,
+        "sub": 0,
+        "b": 89
+      },
+      "statKey": 419,
+      "targetKind": "subskill",
+      "algorithm": "definition draw + four empty GenerateItemRandomStats outer pairs, then cpr_irandom(431)+2 until GetSubTalentInfo(id,1,9)>0",
+      "searchedThrough": 983,
+      "targets": {
+        "7": 558,
+        "10": 58,
+        "11": 625,
+        "12": 394,
+        "13": 204,
+        "14": 80,
+        "16": 149,
+        "17": 45,
+        "18": 478,
+        "20": 517,
+        "22": 255,
+        "23": 445,
+        "29": 20,
+        "30": 98,
+        "32": 186,
+        "33": 72,
+        "34": 119,
+        "35": 15,
+        "36": 28,
+        "37": 10,
+        "38": 282,
+        "39": 64,
+        "40": 234,
+        "41": 124,
+        "44": 226,
+        "46": 542,
+        "47": 758,
+        "48": 641,
+        "50": 46,
+        "52": 392,
+        "53": 218,
+        "55": 59,
+        "56": 414,
+        "58": 370,
+        "59": 81,
+        "60": 334,
+        "61": 220,
+        "63": 271,
+        "65": 244,
+        "66": 52,
+        "68": 91,
+        "71": 133,
+        "73": 12,
+        "74": 316,
+        "75": 317,
+        "76": 253,
+        "79": 291,
+        "82": 104,
+        "83": 247,
+        "84": 5,
+        "85": 216,
+        "87": 180,
+        "89": 150,
+        "90": 242,
+        "92": 208,
+        "93": 38,
+        "95": 193,
+        "100": 154,
+        "101": 191,
+        "103": 229,
+        "108": 279,
+        "109": 466,
+        "110": 139,
+        "112": 178,
+        "113": 559,
+        "114": 385,
+        "116": 17,
+        "117": 223,
+        "118": 198,
+        "120": 65,
+        "122": 429,
+        "125": 100,
+        "127": 351,
+        "128": 168,
+        "129": 8,
+        "131": 313,
+        "132": 63,
+        "135": 112,
+        "137": 303,
+        "139": 170,
+        "140": 114,
+        "143": 73,
+        "145": 224,
+        "146": 169,
+        "148": 1,
+        "149": 60,
+        "150": 86,
+        "152": 236,
+        "155": 96,
+        "158": 520,
+        "161": 6,
+        "162": 130,
+        "164": 85,
+        "165": 125,
+        "166": 7,
+        "167": 138,
+        "172": 577,
+        "173": 196,
+        "175": 302,
+        "176": 146,
+        "177": 66,
+        "180": 321,
+        "182": 184,
+        "185": 88,
+        "186": 31,
+        "187": 40,
+        "190": 120,
+        "191": 78,
+        "192": 55,
+        "198": 68,
+        "200": 350,
+        "201": 307,
+        "204": 472,
+        "207": 75,
+        "208": 49,
+        "209": 155,
+        "215": 54,
+        "218": 399,
+        "219": 2,
+        "220": 314,
+        "221": 607,
+        "222": 44,
+        "224": 57,
+        "226": 397,
+        "227": 102,
+        "229": 537,
+        "230": 311,
+        "232": 374,
+        "235": 167,
+        "236": 320,
+        "237": 101,
+        "239": 373,
+        "240": 105,
+        "242": 51,
+        "244": 118,
+        "245": 261,
+        "246": 369,
+        "250": 453,
+        "253": 21,
+        "254": 546,
+        "255": 36,
+        "257": 76,
+        "259": 427,
+        "261": 695,
+        "263": 13,
+        "264": 82,
+        "265": 173,
+        "269": 729,
+        "271": 270,
+        "272": 135,
+        "276": 405,
+        "281": 50,
+        "282": 39,
+        "283": 492,
+        "287": 368,
+        "288": 188,
+        "289": 132,
+        "290": 423,
+        "292": 22,
+        "293": 728,
+        "296": 202,
+        "299": 25,
+        "301": 450,
+        "304": 241,
+        "305": 24,
+        "308": 158,
+        "315": 713,
+        "317": 298,
+        "318": 362,
+        "325": 27,
+        "326": 245,
+        "327": 19,
+        "329": 153,
+        "332": 442,
+        "334": 443,
+        "336": 140,
+        "337": 983,
+        "340": 264,
+        "341": 416,
+        "344": 920,
+        "346": 109,
+        "348": 301,
+        "352": 136,
+        "355": 33,
+        "356": 107,
+        "358": 111,
+        "361": 117,
+        "362": 48,
+        "363": 296,
+        "371": 69,
+        "372": 156,
+        "375": 128,
+        "376": 200,
+        "377": 95,
+        "379": 9,
+        "380": 885,
+        "383": 165,
+        "386": 179,
+        "387": 42,
+        "390": 189,
+        "396": 83,
+        "398": 699,
+        "400": 230,
+        "402": 87,
+        "406": 417,
+        "407": 627,
+        "409": 14,
+        "412": 304,
+        "415": 4,
+        "416": 137,
+        "417": 3,
+        "418": 37,
+        "420": 16,
+        "421": 152,
+        "422": 84,
+        "424": 123,
+        "425": 151,
+        "426": 473,
+        "428": 344,
+        "429": 219,
+        "430": 243,
+        "433": 93
+      }
+    }
+  }
+}

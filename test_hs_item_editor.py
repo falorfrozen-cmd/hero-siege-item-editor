@@ -18,6 +18,81 @@ def catalog_row(key: str) -> dict:
     return next(row for row in editor.CAT if row.get("key") == key)
 
 
+def roll_profile(profile_id, kind, name, mode, field_seeds, maxed, total, deficit):
+    return {
+        "addressKey": profile_id,
+        "kind": kind,
+        "name": name,
+        "sourceKey": "test_fixture",
+        "maxSockets": None,
+        "mode": mode,
+        "maxed": maxed,
+        "total": total,
+        "endpointDeficit": deficit,
+        "fieldSeeds": dict(field_seeds),
+        "chains": {
+            field: {"seed": int(seed)} for field, seed in field_seeds.items()
+        },
+        "detail": (
+            "No variable definition-stat rolls"
+            if mode == "fixed"
+            else f"{maxed}/{total} variable stats MAX"
+            + (f"; minimum total deficit {deficit}" if deficit else "")
+        ),
+    }
+
+
+class FixtureRollDatabase:
+    def __init__(self):
+        direct = [
+            roll_profile(
+                "unique:0:0:90", "unique", "Leviathan's Crown", "exact",
+                {"a": 271_828}, 1, 1, 0,
+            ),
+            roll_profile(
+                "unique:1:0:52", "unique", "Zephy's Gown", "exact",
+                {"a": 3_888_156}, 6, 6, 0,
+            ),
+            roll_profile(
+                "unique:3:3:18", "unique", "The Dawn Bringer", "best",
+                {"a": 17_234_404}, 8, 9, 9,
+            ),
+            roll_profile(
+                "unique:7:0:61", "unique", "Parasite Loop", "exact",
+                {"a": 314_560}, 3, 3, 0,
+            ),
+            roll_profile(
+                "unique:10:0:31", "unique", "Loaded Dice", "exact",
+                {"a": 429_565}, 1, 1, 0,
+            ),
+            roll_profile(
+                "unique:10:0:89", "unique", "Overloaded Dice", "fixed",
+                {}, 0, 0, 0,
+            ),
+        ]
+        runeword = roll_profile(
+            "runeword:1|normal:3:1:17", "runeword",
+            "Breath of the Damned", "exact",
+            {"a": 356_137, "i": 424_123}, 4, 4, 0,
+        )
+        self.profiles = {
+            profile["addressKey"]: profile for profile in [*direct, runeword]
+        }
+        self.available = True
+        self.status = type("Status", (), {"message": "fixture database ready"})()
+
+    def lookup(self, kind, cls, sub, base):
+        return self.profiles.get(f"{kind}:{int(cls)}:{int(sub)}:{int(base)}")
+
+    def lookup_runeword(self, runeword, cls, sub, base):
+        return self.profiles.get(
+            f"runeword:{int(runeword)}|normal:{int(cls)}:{int(sub)}:{int(base)}"
+        )
+
+    def summary(self):
+        return {"available": True, "profileCount": len(self.profiles)}
+
+
 class ItemEditorSeason10Tests(unittest.TestCase):
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory()
@@ -25,9 +100,17 @@ class ItemEditorSeason10Tests(unittest.TestCase):
         self.old_saves = editor.SAVES
         self.old_loadouts_file = editor.LOADOUTS_FILE
         self.old_build_export_dir = editor.BUILD_EXPORT_DIR
+        self.old_roll_db = editor.ROLL_DB
+        self.old_catalog_profiles = [row.get("rollProfile") for row in editor.CAT]
         editor.SAVES = self.saves
         editor.LOADOUTS_FILE = self.saves / "hs_loadouts.json"
         editor.BUILD_EXPORT_DIR = self.saves / "exports"
+        editor.ROLL_DB = FixtureRollDatabase()
+        for row in editor.CAT:
+            row.pop("rollProfile", None)
+            profile = editor.catalog_roll_profile(row)
+            if profile:
+                row["rollProfile"] = profile
 
         stash = {
             "stash_tab_1": {},
@@ -70,6 +153,12 @@ class ItemEditorSeason10Tests(unittest.TestCase):
         editor.SAVES = self.old_saves
         editor.LOADOUTS_FILE = self.old_loadouts_file
         editor.BUILD_EXPORT_DIR = self.old_build_export_dir
+        editor.ROLL_DB = self.old_roll_db
+        for row, profile in zip(editor.CAT, self.old_catalog_profiles):
+            if profile is None:
+                row.pop("rollProfile", None)
+            else:
+                row["rollProfile"] = profile
         self.temp.cleanup()
 
     def test_codec_round_trip_and_corruption_rejection(self):
@@ -131,6 +220,8 @@ class ItemEditorSeason10Tests(unittest.TestCase):
         stash = json.loads(editor.decode_hss(self.saves / "stash.hss"))
         created = next(iter(stash["unique_items"].values()))["data"]
         self.assertEqual((created["c"], created["b"]), (1.0, 90.0))
+        self.assertGreaterEqual(created["a"], editor.SEED_MIN)
+        self.assertLessEqual(created["a"], editor.SEED_MAX)
 
         flask = catalog_row("consumable_leviathans_blood")
         result = editor.op_add({"cid": flask["id"],
@@ -142,6 +233,762 @@ class ItemEditorSeason10Tests(unittest.TestCase):
         created = next(iter(inventory["potions"].values()))["data"]
         self.assertEqual((created["c"], created["b"], created["m"]),
                          (1.0, 22.0, 1.0))
+
+    def test_verified_exact_roll_changes_only_main_seed(self):
+        gown = catalog_row("armors_zephys_gown")
+        editor.op_add({"cid": gown["id"], "target": {
+            "type": "bag", "slot": 1, "tab": "inventory_tab_0"}})
+        bags_path = self.saves / "inventory_order_1.hss"
+        bags = json.loads(editor.decode_hss(bags_path))
+        key, entry = next(iter(bags["inventory_tab_0"].items()))
+        entry["data"].update({
+            "a": 1.0,
+            "i": 222.0,
+            "s": 333.0,
+            "zz": {"sockets": 4.0},
+        })
+        bags_path.write_text(editor.encode_hss(json.dumps(bags)), encoding="ascii")
+
+        result = editor.op_modify({
+            "action": "perfect",
+            "target": {"type": "bag", "slot": 1, "tab": "inventory_tab_0"},
+            "key": key,
+        })
+
+        self.assertIn("ok", result)
+        updated = json.loads(editor.decode_hss(bags_path))
+        data = updated["inventory_tab_0"][key]["data"]
+        profile = gown["rollProfile"]
+        self.assertEqual(data["a"], float(profile["fieldSeeds"]["a"]))
+        self.assertIn("EXACT MAX", result["ok"])
+        self.assertEqual(data["i"], 222.0)
+        self.assertEqual(data["s"], 333.0)
+        self.assertEqual(data["zz"], {"sockets": 4.0})
+
+    def test_equipped_perfect_roll_is_an_idempotent_noop(self):
+        gown = catalog_row("armors_zephys_gown")
+        target = {"type": "equip", "slot": 1, "g": 1}
+        result = editor.op_add({"cid": gown["id"], "target": target})
+        self.assertIn("ok", result)
+
+        char_path = self.saves / "herosiege1.hss"
+        char_before = char_path.read_bytes()
+        backups_before = set(self.saves.glob("herosiege1.hss.guibak_*"))
+        inventory = editor._decode_character_inventory(char_path)[1]
+        key = next(iter(inventory["equipped_items"]))
+
+        result = editor.op_modify({
+            "action": "perfect",
+            "target": {"type": "equipped", "slot": 1,
+                       "tab": "equipped_items"},
+            "key": key,
+        })
+
+        self.assertIn("already EXACT MAX", result["ok"])
+        self.assertEqual(result["backup"], "")
+        self.assertEqual(char_path.read_bytes(), char_before)
+        self.assertEqual(
+            set(self.saves.glob("herosiege1.hss.guibak_*")), backups_before
+        )
+
+    def test_dawn_bringer_uses_verified_best_possible_seed(self):
+        dawn = catalog_row("w_melee_dawn_bringer")
+        editor.op_add({"cid": dawn["id"], "target": {
+            "type": "bag", "slot": 1, "tab": "inventory_tab_0"}})
+        bags_path = self.saves / "inventory_order_1.hss"
+        bags = json.loads(editor.decode_hss(bags_path))
+        key, entry = next(iter(bags["inventory_tab_0"].items()))
+        profile = dawn["rollProfile"]
+        self.assertEqual(entry["data"]["a"], float(profile["fieldSeeds"]["a"]))
+
+        entry["data"]["a"] = 1.0
+        bags_path.write_text(editor.encode_hss(json.dumps(bags)), encoding="ascii")
+        result = editor.op_modify({
+            "action": "perfect",
+            "target": {"type": "bag", "slot": 1, "tab": "inventory_tab_0"},
+            "key": key,
+        })
+        updated = json.loads(editor.decode_hss(bags_path))
+        self.assertEqual(updated["inventory_tab_0"][key]["data"]["a"],
+                         float(profile["fieldSeeds"]["a"]))
+        self.assertIn("BEST POSSIBLE", result["ok"])
+        self.assertIn("8/9 variable stats MAX", result["ok"])
+        self.assertIn("minimum total deficit 9", result["ok"])
+
+    def test_unavailable_roll_database_leaves_item_unchanged(self):
+        ring = catalog_row("rings_parasite_loop")
+        editor.op_add({"cid": ring["id"], "target": {
+            "type": "bag", "slot": 1, "tab": "inventory_tab_0"}})
+        bags_path = self.saves / "inventory_order_1.hss"
+        bags = json.loads(editor.decode_hss(bags_path))
+        key = next(iter(bags["inventory_tab_0"]))
+        before = bags_path.read_bytes()
+        ring.pop("rollProfile", None)
+        editor.ROLL_DB = type("UnavailableDB", (), {
+            "available": False,
+            "status": type("Status", (), {
+                "message": "Perfect-roll profile database is not installed."
+            })(),
+            "lookup": lambda *args: None,
+            "lookup_runeword": lambda *args: None,
+        })()
+        result = editor.op_modify({
+            "action": "perfect",
+            "target": {"type": "bag", "slot": 1, "tab": "inventory_tab_0"},
+            "key": key,
+        })
+        self.assertIn("not installed", result["err"])
+        self.assertEqual(bags_path.read_bytes(), before)
+
+    def test_unprofiled_equipment_generation_fails_closed_and_set_add_is_atomic(self):
+        supported = catalog_row("helmet_leviathans_crown")
+        unsupported = catalog_row("helmet_parasite_queens_tiara")
+        self.assertIn("rollProfile", supported)
+        self.assertNotIn("rollProfile", unsupported)
+
+        stash_path = self.saves / "stash.hss"
+        before = stash_path.read_bytes()
+        backups_before = set(self.saves.glob("stash.hss.guibak_*"))
+
+        single = editor.op_add({
+            "cid": unsupported["id"], "target": {"type": "stash_unique"},
+        })
+        batch = editor.op_addmany({
+            "cids": [supported["id"], unsupported["id"]],
+        })
+
+        self.assertIn("no verified roll profile", single["err"])
+        self.assertIn("no verified roll profile", batch["err"])
+        with self.assertRaisesRegex(ValueError, "no verified roll profile"):
+            editor.make_data(unsupported)
+        self.assertEqual(stash_path.read_bytes(), before)
+        self.assertEqual(
+            set(self.saves.glob("stash.hss.guibak_*")), backups_before,
+        )
+
+    def test_non_regression_item_uses_its_own_exact_profile(self):
+        ring = catalog_row("rings_parasite_loop")
+        result = editor.op_add({"cid": ring["id"], "target": {
+            "type": "bag", "slot": 1, "tab": "inventory_tab_0"}})
+        self.assertIn("ok", result)
+        bags = json.loads(editor.decode_hss(self.saves / "inventory_order_1.hss"))
+        data = next(iter(bags["inventory_tab_0"].values()))["data"]
+        self.assertEqual(data["a"], 314_560.0)
+
+    def test_identity_only_profile_has_no_perfect_write_or_backup(self):
+        charm = catalog_row("charms_overloaded_dice")
+        editor.op_add({"cid": charm["id"], "skillId": 55, "target": {
+            "type": "bag", "slot": 1, "tab": "inventory_tab_0"}})
+        path = self.saves / "inventory_order_1.hss"
+        before = path.read_bytes()
+        backups_before = set(self.saves.glob("inventory_order_1.hss.guibak_*"))
+        bags = json.loads(editor.decode_hss(path))
+        key = next(iter(bags["inventory_tab_0"]))
+        result = editor.op_modify({
+            "action": "perfect",
+            "target": {"type": "bag", "slot": 1, "tab": "inventory_tab_0"},
+            "key": key,
+        })
+        self.assertIn("skill identity", result["err"])
+        self.assertEqual(path.read_bytes(), before)
+        self.assertEqual(
+            set(self.saves.glob("inventory_order_1.hss.guibak_*")),
+            backups_before,
+        )
+
+    def test_dice_catalog_uses_the_two_exact_native_addresses(self):
+        loaded = catalog_row("charms_loaded_dice")
+        overloaded = catalog_row("charms_overloaded_dice")
+        chaos = catalog_row("charms_chaos_gemstone")
+
+        self.assertEqual(
+            loaded["skillSelector"]["profileId"], "unique:10:0:31"
+        )
+        self.assertEqual(
+            overloaded["skillSelector"]["profileId"], "unique:10:0:89"
+        )
+        self.assertNotIn("skillSelector", chaos)
+        self.assertTrue(loaded["skillSelector"]["available"])
+        self.assertTrue(overloaded["skillSelector"]["available"])
+
+    def test_bulk_add_rejects_dice_without_an_explicit_target(self):
+        loaded = catalog_row("charms_loaded_dice")
+        path = self.saves / "stash.hss"
+        before = path.read_bytes()
+        backups_before = set(self.saves.glob("stash.hss.guibak_*"))
+
+        result = editor.op_addmany({"cids": [loaded["id"]]})
+
+        self.assertIn("bulk add has no explicit skill target", result["err"])
+        self.assertEqual(path.read_bytes(), before)
+        self.assertEqual(
+            set(self.saves.glob("stash.hss.guibak_*")), backups_before
+        )
+
+    def test_loaded_dice_add_and_retarget_changes_only_a(self):
+        loaded = catalog_row("charms_loaded_dice")
+        target_ref = {"type": "bag", "slot": 1, "tab": "inventory_tab_0"}
+        added = editor.op_add({
+            "cid": loaded["id"], "skillId": 31, "target": target_ref,
+        })
+        self.assertIn("Pyromancer: Meteor", added["ok"])
+
+        path = self.saves / "inventory_order_1.hss"
+        bags = json.loads(editor.decode_hss(path))
+        key, entry = next(iter(bags["inventory_tab_0"].items()))
+        self.assertEqual(entry["data"]["a"], 86_667.0)
+        entry["data"].update({
+            "i": 202_002.0,
+            "s": 303_003.0,
+            "s1": "opaque-socket",
+            "zz": {"sockets": 1.0, "opaque": True},
+            "future": {"keep": [1, 2, 3]},
+        })
+        untouched = {
+            field: value for field, value in entry["data"].items() if field != "a"
+        }
+        path.write_text(editor.encode_hss(json.dumps(bags)), encoding="ascii")
+
+        result = editor.op_modify({
+            "action": "selectskill", "target": target_ref,
+            "key": key, "skillId": 55,
+        })
+        self.assertIn("Marksman: Gunner Drone", result["ok"])
+        updated = json.loads(editor.decode_hss(path))["inventory_tab_0"][key]["data"]
+        self.assertEqual(updated["a"], 158_856.0)
+        self.assertEqual(
+            {field: value for field, value in updated.items() if field != "a"},
+            untouched,
+        )
+        resolved = editor.resolve(key, updated)
+        self.assertEqual(resolved["skillSelector"]["current"]["id"], 55)
+
+        before = path.read_bytes()
+        backups_before = set(self.saves.glob("inventory_order_1.hss.guibak_*"))
+        again = editor.op_modify({
+            "action": "selectskill", "target": target_ref,
+            "key": key, "skillId": 55,
+        })
+        self.assertIn("already targets", again["ok"])
+        self.assertEqual(again["backup"], "")
+        self.assertEqual(path.read_bytes(), before)
+        self.assertEqual(
+            set(self.saves.glob("inventory_order_1.hss.guibak_*")), backups_before
+        )
+
+    def test_loaded_dice_perfect_is_blocked_as_identity_not_quality(self):
+        loaded = catalog_row("charms_loaded_dice")
+        target_ref = {"type": "bag", "slot": 1, "tab": "inventory_tab_0"}
+        editor.op_add({"cid": loaded["id"], "skillId": 31, "target": target_ref})
+        path = self.saves / "inventory_order_1.hss"
+        bags = json.loads(editor.decode_hss(path))
+        key = next(iter(bags["inventory_tab_0"]))
+        before = path.read_bytes()
+        backups_before = set(self.saves.glob("inventory_order_1.hss.guibak_*"))
+
+        result = editor.op_modify({
+            "action": "perfect", "target": target_ref, "key": key,
+        })
+        self.assertIn("skill identity", result["err"])
+        self.assertEqual(path.read_bytes(), before)
+        self.assertEqual(
+            set(self.saves.glob("inventory_order_1.hss.guibak_*")), backups_before
+        )
+
+    def test_runtime_game_build_change_blocks_dice_add_and_retarget(self):
+        loaded = catalog_row("charms_loaded_dice")
+        target_ref = {"type": "bag", "slot": 1, "tab": "inventory_tab_0"}
+        editor.op_add({"cid": loaded["id"], "skillId": 31, "target": target_ref})
+        path = self.saves / "inventory_order_1.hss"
+        bags = json.loads(editor.decode_hss(path))
+        key = next(iter(bags["inventory_tab_0"]))
+        before = path.read_bytes()
+        backups_before = set(self.saves.glob("inventory_order_1.hss.guibak_*"))
+        original_database = editor.DICE_SKILL_DB
+        editor.DICE_SKILL_DB = editor.load_dice_skill_database(
+            editor.BASE,
+            runtime_build_check=lambda: "installed game hash changed",
+        )
+        try:
+            modified = editor.op_modify({
+                "action": "selectskill", "target": target_ref,
+                "key": key, "skillId": 55,
+            })
+            added = editor.op_add({
+                "cid": loaded["id"], "skillId": 55, "target": target_ref,
+            })
+        finally:
+            editor.DICE_SKILL_DB = original_database
+
+        self.assertIn("hash changed", modified["err"])
+        self.assertIn("hash changed", added["err"])
+        self.assertEqual(path.read_bytes(), before)
+        self.assertEqual(
+            set(self.saves.glob("inventory_order_1.hss.guibak_*")), backups_before
+        )
+
+    def test_overloaded_dice_accepts_only_verified_subskill_targets(self):
+        overloaded = catalog_row("charms_overloaded_dice")
+        target_ref = {"type": "bag", "slot": 1, "tab": "inventory_tab_0"}
+        added = editor.op_add({
+            "cid": overloaded["id"], "skillId": 55, "target": target_ref,
+        })
+        self.assertIn("Gunner Drone", added["ok"])
+        path = self.saves / "inventory_order_1.hss"
+        bags = json.loads(editor.decode_hss(path))
+        key, entry = next(iter(bags["inventory_tab_0"].items()))
+        self.assertEqual(entry["data"]["a"], 59.0)
+
+        before = path.read_bytes()
+        invalid = editor.op_modify({
+            "action": "selectskill", "target": target_ref,
+            "key": key, "skillId": 31,
+        })
+        self.assertIn("not a valid subskill target", invalid["err"])
+        self.assertEqual(path.read_bytes(), before)
+
+        valid = editor.op_modify({
+            "action": "selectskill", "target": target_ref,
+            "key": key, "skillId": 7,
+        })
+        self.assertIn("Odin's Fury", valid["ok"])
+        updated = json.loads(editor.decode_hss(path))["inventory_tab_0"][key]["data"]
+        self.assertEqual(updated["a"], 558.0)
+        self.assertEqual(editor.resolve(key, updated)["skillSelector"]["current"]["id"], 7)
+
+    def test_dice_generation_requires_an_explicit_target(self):
+        loaded = catalog_row("charms_loaded_dice")
+        path = self.saves / "inventory_order_1.hss"
+        before = path.read_bytes()
+        result = editor.op_add({
+            "cid": loaded["id"],
+            "target": {"type": "bag", "slot": 1, "tab": "inventory_tab_0"},
+        })
+        self.assertIn("choose a verified skill target", result["err"])
+        self.assertEqual(path.read_bytes(), before)
+
+    def test_runeword_perfect_updates_a_and_i_but_preserves_s_and_sockets(self):
+        recipe = next(row for row in editor.RUNEWORDS if row["rw"] == 1)
+        base = next(
+            row for row in editor.runeword_base_candidates(recipe)
+            if (row["cls"], row.get("sub", 0), row["b"]) == (3, 1, 17)
+        )
+        forged = editor.op_forge({
+            "rw": 1, "baseCid": base["id"], "tab": "stash_tab_1"
+        })
+        self.assertIn("ok", forged)
+        stash_path = self.saves / "stash.hss"
+        stash = json.loads(editor.decode_hss(stash_path))
+        key, entry = next(iter(stash["stash_tab_1"].items()))
+        self.assertEqual(entry["data"]["a"], 356_137.0)
+        self.assertEqual(entry["data"]["i"], 424_123.0)
+        self.assertNotIn("s", entry["data"])
+
+        entry["data"]["a"] = 1.0
+        entry["data"]["i"] = 2.0
+        entry["data"]["s"] = 777.0
+        sockets_before = {
+            field: value for field, value in entry["data"].items()
+            if field.startswith("s") and field != "s"
+        }
+        zz_before = dict(entry["data"]["zz"])
+        stash_path.write_text(editor.encode_hss(json.dumps(stash)), encoding="ascii")
+        result = editor.op_modify({
+            "action": "perfect",
+            "target": {"type": "stash", "tab": "stash_tab_1"},
+            "key": key,
+        })
+        self.assertIn("EXACT MAX", result["ok"])
+        updated = json.loads(editor.decode_hss(stash_path))["stash_tab_1"][key]["data"]
+        self.assertEqual((updated["a"], updated["i"]), (356_137.0, 424_123.0))
+        self.assertEqual(updated["s"], 777.0)
+        self.assertEqual(updated["zz"], zz_before)
+        self.assertEqual(
+            {field: value for field, value in updated.items()
+             if field.startswith("s") and field != "s"},
+            sockets_before,
+        )
+
+    def test_perfect_updates_socket_seed_only_when_s_already_exists(self):
+        gown = catalog_row("armors_zephys_gown")
+        editor.op_add({"cid": gown["id"], "target": {
+            "type": "bag", "slot": 1, "tab": "inventory_tab_0"}})
+        path = self.saves / "inventory_order_1.hss"
+        bags = json.loads(editor.decode_hss(path))
+        key, entry = next(iter(bags["inventory_tab_0"].items()))
+        entry["data"]["a"] = 1.0
+        self.assertNotIn("s", entry["data"])
+        path.write_text(editor.encode_hss(json.dumps(bags)), encoding="ascii")
+
+        # Synthetic future profile: creation/forge may opt into s explicitly,
+        # but Perfect on an existing item must preserve an absent enable field.
+        profile = gown["rollProfile"]
+        profile["fieldSeeds"]["s"] = 987_654
+        profile["chains"]["s"] = {"seed": 987_654}
+        result = editor.op_modify({
+            "action": "perfect",
+            "target": {"type": "bag", "slot": 1, "tab": "inventory_tab_0"},
+            "key": key,
+        })
+        self.assertIn("ok", result)
+        updated = json.loads(editor.decode_hss(path))
+        data = updated["inventory_tab_0"][key]["data"]
+        self.assertEqual(data["a"], 3_888_156.0)
+        self.assertNotIn("s", data)
+
+        # Once s is already present, the independently verified s chain is
+        # active and Perfect may update that field without touching payloads.
+        data["s"] = 2.0
+        data["s1"] = "opaque-socket-payload"
+        path.write_text(editor.encode_hss(json.dumps(updated)), encoding="ascii")
+        result = editor.op_modify({
+            "action": "perfect",
+            "target": {"type": "bag", "slot": 1, "tab": "inventory_tab_0"},
+            "key": key,
+        })
+        self.assertIn("ok", result)
+        final = json.loads(editor.decode_hss(path))["inventory_tab_0"][key]["data"]
+        self.assertEqual(final["s"], 987_654.0)
+        self.assertEqual(final["s1"], "opaque-socket-payload")
+
+    def test_perfect_applies_all_profile_seed_fields_and_only_those_fields(self):
+        gown = catalog_row("armors_zephys_gown")
+        gown["rollProfile"] = roll_profile(
+            "unique:1:0:52", "unique", "Zephy's Gown", "exact",
+            {"a": 101_001, "i": 202_002, "s": 303_003}, 3, 3, 0,
+        )
+        result = editor.op_add({"cid": gown["id"], "target": {
+            "type": "bag", "slot": 1, "tab": "inventory_tab_0"}})
+        self.assertIn("ok", result)
+
+        path = self.saves / "inventory_order_1.hss"
+        bags = json.loads(editor.decode_hss(path))
+        key, entry = next(iter(bags["inventory_tab_0"].items()))
+        socket_payload = base64.b64encode(
+            json.dumps({"a": 919_191, "b": 17, "n": 4}).encode()
+        ).decode()
+        entry["data"].update({
+            "a": 1.0,
+            "i": 2.0,
+            "s": 3.0,
+            "s1": socket_payload,
+            "zz": {"sockets": 1.0, "opaque": {"keep": True}},
+            "futurePayload": {"nested": [1, 2, 3]},
+        })
+        untouched_before = {
+            field: value for field, value in entry["data"].items()
+            if field not in {"a", "i", "s"}
+        }
+        path.write_text(editor.encode_hss(json.dumps(bags)), encoding="ascii")
+
+        result = editor.op_modify({
+            "action": "perfect",
+            "target": {"type": "bag", "slot": 1, "tab": "inventory_tab_0"},
+            "key": key,
+        })
+
+        self.assertIn("EXACT MAX", result["ok"])
+        data = json.loads(editor.decode_hss(path))["inventory_tab_0"][key]["data"]
+        self.assertEqual(
+            (data["a"], data["i"], data["s"]),
+            (101_001.0, 202_002.0, 303_003.0),
+        )
+        self.assertEqual(
+            {field: value for field, value in data.items()
+             if field not in {"a", "i", "s"}},
+            untouched_before,
+        )
+
+    def test_socket_only_profile_does_not_create_missing_s_or_write(self):
+        gown = catalog_row("armors_zephys_gown")
+        result = editor.op_add({"cid": gown["id"], "target": {
+            "type": "bag", "slot": 1, "tab": "inventory_tab_0"}})
+        self.assertIn("ok", result)
+        path = self.saves / "inventory_order_1.hss"
+        bags = json.loads(editor.decode_hss(path))
+        key = next(iter(bags["inventory_tab_0"]))
+        self.assertNotIn("s", bags["inventory_tab_0"][key]["data"])
+
+        gown["rollProfile"] = roll_profile(
+            "unique:1:0:52", "unique", "Zephy's Gown", "exact",
+            {"s": 404_004}, 1, 1, 0,
+        )
+        before = path.read_bytes()
+        backups_before = set(self.saves.glob("inventory_order_1.hss.guibak_*"))
+        result = editor.op_modify({
+            "action": "perfect",
+            "target": {"type": "bag", "slot": 1, "tab": "inventory_tab_0"},
+            "key": key,
+        })
+
+        self.assertIn("socket seed is not active", result["err"])
+        self.assertEqual(path.read_bytes(), before)
+        self.assertEqual(
+            set(self.saves.glob("inventory_order_1.hss.guibak_*")),
+            backups_before,
+        )
+
+    def test_every_direct_equipment_address_fails_closed_without_a_profile(self):
+        class EmptyRollDatabase:
+            available = True
+            status = type("Status", (), {"message": "fixture database ready"})()
+
+            @staticmethod
+            def lookup(*_args):
+                return None
+
+        equipment = [
+            row for row in editor.CAT
+            if row.get("kind") in {"normal", "unique"}
+            and int(row.get("cls", -1)) in editor.ROLL_PROFILE_GEAR_CLASSES
+            and row.get("available", True)
+        ]
+        self.assertTrue(any(row["kind"] == "normal" for row in equipment))
+        self.assertTrue(any(row["kind"] == "unique" for row in equipment))
+        for row in equipment:
+            row.pop("rollProfile", None)
+        editor.ROLL_DB = EmptyRollDatabase()
+
+        for row in equipment:
+            with self.subTest(address=(
+                row["kind"], row["cls"], row.get("sub", 0), row["b"],
+            )):
+                with self.assertRaisesRegex(ValueError, "no verified roll profile"):
+                    editor.generation_roll_profile(row)
+                with self.assertRaisesRegex(ValueError, "no verified roll profile"):
+                    editor.make_data(row)
+
+    def test_runeword_matrix_is_complete_and_invalid_base_is_rejected(self):
+        counts = [editor.runeword_base_candidates(row) for row in editor.RUNEWORDS]
+        self.assertEqual(len(counts), 100)
+        self.assertEqual(sum(map(len, counts)), 3_722)
+        self.assertEqual(
+            sum(len(bases) for recipe, bases in zip(editor.RUNEWORDS, counts)
+                if int(recipe["type"]) != 11),
+            3_715,
+        )
+        invalid = catalog_row("rings_parasite_loop")
+        path = self.saves / "stash.hss"
+        before = path.read_bytes()
+        result = editor.op_forge({
+            "rw": 1, "baseCid": invalid["id"], "tab": "stash_tab_1"
+        })
+        self.assertIn("not valid", result["err"])
+        self.assertEqual(path.read_bytes(), before)
+
+    def test_forge_rejects_invalid_tab_without_write_or_backup(self):
+        recipe = next(row for row in editor.RUNEWORDS if row["rw"] == 1)
+        base = next(
+            row for row in editor.runeword_base_candidates(recipe)
+            if (row["cls"], row.get("sub", 0), row["b"]) == (3, 1, 17)
+        )
+        path = self.saves / "stash.hss"
+        before = path.read_bytes()
+        backups_before = set(self.saves.glob("stash.hss.guibak_*"))
+        result = editor.op_forge({
+            "rw": 1,
+            "baseCid": base["id"],
+            "tab": "not_a_stash",
+        })
+        self.assertIn("stash tab 1-9", result["err"])
+        self.assertEqual(path.read_bytes(), before)
+        self.assertEqual(set(self.saves.glob("stash.hss.guibak_*")), backups_before)
+
+    def test_missing_runeword_profile_is_disabled_and_fails_closed(self):
+        recipe = next(row for row in editor.RUNEWORDS if row["rw"] == 1)
+        unsupported = next(
+            row for row in editor.runeword_base_candidates(recipe)
+            if (row["cls"], row.get("sub", 0), row["b"]) != (3, 1, 17)
+        )
+        api_recipe = next(row for row in editor.runeword_api_rows() if row["rw"] == 1)
+        api_base = next(row for row in api_recipe["bases"] if row["cid"] == unsupported["id"])
+        self.assertFalse(api_base["available"])
+        self.assertTrue(api_base["disabled"])
+        self.assertIn("no verified roll profile", api_base["unavailableReason"])
+
+        path = self.saves / "stash.hss"
+        before = path.read_bytes()
+        backups_before = set(self.saves.glob("stash.hss.guibak_*"))
+        result = editor.op_forge({
+            "rw": 1,
+            "baseCid": unsupported["id"],
+            "tab": "stash_tab_1",
+        })
+        self.assertIn("no verified roll profile", result["err"])
+        self.assertEqual(path.read_bytes(), before)
+        self.assertEqual(set(self.saves.glob("stash.hss.guibak_*")), backups_before)
+
+    def test_existing_runeword_never_falls_back_to_its_normal_base_profile(self):
+        recipe = next(row for row in editor.RUNEWORDS if row["rw"] == 1)
+        base = next(
+            row for row in editor.runeword_base_candidates(recipe)
+            if (row["cls"], row.get("sub", 0), row["b"]) == (3, 1, 17)
+        )
+        base["rollProfile"] = roll_profile(
+            "normal:3:1:17", "normal", base["name"], "exact",
+            {"a": 111_111}, 1, 1, 0,
+        )
+        editor.ROLL_DB.profiles.pop("runeword:1|normal:3:1:17")
+
+        data = {
+            "a": 1.0,
+            "i": 2.0,
+            "b": float(base["b"]),
+            "c": 0.0,
+            "w": 1.0,
+            "j": float(base["sub"]),
+            "zz": {"sockets": float(len(recipe["runes"]))},
+        }
+        for index, rune in enumerate(recipe["runes"], 1):
+            payload = json.dumps({"a": index, "b": rune["b"], "n": 0})
+            data[f"s{index}"] = base64.b64encode(payload.encode()).decode()
+        key = f"0-0-123456-{base['cls']}"
+        stash = json.loads(editor.decode_hss(self.saves / "stash.hss"))
+        stash["stash_tab_1"][key] = {"pos": [0.0, 0.0], "data": data}
+        path = self.saves / "stash.hss"
+        path.write_text(editor.encode_hss(json.dumps(stash)), encoding="ascii")
+
+        resolved = editor.resolve(key, data)
+        self.assertTrue(resolved["isRW"])
+        self.assertNotIn("rollProfile", resolved)
+        before = path.read_bytes()
+        backups_before = set(self.saves.glob("stash.hss.guibak_*"))
+        result = editor.op_modify({
+            "action": "perfect",
+            "target": {"type": "stash", "tab": "stash_tab_1"},
+            "key": key,
+        })
+        self.assertIn("no verified profile", result["err"])
+        self.assertEqual(path.read_bytes(), before)
+        self.assertEqual(set(self.saves.glob("stash.hss.guibak_*")), backups_before)
+
+    def test_fixed_equipment_runeword_has_no_perfect_write(self):
+        recipe = next(row for row in editor.RUNEWORDS if row["rw"] == 1)
+        base = next(
+            row for row in editor.runeword_base_candidates(recipe)
+            if (row["cls"], row.get("sub", 0), row["b"]) == (3, 1, 17)
+        )
+        profile_id = "runeword:1|normal:3:1:17"
+        editor.ROLL_DB.profiles[profile_id] = roll_profile(
+            profile_id, "runeword", recipe["name"], "fixed", {}, 0, 0, 0,
+        )
+        forged = editor.op_forge({
+            "rw": 1, "baseCid": base["id"], "tab": "stash_tab_1",
+        })
+        self.assertIn("ok", forged)
+
+        path = self.saves / "stash.hss"
+        stash = json.loads(editor.decode_hss(path))
+        key = next(iter(stash["stash_tab_1"]))
+        before = path.read_bytes()
+        backups_before = set(self.saves.glob("stash.hss.guibak_*"))
+        result = editor.op_modify({
+            "action": "perfect",
+            "target": {"type": "stash", "tab": "stash_tab_1"},
+            "key": key,
+        })
+        self.assertIn("fixed", result["err"])
+        self.assertEqual(path.read_bytes(), before)
+        self.assertEqual(set(self.saves.glob("stash.hss.guibak_*")), backups_before)
+
+    def test_runeword_api_contains_malformed_recipe_as_disabled_row(self):
+        original = next(row for row in editor.RUNEWORDS if row["rw"] == 1)
+        malformed = {**original, "rw": 999, "target": "Weapon ???"}
+        with patch.object(editor, "RUNEWORDS", [malformed]):
+            rows = editor.runeword_api_rows()
+        self.assertEqual(len(rows), 1)
+        self.assertEqual(rows[0]["bases"], [])
+        self.assertFalse(rows[0]["available"])
+        self.assertTrue(rows[0]["disabled"])
+        self.assertIn("invalid runeword target", rows[0]["unavailableReason"])
+
+    def test_forge_codex_fails_closed_even_if_a_roll_profile_is_present(self):
+        original = next(row for row in editor.RUNEWORDS if row["rw"] == 93)
+        recipe = {**original, "rw": 999, "base": {
+            "cls": 11, "sub": 0, "b": 77, "w": 2, "h": 2,
+        }}
+        base = {
+            "id": 123_456, "kind": "normal", "cls": 11, "sub": 0,
+            "b": 77, "w": 2, "h": 2, "name": "Future Zone Codex",
+        }
+        fixed = roll_profile(
+            "runeword:999|normal:11:0:77", "runeword", recipe["name"],
+            "fixed", {}, 0, 0, 0,
+        )
+        with (
+            patch.object(editor, "RUNEWORDS", [recipe]),
+            patch.object(editor, "runeword_base_candidates", return_value=[base]),
+            patch.object(editor, "runeword_profile", return_value=fixed),
+        ):
+            api = editor.runeword_api_rows()[0]
+            result = editor.op_forge({
+                "rw": 999, "baseCid": base["id"], "tab": "stash_tab_1",
+            })
+        self.assertFalse(api["available"])
+        self.assertTrue(api["disabled"])
+        self.assertIn("payload", api["unavailableReason"])
+        self.assertIn("disabled", result["err"])
+        stash = json.loads(editor.decode_hss(self.saves / "stash.hss"))
+        self.assertEqual(stash["stash_tab_1"], {})
+
+    def test_runeword_display_requires_recipe_compatible_base(self):
+        recipe = next(row for row in editor.RUNEWORDS if row["rw"] == 1)
+        invalid_base = next(
+            row for row in editor.CAT
+            if row.get("kind") == "normal" and row.get("cls") == 7
+            and row.get("available", True)
+        )
+        data = {
+            "w": 1.0,
+            "a": 1.0,
+            "j": float(invalid_base.get("sub", 0)),
+            "b": float(invalid_base["b"]),
+            "c": 0.0,
+            "o": 1.0,
+        }
+        for index, rune in enumerate(recipe["runes"], 1):
+            payload = json.dumps({"a": 1, "b": rune["b"], "n": 0})
+            data[f"s{index}"] = base64.b64encode(payload.encode()).decode()
+        resolved = editor.resolve(f"0-0-1-{invalid_base['cls']}", data)
+        self.assertNotEqual(resolved["name"], recipe["name"])
+        self.assertNotIn("isRW", resolved)
+
+    def test_forge_request_id_makes_retry_idempotent(self):
+        recipe = next(row for row in editor.RUNEWORDS if row["rw"] == 1)
+        base = next(
+            row for row in editor.runeword_base_candidates(recipe)
+            if (row["cls"], row.get("sub", 0), row["b"]) == (3, 1, 17)
+        )
+        body = {
+            "rw": 1,
+            "baseCid": base["id"],
+            "tab": "stash_tab_1",
+            "requestId": "12345678-1234-1234-1234-123456789abc",
+        }
+        first = editor.op_forge(body)
+        backups_after_first = set(self.saves.glob("stash.hss.guibak_*"))
+        second = editor.op_forge(body)
+        self.assertIn("FORGED", first["ok"])
+        self.assertIn("ALREADY FORGED", second["ok"])
+        self.assertEqual(second["backup"], "")
+        self.assertEqual(
+            set(self.saves.glob("stash.hss.guibak_*")),
+            backups_after_first,
+        )
+        stash = json.loads(editor.decode_hss(self.saves / "stash.hss"))
+        self.assertEqual(len(stash["stash_tab_1"]), 1)
+
+    def test_write_char_inventory_distinguishes_missing_field_from_noop(self):
+        char_path = self.saves / "herosiege1.hss"
+        inventory = editor._decode_character_inventory(char_path)[1]
+        self.assertEqual(editor.write_char_inventory(1, inventory), "")
+
+        char_path.write_text(
+            editor.encode_hss('[character]\nname="Missing Inventory"\n'),
+            encoding="ascii",
+        )
+        with self.assertRaisesRegex(ValueError, "inventory field not found"):
+            editor.write_char_inventory(1, inventory)
 
     def test_stackables_use_native_s10_shape_in_dedicated_bags(self):
         cases = [

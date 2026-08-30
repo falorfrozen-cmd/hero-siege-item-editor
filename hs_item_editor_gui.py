@@ -1,12 +1,14 @@
 ﻿#!/usr/bin/env python3
-"""Hero Siege Item Editor GUI - yerel web arayuzu.
+"""Hero Siege Item Editor GUI - local web interface.
 
-Calistir:  py hs_item_editor_gui.py   ->  tarayicida http://127.0.0.1:8765
-Oyun ACIKKEN kayit yazmaz (sadece goruntuler). Her yazimda otomatik yedek.
-Veri kaynagi: oyunun kendi item depolari (itemRepoNormal/Unique/Runeword dokumu).
+Run with:  py hs_item_editor_gui.py   ->  http://127.0.0.1:8765 in a browser
+Never writes to a save while the game is RUNNING (view only). Every write takes
+an automatic backup.
+Data source: the game's own item repositories (itemRepoNormal/Unique/Runeword dump).
 """
 
 import base64
+import hashlib
 import html as html_lib
 import json
 import math
@@ -16,21 +18,88 @@ import re
 import shutil
 import subprocess
 import sys
+import threading
 import time
 import zlib
 from datetime import datetime
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import urlparse, parse_qs
+from urllib.request import urlopen
+
+try:
+    from roll_profile_db import (
+        EXPECTED_EXE_SHA256 as EXPECTED_GAME_EXE_SHA256,
+        load_roll_profile_database,
+    )
+except ModuleNotFoundError:  # package-style import used by the unit tests
+    from HSItemEditor.roll_profile_db import (
+        EXPECTED_EXE_SHA256 as EXPECTED_GAME_EXE_SHA256,
+        load_roll_profile_database,
+    )
+
+try:
+    from dice_skill_selector import (
+        DiceSkillValidationError,
+        EXPECTED_EXE_SHA256 as DICE_EXPECTED_GAME_EXE_SHA256,
+        load_dice_skill_database,
+        profile_id_for_address as dice_profile_id_for_address,
+    )
+except ModuleNotFoundError:  # package-style import used by the unit tests
+    from HSItemEditor.dice_skill_selector import (
+        DiceSkillValidationError,
+        EXPECTED_EXE_SHA256 as DICE_EXPECTED_GAME_EXE_SHA256,
+        load_dice_skill_database,
+        profile_id_for_address as dice_profile_id_for_address,
+    )
+
+try:
+    from game_build_identity import GameBuildGuard
+except ModuleNotFoundError:
+    from HSItemEditor.game_build_identity import GameBuildGuard
 
 ROOT = Path.home() / "AppData" / "Local" / "Hero_Siege"
 SAVES = ROOT / "hs2saves"
-# PyInstaller: bundled data _MEIPASS'ta; kaynak: script klasorunde
-BASE = Path(sys._MEIPASS) if getattr(sys, "frozen", False) else Path(__file__).parent
+
+
+def _resource_base() -> Path:
+    """Return the only directory from which immutable editor assets are loaded."""
+    if getattr(sys, "frozen", False):
+        bundle_root = getattr(sys, "_MEIPASS", None)
+        if not bundle_root:
+            raise RuntimeError("frozen editor has no PyInstaller resource directory")
+        return Path(bundle_root).resolve()
+    return Path(__file__).resolve().parent
+
+
+# PyInstaller: bundled data _MEIPASS'ta; kaynak: script klasorunde.
+BASE = _resource_base()
 CATALOG_FILE = BASE / "hs_full_catalog.json"
 PORT = 8765
-APP_VERSION = "2.3.1-s10"
+APP_VERSION = "2.7.2-s10"
+APPLICATION_ID = "hero-siege-item-editor"
 CATALOG_PROFILE = "Season 10"
+if DICE_EXPECTED_GAME_EXE_SHA256 != EXPECTED_GAME_EXE_SHA256:
+    raise RuntimeError("roll and Dice databases target different Hero Siege builds")
+GAME_BUILD_GUARD = GameBuildGuard(EXPECTED_GAME_EXE_SHA256)
+ROLL_DB = load_roll_profile_database(
+    BASE, runtime_build_check=GAME_BUILD_GUARD.error
+)
+DICE_SKILL_DB = load_dice_skill_database(
+    BASE, runtime_build_check=GAME_BUILD_GUARD.error
+)
+
+# GetItemSeed emits this inclusive save-field range in the clean S10 build.
+# CPR's later masked internal-state domain is different; it must not be used
+# as the source-seed search interval.  The old editor missed only the valid
+# upper endpoint 1,000,000,000.
+SEED_MIN = 1
+SEED_MAX = 1_000_000_000
+FORGE_LOCK = threading.Lock()
+# Every POST mutates one or more save documents through a read/modify/write
+# cycle.  ThreadingHTTPServer can execute two clicks concurrently, so serialize
+# the complete operation instead of merely relying on atomic final replaces.
+SAVE_WRITE_LOCK = threading.RLock()
 
 XOR_KEY = bytes([
     0xE3, 0x95, 0x3D, 0xB1, 0x01, 0x6B, 0xB6, 0x58,
@@ -43,6 +112,11 @@ CLASS_NAMES = {0: "Helmet", 1: "Body Armor", 2: "Boots", 3: "Weapon", 4: "Gloves
                6: "Shield", 7: "Ring", 8: "Belt", 10: "Charm", 11: "Potion / Codex",
                12: "Key", 13: "Boss Part / Tarot", 14: "Material", 15: "Rune / Gem / Orb",
                16: "Relic", 18: "Flask", 19: "Essence Vault", -2: "Runeword"}
+# Only these repository classes are equipment whose visible definition-stat
+# rolls are covered by the verified profile database.  If one of these rows
+# lacks its exact address profile, generation must stop instead of silently
+# falling back to a random seed and creating a non-perfect item.
+ROLL_PROFILE_GEAR_CLASSES = frozenset({0, 1, 2, 3, 4, 5, 6, 7, 8, 10})
 SUB_NAMES = {0: "", 1: "Sword", 2: "Dagger", 3: "Mace", 4: "Axe", 5: "Claw",
              6: "Polearm", 7: "Chainsaw", 8: "Staff", 9: "Cane", 10: "Wand", 11: "Book",
              12: "Spellblade", 13: "Bow", 14: "Gun", 15: "Flask", 16: "Throwing", 17: "Universal"}
@@ -189,13 +263,25 @@ CREATE_NO_WINDOW = 0x08000000  # subprocess'in konsol penceresi acmasini engelle
 
 
 def game_running() -> bool:
+    """Return True when Hero Siege is running *or detection is unavailable*.
+
+    Save mutations must fail closed.  Treating a tasklist timeout/failure as
+    "game is not running" would otherwise disable the editor's main safety
+    guarantee exactly when Windows process state could not be established.
+    """
     try:
         r = subprocess.run(["tasklist", "/FI", "IMAGENAME eq Hero_Siege.exe"],
                            capture_output=True, text=True, timeout=10,
                            creationflags=CREATE_NO_WINDOW)
-        return "Hero_Siege.exe" in r.stdout
+        if r.returncode != 0:
+            return True
+        return any(
+            line.split(None, 1)[0].casefold() == "hero_siege.exe"
+            for line in r.stdout.splitlines()
+            if line.strip()
+        )
     except Exception:
-        return False
+        return True
 
 
 def backup(path: Path) -> str:
@@ -288,12 +374,97 @@ def apply_s10_catalog_overlay() -> None:
 
 
 apply_s10_catalog_overlay()
+
+
+def catalog_roll_profile(row: dict) -> dict | None:
+    """Return the verified direct-address profile for a catalog row."""
+    kind = row.get("kind")
+    if kind not in {"normal", "unique"}:
+        return None
+    try:
+        return ROLL_DB.lookup(
+            kind,
+            int(row["cls"]),
+            int(row.get("sub", 0)),
+            int(row["b"]),
+        )
+    except (KeyError, TypeError, ValueError):
+        return None
+
+
+def catalog_dice_profile_id(row: dict) -> str | None:
+    """Return a selectable Dice profile only for its exact native address."""
+
+    try:
+        return dice_profile_id_for_address(
+            str(row.get("kind")),
+            int(row["cls"]),
+            int(row.get("sub", 0)),
+            int(row["b"]),
+        )
+    except (KeyError, TypeError, ValueError):
+        return None
+
+
+def dice_target_for_row(row: dict, skill_id: object) -> dict:
+    profile_id = catalog_dice_profile_id(row)
+    if profile_id is None:
+        raise DiceSkillValidationError("this item does not support skill targeting")
+    return DICE_SKILL_DB.target(profile_id, skill_id)
+
+
+def roll_database_message() -> str:
+    """Return the live fail-closed reason, including game-build attestation."""
+
+    summary = getattr(ROLL_DB, "summary", None)
+    if callable(summary):
+        try:
+            message = summary().get("message")
+            if message:
+                return str(message)
+        except Exception:
+            pass
+    return str(getattr(getattr(ROLL_DB, "status", None), "message", "roll profiles unavailable"))
+
+
+def generation_roll_profile(row: dict) -> dict | None:
+    """Return a profile, rejecting unverified equipment generation.
+
+    Stackables and other non-equipment repositories retain their native random
+    seed because the perfect-roll project does not apply to them.  Every normal
+    or unique equipment address, including fixed-stat equipment, must have a
+    validated database entry before the editor is allowed to create it.
+    """
+    is_profiled_equipment = (
+        row.get("kind") in {"normal", "unique"}
+        and int(row.get("cls", -1)) in ROLL_PROFILE_GEAR_CLASSES
+    )
+    if is_profiled_equipment and not ROLL_DB.available:
+        raise ValueError(
+            f"{row.get('name', 'Equipment')}: {roll_database_message()}"
+        )
+    profile = row.get("rollProfile") or catalog_roll_profile(row)
+    if is_profiled_equipment and profile is None:
+        raise ValueError(
+            f"{row.get('name', 'Equipment')}: no verified roll profile for this exact equipment address"
+        )
+    return profile
+
+
+for _r in CAT:
+    _profile = catalog_roll_profile(_r)
+    if _profile:
+        _r["rollProfile"] = _profile
+    _dice_profile_id = catalog_dice_profile_id(_r)
+    if _dice_profile_id:
+        _r["skillSelector"] = DICE_SKILL_DB.selector(_dice_profile_id)
 BY_ADDR = {}
 for _r in CAT:
     kindbit = 1 if _r["kind"] == "unique" else 0
     BY_ADDR[(kindbit, _r["cls"], _r["sub"], _r["b"])] = _r
 
-# Runeword'leri soketteki run dizisinden tani (her tarif benzersiz, 0 cakisma).
+# Identify runewords from the rune sequence in the sockets (every recipe is
+# unique, 0 collisions).
 RW_BY_RUNES = {}
 for _rw in RUNEWORDS:
     _seq = tuple(int(_rn["b"]) for _rn in _rw.get("runes", []))
@@ -301,8 +472,152 @@ for _rw in RUNEWORDS:
         RW_BY_RUNES.setdefault(_seq, _rw)
 
 
+def runeword_allowed_subtypes(recipe: dict) -> set[int]:
+    """Return the exact weapon subtype set encoded by a runeword target."""
+    if int(recipe.get("type", -1)) != 3:
+        return {0}
+    match = re.fullmatch(
+        r"Weapon\s*\(([^)]+)\)",
+        str(recipe.get("target") or "").strip(),
+    )
+    if match is None:
+        raise ValueError(f"unparseable weapon runeword target: {recipe.get('target')!r}")
+    by_name = {name.casefold(): subtype for subtype, name in SUB_NAMES.items() if name}
+    names = [part.strip() for part in match.group(1).split("/")]
+    unknown = [name for name in names if name.casefold() not in by_name]
+    if unknown:
+        raise ValueError(f"unknown weapon subtype(s): {', '.join(unknown)}")
+    return {by_name[name.casefold()] for name in names}
+
+
+def runeword_base_candidates(recipe: dict) -> list[dict]:
+    """Expand a recipe to every compatible, runtime-available normal base.
+
+    The recipe target controls class and (for weapons) subtype. Zone Codex
+    recipes deliberately keep their one fixed normal base address.
+    """
+    item_type = int(recipe.get("type", -1))
+    allowed_subtypes = runeword_allowed_subtypes(recipe)
+    reference = recipe.get("base") or {}
+    reference_address = (
+        int(reference.get("cls", item_type)),
+        int(reference.get("sub", 0)),
+        int(reference.get("b", -1)),
+    )
+    if item_type == 11:
+        rows = [
+            row for row in CAT
+            if row.get("kind") == "normal"
+            and row.get("available", True)
+            and (int(row["cls"]), int(row.get("sub", 0)), int(row["b"]))
+            == reference_address
+        ]
+    else:
+        rows = [
+            row for row in CAT
+            if row.get("kind") == "normal"
+            and row.get("available", True)
+            and int(row["cls"]) == item_type
+            and int(row.get("sub", 0)) in allowed_subtypes
+        ]
+    rows.sort(key=lambda row: (int(row["cls"]), int(row.get("sub", 0)), int(row["b"])))
+    return rows
+
+
+def runeword_base_is_compatible(recipe: dict, cls: int, sub: int, base: int) -> bool:
+    """Return whether an exact save address is a valid base for ``recipe``."""
+    try:
+        address = (int(cls), int(sub), int(base))
+        return any(
+            (int(row["cls"]), int(row.get("sub", 0)), int(row["b"])) == address
+            for row in runeword_base_candidates(recipe)
+        )
+    except (KeyError, TypeError, ValueError):
+        return False
+
+
+def runeword_profile(recipe: dict, base: dict) -> dict | None:
+    try:
+        return ROLL_DB.lookup_runeword(
+            int(recipe["rw"]),
+            int(base["cls"]),
+            int(base.get("sub", 0)),
+            int(base["b"]),
+        )
+    except (KeyError, TypeError, ValueError):
+        return None
+
+
+def runeword_profile_unavailable_reason() -> str:
+    if not ROLL_DB.available:
+        return roll_database_message()
+    return "no verified roll profile for this exact recipe/base"
+
+
+def runeword_generation_blocker(recipe: dict) -> str | None:
+    """Explain runeword families that cannot yet be serialized safely."""
+    if int(recipe.get("type", -1)) == 11:
+        return (
+            "Zone Codex generation is disabled: its d/q/r/u/v payload and "
+            "socket metadata are not verified for synthesis"
+        )
+    return None
+
+
+def runeword_api_rows() -> list[dict]:
+    """Return recipes with the complete validated base matrix for the UI."""
+    output = []
+    for recipe in RUNEWORDS:
+        row = dict(recipe)
+        bases = []
+        blocker = runeword_generation_blocker(recipe)
+        try:
+            candidates = runeword_base_candidates(recipe)
+        except (KeyError, TypeError, ValueError) as exc:
+            row.update({
+                "bases": [],
+                "available": False,
+                "disabled": True,
+                "unavailableReason": f"invalid runeword target: {exc}",
+            })
+            output.append(row)
+            continue
+        for base in candidates:
+            profile = runeword_profile(recipe, base)
+            available = profile is not None and blocker is None
+            bases.append({
+                "cid": int(base["id"]),
+                "cls": int(base["cls"]),
+                "sub": int(base.get("sub", 0)),
+                "b": int(base["b"]),
+                "key": base.get("key"),
+                "name": base.get("name"),
+                "w": int(base.get("w", 1)),
+                "h": int(base.get("h", 1)),
+                "rollMode": profile.get("mode") if profile else None,
+                "rollDetail": profile.get("detail") if profile else None,
+                "available": available,
+                "disabled": not available,
+                "unavailableReason": (
+                    None if available else (
+                        blocker or runeword_profile_unavailable_reason()
+                    )
+                ),
+            })
+        row["bases"] = bases
+        row["available"] = any(base["available"] for base in bases)
+        row["disabled"] = not row["available"]
+        if not row["available"]:
+            row["unavailableReason"] = (
+                blocker or runeword_profile_unavailable_reason()
+                if bases else "runeword has no runtime-available compatible base"
+            )
+        output.append(row)
+    return output
+
+
 def socket_rune_seq(data: dict) -> tuple:
-    """Itemin s1..s6 soketlerindeki run b-degerlerini sirayla cikar."""
+    """Extract the rune b-values from the item's s1..s6 sockets, in order."""
     seq = []
     for n in range(1, 7):
         v = data.get(f"s{n}")
@@ -333,18 +648,50 @@ def resolve(key: str, data: dict) -> dict:
         if r:
             out.update(name=r["name"], rar=r["rar"], w=r["w"], h=r["h"], cid=r["id"],
                        set=r.get("set"), clsName=CLASS_NAMES.get(r["cls"], "?"), spr=r.get("spr"))
+            if r.get("rollProfile"):
+                out["rollProfile"] = r["rollProfile"]
+            dice_profile_id = catalog_dice_profile_id(r)
+            if dice_profile_id:
+                out["skillSelector"] = DICE_SKILL_DB.selector(
+                    dice_profile_id, data.get("a")
+                )
         else:
             out.update(name=f"? (c{c} s{sfx} j{j} b{int(b)})", rar="?", w=1, h=1, cid=None)
-    # Soketlenmis runler bir tarifle eslesiyorsa bu bir runeword'dur (oyunun mantigi).
-    # Taban itemin cls/spr/w/h/cid'i korunur (giydirme/surukleme dogru kalsin),
-    # sadece gorunen ad + rarity runeword olarak isaretlenir; tooltip rwcid'den okur.
+    # If the socketed runes match a recipe this is a runeword (the game's own logic).
+    # The base item's cls/spr/w/h/cid are kept so equipping and dragging stay correct;
+    # only the displayed name and rarity are marked as runeword, and the tooltip
+    # reads from rwcid.
     rw = RW_BY_RUNES.get(socket_rune_seq(data))
-    if rw:
+    compatible_runeword = (
+        rw is not None
+        and b is not None
+        and runeword_base_is_compatible(
+            rw,
+            sfx,
+            j if sfx == 3 else 0,
+            int(b),
+        )
+    )
+    if compatible_runeword:
         out["name"] = rw["name"]
         out["rar"] = "Runeword"
         out["isRW"] = True
         if isinstance(rw.get("cid"), int):
             out["rwcid"] = rw["cid"]
+        if b is not None:
+            try:
+                profile = ROLL_DB.lookup_runeword(
+                    int(rw["rw"]),
+                    sfx,
+                    j if sfx == 3 else 0,
+                    int(b),
+                )
+            except (KeyError, TypeError, ValueError):
+                profile = None
+            if profile:
+                out["rollProfile"] = profile
+            else:
+                out.pop("rollProfile", None)
     return out
 
 
@@ -461,11 +808,128 @@ def find_free_pos(items: dict, tab: str, w: int, h: int):
     return None
 
 
-def make_data(r: dict, equipped_g=None) -> dict:
+def random_item_seed() -> float:
+    return float(random.randint(SEED_MIN, SEED_MAX))
+
+
+def roll_profile_field_seeds(profile: dict | None) -> dict[str, float]:
+    """Return only the independently verified save-field seeds in a profile."""
+    if not profile or profile.get("mode") not in {"exact", "best"}:
+        return {}
+    raw = profile.get("fieldSeeds")
+    if not isinstance(raw, dict):
+        return {}
+    output = {}
+    for field in ("a", "i", "s"):
+        seed = raw.get(field)
+        if isinstance(seed, bool) or not isinstance(seed, (int, float)):
+            continue
+        if float(seed).is_integer() and SEED_MIN <= int(seed) <= SEED_MAX:
+            output[field] = float(seed)
+    return output
+
+
+def preferred_item_seed(row: dict) -> float:
+    """Use a proven item profile when one exists; otherwise create a real roll."""
+    profile = row.get("rollProfile") or catalog_roll_profile(row)
+    verified = roll_profile_field_seeds(profile)
+    return verified["a"] if "a" in verified else random_item_seed()
+
+
+def item_seed_for_generation(row: dict, skill_id: object = None) -> float:
+    """Return the ordinary roll seed or an exact, verified Dice target seed."""
+
+    if skill_id is None:
+        return preferred_item_seed(row)
+    return float(dice_target_for_row(row, skill_id)["seed"])
+
+
+def preferred_runeword_seeds(
+    recipe: dict,
+    base: dict,
+    profile: dict | None = None,
+) -> dict[str, float]:
+    """Return the active a/i seeds for one concrete recipe+base pair.
+
+    Equipment runewords carry an explicit ``zz.sockets`` recipe override.
+    LoadCommonItems uses that value directly and bypasses the independent
+    base-capacity/``s`` CPR chain, so synthesizing ``s`` would be both unused
+    and misleading.
+    """
+    profile = profile or runeword_profile(recipe, base)
+    if profile is None:
+        raise ValueError(runeword_profile_unavailable_reason())
+    seeds = {field: random_item_seed() for field in ("a", "i")}
+    verified = roll_profile_field_seeds(profile)
+    seeds.update({field: verified[field] for field in ("a", "i") if field in verified})
+    return seeds
+
+
+def forge_request_item_key(
+    request_id: object,
+    recipe: dict,
+    base: dict,
+    tab: str,
+) -> str | None:
+    """Map an optional client request ID to a stable, save-compatible item key."""
+    if request_id is None or request_id == "":
+        return None
+    if (
+        not isinstance(request_id, str)
+        or re.fullmatch(r"[A-Za-z0-9_-]{16,128}", request_id) is None
+    ):
+        raise ValueError("invalid forge request id")
+    identity = "|".join((
+        request_id,
+        str(int(recipe["rw"])),
+        str(int(base["cls"])),
+        str(int(base.get("sub", 0))),
+        str(int(base["b"])),
+        tab,
+    ))
+    digest = hashlib.sha256(identity.encode("ascii")).digest()
+    # Match the normal 13-digit millisecond-shaped key space and stay below
+    # binary64's exact-integer ceiling. The validated request identity is also
+    # checked against any existing entry before it is treated as a retry.
+    numeric = 1_000_000_000_000 + (
+        int.from_bytes(digest[:8], "big") % 8_000_000_000_000
+    )
+    return f"0-0-{numeric}-{int(base['cls'])}"
+
+
+def forged_entry_matches(entry: object, recipe: dict, base: dict) -> bool:
+    """Recognize the item previously written for an idempotent forge retry."""
+    if not isinstance(entry, dict) or not isinstance(entry.get("data"), dict):
+        return False
+    data = entry["data"]
+    try:
+        expected_sub = int(base.get("sub", 0)) if int(base["cls"]) == 3 else 0
+        return (
+            int(data.get("b", -1)) == int(base["b"])
+            and int(data.get("c", -1)) == 0
+            and int(data.get("j", 0)) == expected_sub
+            and socket_rune_seq(data)
+            == tuple(int(rune["b"]) for rune in recipe.get("runes", []))
+        )
+    except (TypeError, ValueError):
+        return False
+
+
+def make_data(r: dict, equipped_g=None, skill_id: object = None) -> dict:
     c = 1.0 if r["kind"] == "unique" else 0.0
     j = float(r["sub"] if r["cls"] == 3 else 0)
-    d = {"w": 1.0, "a": float(random.randint(1, 999_999_999)), "j": j,
+    profile = generation_roll_profile(r)
+    verified_seeds = roll_profile_field_seeds(profile)
+    item_seed = (
+        item_seed_for_generation(r, skill_id)
+        if skill_id is not None
+        else (verified_seeds["a"] if "a" in verified_seeds else random_item_seed())
+    )
+    d = {"w": 1.0, "a": item_seed, "j": j,
          "b": float(r["b"]), "c": c}
+    for field in ("i", "s"):
+        if field in verified_seeds:
+            d[field] = verified_seeds[field]
     if r.get("cls") in (12, 13, 14, 15):
         # Native S10 drops use the compact a/b/c/j/o shape in dedicated bags.
         return {"a": d["a"], "j": 0.0, "b": d["b"], "c": 0.0, "o": 1.0}
@@ -496,9 +960,16 @@ def write_char_inventory(slot: int, inv: dict) -> str:
     p = SAVES / f"herosiege{slot}.hss"
     txt = decode_hss(p)
     blob = base64.b64encode(json.dumps(inv, separators=(", ", ": ")).encode()).decode()
-    new = re.sub(r'inventory="[A-Za-z0-9+/=]*"', f'inventory="{blob}"', txt, count=1)
-    if new == txt:
+    new, replacements = re.subn(
+        r'inventory="[A-Za-z0-9+/=]*"',
+        f'inventory="{blob}"',
+        txt,
+        count=1,
+    )
+    if replacements != 1:
         raise ValueError(f"inventory field not found in herosiege{slot}.hss")
+    if new == txt:
+        return ""
     bk = backup(p)
     atomic_write_text(p, encode_hss(new), "ascii")
     return bk
@@ -531,7 +1002,7 @@ def file_key(ref: dict):
 
 
 class FileCtx:
-    """Ayni dosyaya birden fazla referans tek yuklemeyle calissin."""
+    """Let several references to the same file share a single load."""
 
     def __init__(self):
         self.loaded = {}
@@ -635,15 +1106,33 @@ def op_add(body: dict) -> dict:
         return {"err": "Runewords can't be added directly - use the Runeword Builder."}
     if not r.get("available", True):
         return {"err": "This catalog address is not verified for Season 10."}
+    try:
+        generation_roll_profile(r)
+    except ValueError as exc:
+        return {"err": f"{exc}; item unchanged"}
+    skill_id = body.get("skillId")
+    if catalog_dice_profile_id(r) is not None and skill_id is None:
+        return {"err": f"{r['name']}: choose a verified skill target before adding; item unchanged"}
+    selected_skill = None
+    if skill_id is not None:
+        try:
+            selected_skill = dice_target_for_row(r, skill_id)
+        except DiceSkillValidationError as exc:
+            return {"err": f"{r['name']}: {exc}; item unchanged"}
+    skill_suffix = (
+        f" · {selected_skill['className']}: {selected_skill['name']} "
+        f"(ID {selected_skill['id']})"
+        if selected_skill else ""
+    )
     if tgt["type"] == "stash_unique":
         if r["kind"] != "unique":
             return {"err": "Only unique items can go to the Unique tab."}
         d = json.loads(decode_hss(SAVES / "stash.hss"))
         ui = d.setdefault("unique_items", {})
         key = fresh_key(r["cls"], ui)
-        ui[key] = {"data": make_data(r)}
+        ui[key] = {"data": make_data(r, skill_id=skill_id)}
         bk = write_stash(d)
-        return {"ok": f"{r['name']} -> Unique sekmesi", "backup": bk}
+        return {"ok": f"{r['name']} -> Unique tab{skill_suffix}", "backup": bk}
     if tgt["type"] == "stash":
         d = json.loads(decode_hss(SAVES / "stash.hss"))
         tab = tgt["tab"]
@@ -657,9 +1146,9 @@ def op_add(body: dict) -> dict:
             if pos is None:
                 return {"err": "No free space in this tab."}
         key = fresh_key(r["cls"], items)
-        items[key] = {"pos": pos, "data": make_data(r)}
+        items[key] = {"pos": pos, "data": make_data(r, skill_id=skill_id)}
         bk = write_stash(d)
-        return {"ok": f"{r['name']} -> {tab} pos {pos}", "backup": bk}
+        return {"ok": f"{r['name']} -> {tab} pos {pos}{skill_suffix}", "backup": bk}
     if tgt["type"] == "bag":
         slot, tab = int(tgt["slot"]), tgt["tab"]
         p = SAVES / f"inventory_order_{slot}.hss"
@@ -674,9 +1163,9 @@ def op_add(body: dict) -> dict:
             if pos is None:
                 return {"err": "No free space in the bag."}
         key = fresh_key(r["cls"], items)
-        items[key] = {"pos": pos, "data": make_data(r)}
+        items[key] = {"pos": pos, "data": make_data(r, skill_id=skill_id)}
         bk = write_bags(slot, d)
-        return {"ok": f"{r['name']} -> canta {tab}", "backup": bk}
+        return {"ok": f"{r['name']} -> canta {tab}{skill_suffix}", "backup": bk}
     if tgt["type"] in ("potions", "personal_stash"):
         slot = int(tgt["slot"])
         p = SAVES / f"herosiege{slot}.hss"
@@ -696,9 +1185,9 @@ def op_add(body: dict) -> dict:
             if pos is None:
                 return {"err": f"No free space in {tab}."}
         key = fresh_key(r["cls"], items)
-        items[key] = {"pos": pos, "data": make_data(r)}
+        items[key] = {"pos": pos, "data": make_data(r, skill_id=skill_id)}
         bk = write_char_inventory(slot, inv)
-        return {"ok": f"{r['name']} -> {tab}", "backup": bk}
+        return {"ok": f"{r['name']} -> {tab}{skill_suffix}", "backup": bk}
     if tgt["type"] == "equip":
         slot, g = int(tgt["slot"]), int(tgt["g"])
         if r.get("cls") not in EQUIP_ACCEPT.get(g, set()):
@@ -708,28 +1197,43 @@ def op_add(body: dict) -> dict:
         m = re.search(r'inventory="([A-Za-z0-9+/=]+)"', txt)
         inv = json.loads(base64.b64decode(m.group(1))) if m else {}
         eq = inv.setdefault("equipped_items", {})
-        # ayni slottakini cikar
+        # remove whatever is already in that slot
         for k in [k for k, v in eq.items() if int(v["data"].get("g", -1)) == g]:
             del eq[k]
         key = fresh_key(r["cls"], eq)
-        eq[key] = {"data": make_data(r, equipped_g=g)}
+        eq[key] = {"data": make_data(r, equipped_g=g, skill_id=skill_id)}
         bk = write_char_inventory(slot, inv)
-        return {"ok": f"{r['name']} -> {SLOT_NAMES.get(g, g)} (character {slot})", "backup": bk}
+        return {"ok": (f"{r['name']} -> {SLOT_NAMES.get(g, g)} "
+                       f"(character {slot}){skill_suffix}"), "backup": bk}
     return {"err": "unknown target"}
 
 
 def op_addmany(body: dict) -> dict:
-    """Birden fazla unique'i tek yazimda Unique sekmesine ekle (set icin)."""
+    """Add several uniques to the Unique tab in a single write (for sets)."""
     if game_running():
         return {"err": "Game is running! Close it first."}
     cids = body.get("cids") or []
-    d = json.loads(decode_hss(SAVES / "stash.hss"))
-    ui = d.setdefault("unique_items", {})
-    added = []
+    rows = []
     for cid in cids:
         r = CAT[int(cid)]
         if r["kind"] != "unique" or not r.get("available", True):
             continue
+        try:
+            generation_roll_profile(r)
+        except ValueError as exc:
+            return {"err": f"{exc}; no items added"}
+        if catalog_dice_profile_id(r) is not None:
+            return {
+                "err": (
+                    f"{r['name']}: bulk add has no explicit skill target; "
+                    "no items added"
+                )
+            }
+        rows.append(r)
+    d = json.loads(decode_hss(SAVES / "stash.hss"))
+    ui = d.setdefault("unique_items", {})
+    added = []
+    for r in rows:
         key = fresh_key(r["cls"], ui)
         ui[key] = {"data": make_data(r)}
         added.append(r["name"])
@@ -740,7 +1244,7 @@ def op_addmany(body: dict) -> dict:
 
 
 def op_modify(body: dict) -> dict:
-    """duplicate / setstack / reroll - tek item uzerinde kucuk islemler."""
+    """Validated operations on one existing item."""
     if game_running():
         return {"err": "Game is running! Close it first."}
     action = body["action"]
@@ -752,13 +1256,93 @@ def op_modify(body: dict) -> dict:
         return {"err": "item not found"}
     entry = items[key]
     it = resolve(key, entry.get("data", {}))
+    if action == "selectskill":
+        selector = it.get("skillSelector")
+        if not isinstance(selector, dict) or not selector.get("profileId"):
+            return {"err": f"{it['name']}: this item has no selectable random skill; item unchanged"}
+        try:
+            target = DICE_SKILL_DB.target(
+                str(selector["profileId"]), body.get("skillId")
+            )
+        except DiceSkillValidationError as exc:
+            return {"err": f"{it['name']}: {exc}; item unchanged"}
+        data = entry.setdefault("data", {})
+        current = DICE_SKILL_DB.selector(str(selector["profileId"]), data.get("a"))
+        current_skill = current.get("current") if isinstance(current, dict) else None
+        if isinstance(current_skill, dict) and current_skill.get("id") == target["id"]:
+            return {
+                "ok": (f"{it['name']}: already targets {target['className']}: "
+                       f"{target['name']} (ID {target['id']})"),
+                "backup": "",
+            }
+        # The runtime recreates the selected identity from ``a``.  Never inject
+        # stat 202/203/419/420 or touch i/s/zz/socket payloads.
+        data["a"] = float(target["seed"])
+        baks = ctx.save_all()
+        noun = "subskill" if selector.get("targetKind") == "subskill" else "skill"
+        return {
+            "ok": (f"{it['name']}: {noun} -> {target['className']}: "
+                   f"{target['name']} (ID {target['id']}; a={target['seed']})"),
+            "backup": ", ".join(baks),
+        }
     if action == "reroll":
         d0 = entry.setdefault("data", {})
-        d0["a"] = float(random.randint(1, 999_999_999))
-        if "i" in d0: d0["i"] = float(random.randint(1, 999_999_999))
-        if "s" in d0: d0["s"] = float(random.randint(1, 999_999_999))
+        d0["a"] = random_item_seed()
+        if "i" in d0: d0["i"] = random_item_seed()
+        if "s" in d0: d0["s"] = random_item_seed()
         baks = ctx.save_all()
         return {"ok": f"{it['name']}: stats rerolled (new seeds)", "backup": ", ".join(baks)}
+    if action == "perfect":
+        if it.get("skillSelector"):
+            return {"err": (f"{it['name']}: its variable range selects a skill identity, "
+                            "not a quality value; use Choose skill instead")}
+        if not ROLL_DB.available:
+            return {
+                "err": (
+                    f"{it['name']}: {roll_database_message()}; item unchanged"
+                )
+            }
+        profile = it.get("rollProfile")
+        if not profile:
+            return {"err": (f"{it['name']}: no verified profile for this exact "
+                            "item address; item unchanged")}
+        if profile.get("mode") == "fixed":
+            return {"err": (f"{it['name']}: definition stats are fixed; "
+                            "there is no variable roll to change")}
+        field_seeds = roll_profile_field_seeds(profile)
+        if not field_seeds:
+            return {"err": f"{it['name']}: verified profile has no actionable seed fields; item unchanged"}
+        # Each listed field owns an independently proven CPR chain. Unlisted
+        # fields and socket payloads are deliberately preserved byte-for-byte.
+        # Save field ``s`` is also an enable flag: when it is absent the game's
+        # LoadCommonItems path skips socket-count generation.  Never create it
+        # on an existing item merely because a profile can optimize that chain.
+        data = entry.setdefault("data", {})
+        applicable_field_seeds = {
+            field: seed for field, seed in field_seeds.items()
+            if field != "s" or "s" in data
+        }
+        if not applicable_field_seeds:
+            return {"err": (f"{it['name']}: verified socket seed is not active "
+                            "because this item has no s field; item unchanged")}
+        mode = "EXACT MAX" if profile["mode"] == "exact" else "BEST POSSIBLE"
+        already_applied = all(
+            isinstance(data.get(field), (int, float))
+            and not isinstance(data.get(field), bool)
+            and float(data[field]) == seed
+            for field, seed in applicable_field_seeds.items()
+        )
+        seed_detail = ", ".join(
+            f"{field}={int(seed)}" for field, seed in applicable_field_seeds.items()
+        )
+        if already_applied:
+            return {"ok": f"{it['name']}: already {mode} ({profile['detail']})",
+                    "backup": ""}
+        data.update(applicable_field_seeds)
+        baks = ctx.save_all()
+        return {"ok": (f"{it['name']}: {mode} applied ({profile['detail']}; "
+                       f"{seed_detail})"),
+                "backup": ", ".join(baks)}
     if action == "setstack":
         n = max(1, min(99_999_999, int(body.get("count", 1))))
         entry.setdefault("data", {})["o"] = float(n)
@@ -781,70 +1365,108 @@ def op_modify(body: dict) -> dict:
 
 
 def op_forge(body: dict) -> dict:
-    """Runeword uret. Codex tipi -> forged codex; ekipman tipi -> tarif runleri
-    soketlenmis normal base (oyun kimligi soket runlerinden tanir, D2 usulu)."""
+    """Serialize forge writes so concurrent retries observe the persisted key."""
+    with FORGE_LOCK:
+        return _op_forge(body)
+
+
+def _op_forge(body: dict) -> dict:
+    """Forge a runeword. Codex type -> forged codex; equipment type -> a normal
+    base with the recipe's runes socketed (the game identifies it from the socket
+    runes, D2 style)."""
     if game_running():
         return {"err": "Game is running! Close it first."}
-    rwid = int(body["rw"])
+    raw_rwid = body.get("rw")
+    if isinstance(raw_rwid, bool):
+        return {"err": "invalid runeword selection"}
+    try:
+        rwid = int(raw_rwid)
+    except (TypeError, ValueError):
+        return {"err": "invalid runeword selection"}
     tab = body.get("tab") or "stash_tab_1"
+    if not isinstance(tab, str) or re.fullmatch(r"stash_tab_[1-9]", tab) is None:
+        return {"err": "invalid forge target; choose stash tab 1-9"}
     rec = next((x for x in RUNEWORDS if x["rw"] == rwid), None)
     if not rec or not rec.get("base"):
         return {"err": "unknown runeword / no valid base"}
-    base = rec["base"]
+    blocker = runeword_generation_blocker(rec)
+    if blocker:
+        return {"err": f"{rec['name']}: {blocker}; item unchanged"}
+    try:
+        candidates = runeword_base_candidates(rec)
+    except ValueError as exc:
+        return {"err": f"invalid runeword target: {exc}"}
+    if not candidates:
+        return {"err": "runeword has no runtime-available compatible base"}
+    requested_cid = body.get("baseCid")
+    if requested_cid is None:
+        reference = rec["base"]
+        base = next((
+            row for row in candidates
+            if int(row["cls"]) == int(reference.get("cls", rec["type"]))
+            and int(row.get("sub", 0)) == int(reference.get("sub", 0))
+            and int(row["b"]) == int(reference.get("b", -1))
+        ), None)
+    else:
+        if isinstance(requested_cid, bool):
+            return {"err": "invalid runeword base selection"}
+        try:
+            requested_cid = int(requested_cid)
+        except (TypeError, ValueError):
+            return {"err": "invalid runeword base selection"}
+        base = next((row for row in candidates if int(row["id"]) == requested_cid), None)
+    if base is None:
+        return {"err": "selected base is not valid for this runeword"}
+    profile = runeword_profile(rec, base)
+    if profile is None:
+        return {"err": (
+            f"{rec['name']}: {runeword_profile_unavailable_reason()}; "
+            "item unchanged"
+        )}
+    try:
+        request_key = forge_request_item_key(body.get("requestId"), rec, base, tab)
+    except (KeyError, TypeError, ValueError) as exc:
+        return {"err": str(exc)}
     d = json.loads(decode_hss(SAVES / "stash.hss"))
-    items = d.setdefault(tab, {})
+    items = d.get(tab)
+    if items is None:
+        items = {}
+        d[tab] = items
+    elif not isinstance(items, dict):
+        return {"err": f"invalid stash section: {tab}; item unchanged"}
+    if request_key is not None and request_key in items:
+        if forged_entry_matches(items[request_key], rec, base):
+            return {
+                "ok": f"ALREADY FORGED: {rec['name']} -> {tab}",
+                "backup": "",
+            }
+        return {"err": "forge request id collision; item unchanged"}
     pos = find_free_pos(items, tab, base.get("w", 2), base.get("h", 2))
     if pos is None:
         return {"err": f"no free space in {tab}"}
 
     def rune_b64(rb):
-        rj = json.dumps({"a": random.randint(1, 999_999_999), "b": int(rb), "n": 0},
+        rj = json.dumps({"a": int(random_item_seed()), "b": int(rb), "n": 0},
                         separators=(",", ":"))
         return base64.b64encode(rj.encode()).decode()
 
-    if rec["type"] == 11:
-        # zone codex: soket sayisi SEED'lerden zar atilir -> bilinen-iyi seed setleri klonlanir
-        # (3 soket: kullanicinin gercek forged Codex of Experience; 5 soket: gercek 5-soketli codex)
-        CODEX_SEEDS = {
-            3: {"a": 765653088.0, "i": 918025265.0, "s": 801771351.0,
-                "d": 4.0, "q": 1.0, "r": 0.0, "u": 4.0, "v": 6.0},
-            5: {"a": 402084546.0, "i": 146361242.0, "s": 763442575.0,
-                "d": 4.0, "q": 1.0, "u": 9.0, "v": 5.0},
-        }
-        n_runes = len(rec["runes"])
-        tmpl = CODEX_SEEDS.get(n_runes)
-        note = ""
-        if tmpl:
-            data = {"b": 23.0, "c": 0.0, "e": 0.0, **tmpl}
-        else:
-            data = {"b": 23.0, "c": 0.0, "d": 4.0, "e": 0.0, "q": 1.0, "r": 0.0,
-                    "u": 4.0, "v": 6.0,
-                    "a": float(random.randint(1, 999_999_999)),
-                    "i": float(random.randint(1, 999_999_999)),
-                    "s": float(random.randint(1, 999_999_999))}
-            note = f" | NOTE: random seeds - if in-game socket count != {n_runes}, right-click the codex -> Reroll stats until it matches"
-        unset = []
-        for n, rn in enumerate(rec["runes"], 1):
-            data[f"s{n}"] = rune_b64(rn["b"])
-            unset.append(f"s{n}")
-        data["unset"] = unset
-    else:
-        # ekipman: normal base + tarif runleri (gercek Scholar/Skysong/Grimwalkers ornekleri)
-        data = {"a": float(random.randint(1, 999_999_999)),
-                "i": float(random.randint(1, 999_999_999)),
-                "s": float(random.randint(1, 999_999_999)),
-                "b": float(base["b"]), "c": 0.0, "w": 1.0,
-                "j": float(base["sub"] if base["cls"] == 3 else 0),
-                "d": 0.0, "e": 0.0, "n": 0.0,
-                "zz": {"sockets": float(len(rec["runes"]))}}
-        for n, rn in enumerate(rec["runes"], 1):
-            data[f"s{n}"] = rune_b64(rn["b"])
+    # Equipment: normal base + the recipe's runes (real Scholar/Skysong/
+    # Grimwalkers examples). Zone Codex recipes returned fail-closed above.
+    roll_seeds = preferred_runeword_seeds(rec, base, profile)
+    data = {"a": roll_seeds["a"],
+            "i": roll_seeds["i"],
+            "b": float(base["b"]), "c": 0.0, "w": 1.0,
+            "j": float(base["sub"] if base["cls"] == 3 else 0),
+            "d": 0.0, "e": 0.0, "n": 0.0,
+            "zz": {"sockets": float(len(rec["runes"]))}}
+    for n, rn in enumerate(rec["runes"], 1):
+        data[f"s{n}"] = rune_b64(rn["b"])
 
-    key = fresh_key(base["cls"], items)
+    key = request_key or fresh_key(base["cls"], items)
     items[key] = {"pos": pos, "data": data}
     bk = write_stash(d)
     return {"ok": f"FORGED: {rec['name']} ({rec['target']}) -> {tab} | runes: " +
-                  ", ".join(r["name"] for r in rec["runes"]) + (note if rec["type"] == 11 else ""),
+                  ", ".join(r["name"] for r in rec["runes"]),
             "backup": bk}
 
 
@@ -1054,14 +1676,15 @@ def op_restore_backup(body: dict) -> dict:
 
 
 def op_sockets(body: dict) -> dict:
-    """Soket duzenleme: s1..s6 iceriklerini yeniden yaz.
+    """Socket editing: rewrite the s1..s6 contents.
 
-    Her soket girdisi su formlardan biri:
-      - None / ""              -> bos soket (atla)
-      - {"keep": {a,b,n}}      -> DEGISMEYEN soket; iceригi (tohum/varyant) AYNEN korunur
-      - {"b": <int>}           -> kullanici degistirdi/ekledi -> yeni tohum, n=0
-      - <int> (eski format)    -> yeni gem/run; yeni tohum, n=0
-    Boylece dokunulmayan gem/jewel'lerin a (tohum) ve n (varyant) degeri bozulmaz.
+    Each socket entry is one of these forms:
+      - None / ""              -> empty socket (skipped)
+      - {"keep": {a,b,n}}      -> UNCHANGED socket; its contents (seed/variant) are
+                                  preserved EXACTLY
+      - {"b": <int>}           -> the user changed/added it -> new seed, n=0
+      - <int> (legacy format)  -> new gem/rune; new seed, n=0
+    This keeps the a (seed) and n (variant) values of untouched gems/jewels intact.
     """
     if game_running():
         return {"err": "Game is running! Close it first."}
@@ -1079,25 +1702,26 @@ def op_sockets(body: dict) -> dict:
     it = resolve(key, d0)
     for n in range(1, 7):
         d0.pop(f"s{n}", None)
-    d0.pop("unset", None)  # duzenleme forged durumunu sifirlar
+    d0.pop("unset", None)  # editing resets the forged state
     filled = 0
     for n, e in enumerate(sockets, 1):
         if e is None or e == "":
             continue
         if isinstance(e, dict) and isinstance(e.get("keep"), dict):
-            o = e["keep"]                       # dokunulmadi -> aynen koru
+            o = e["keep"]                       # untouched -> keep exactly
             sj = {"a": o.get("a", 0), "b": int(o.get("b", 0)), "n": o.get("n", 0)}
         elif isinstance(e, dict) and "b" in e:
-            sj = {"a": random.randint(1, 999_999_999), "b": int(e["b"]), "n": 0}
+            sj = {"a": int(random_item_seed()), "b": int(e["b"]), "n": 0}
         elif isinstance(e, (int, float)):
-            sj = {"a": random.randint(1, 999_999_999), "b": int(e), "n": 0}
+            sj = {"a": int(random_item_seed()), "b": int(e), "n": 0}
         else:
             continue
         d0[f"s{n}"] = base64.b64encode(
             json.dumps(sj, separators=(",", ":")).encode()).decode()
         filled += 1
-    # zz.sockets oyunun soket SAYISINI okudugu yer -> her zaman yaz, yoksa
-    # editorden eklenen soketleri oyun GORMEZ (regresyon: bunu kaldirmistim).
+    # zz.sockets is where the game reads the socket COUNT, so always write it;
+    # without it the game does NOT SEE sockets added from the editor (regression:
+    # this had been removed once).
     if "zz" in d0 or len(sockets) > 0:
         zz = d0.setdefault("zz", {})
         if isinstance(zz, dict):
@@ -1141,10 +1765,11 @@ def op_delete(body: dict) -> dict:
 
 
 # ---------- Relic Lab ----------
-# Relic'ler SADECE 5 relic slotuna (g=10..14) takilir; canta/bankaya konamaz.
-# Karakter save'inin equipped_items'inda saklanir:
+# Relics go ONLY into the 5 relic slots (g=10..14); they cannot sit in the bag or
+# the stash.  They are stored in the character save's equipped_items:
 #   {"g":<slot 10-14>, "o":<level 1-10>, "a":<seed>, "j":0, "b":<relic base>, "c":0}
-# "o" = level (Globe lvl10 = +5 element skill). 5 slot doluysa secilen slot degisir.
+# "o" = level (Globe lvl10 = +5 element skill). If all 5 slots are full, the
+# selected slot is replaced.
 RELIC_SLOTS = {10: "Relic 1", 11: "Relic 2", 12: "Relic 3", 13: "Relic 4", 14: "Relic 5"}
 
 
@@ -1173,8 +1798,9 @@ def relic_list() -> list:
 
 
 def op_make_relic(body: dict) -> dict:
-    """Relic'i karakterin equipped relic slotuna (g=10..13) yaz; o slottakini degistirir.
-    body: {slot:<char>, cid:<katalog>, level:1-10, g:10-13}"""
+    """Write the relic into the character's equipped relic slot (g=10..13),
+    replacing whatever is in that slot.
+    body: {slot:<char>, cid:<catalog>, level:1-10, g:10-13}"""
     if game_running():
         return {"err": "Game is running! Close it first."}
     try:
@@ -1199,7 +1825,7 @@ def op_make_relic(body: dict) -> dict:
         replaced = eq[k]["data"].get("b"); del eq[k]
     key = fresh_key(16, eq)
     eq[key] = {"data": {"g": float(g), "o": float(level),
-                        "a": float(random.randint(1, 999_999_999)),
+                        "a": random_item_seed(),
                         "j": 0.0, "b": float(int(r["b"])), "c": 0.0}}
     bk = write_char_inventory(slot, inv)
     name = relic_disp(r.get("key"))
@@ -1222,10 +1848,10 @@ def _relic_key_by_b(b) -> str:
 
 # ---------- Bulk Stackable Lab ----------
 # Key (12) / Boss Part-Tarot (13) / Material (14) / Rune-Gem-Orb (15):
-# tek slotta `o` = adet (stack).
-#   Key/Gem:   {"n":0,"w":1,"o":<adet>,"a":0,"e":0,"d":0,"b":<base>,"c":0}
-#   Material:  {"o":<adet>,"a":<seed>,"e":0,"d":0,"b":<base>,"c":0}
-# (Potion 11 = codex/potion-kemeri karisik; Consumable 18 = m:1 tekil -> dahil degil.)
+# in a single slot `o` = quantity (stack).
+#   Key/Gem:   {"n":0,"w":1,"o":<qty>,"a":0,"e":0,"d":0,"b":<base>,"c":0}
+#   Material:  {"o":<qty>,"a":<seed>,"e":0,"d":0,"b":<base>,"c":0}
+# (Potion 11 = codex/potion-belt mix; Consumable 18 = m:1 singleton -> not included.)
 STACKABLE_CLS = {
     12: "Key",
     13: "Boss Part / Tarot",
@@ -1271,7 +1897,7 @@ def _make_one_stackable(items: dict, tab: str, cls: int, base: int, amount: int)
     if pos is None:
         return None
     key = fresh_key(cls, items)
-    d = {"o": float(amount), "a": float(random.randint(1, 999_999_999)),
+    d = {"o": float(amount), "a": random_item_seed(),
          "j": 0.0, "b": float(int(base)), "c": 0.0}
     items[key] = {"pos": pos, "data": d}
     return key
@@ -1774,6 +2400,7 @@ class H(BaseHTTPRequestHandler):
         b = json.dumps(obj, ensure_ascii=False).encode("utf-8")
         self.send_response(code)
         self.send_header("Content-Type", "application/json; charset=utf-8")
+        self.send_header("Cache-Control", "no-store")
         self.send_header("Content-Length", str(len(b)))
         self.end_headers()
         self.wfile.write(b)
@@ -1784,20 +2411,41 @@ class H(BaseHTTPRequestHandler):
             b = HTML.encode("utf-8")
             self.send_response(200)
             self.send_header("Content-Type", "text/html; charset=utf-8")
+            self.send_header("Cache-Control", "no-store")
             self.send_header("Content-Length", str(len(b)))
             self.end_headers()
             self.wfile.write(b)
+        elif u.path == "/api/instance":
+            # Lightweight startup handshake: do not enumerate saves or invoke
+            # tasklist merely to decide whether a second launcher can reuse us.
+            self._json({"application": APPLICATION_ID, "version": APP_VERSION})
         elif u.path == "/api/overview":
             self._json({
+                "application": APPLICATION_ID,
                 "chars": list_characters(),
                 "gameRunning": game_running(),
                 "version": APP_VERSION,
                 "profile": CATALOG_PROFILE,
                 "catalogItems": sum(1 for row in CAT if row.get("available", True)),
                 "s10VerifiedAdditions": sum(1 for row in CAT if row.get("s10Verified")),
+                "gameBuild": GAME_BUILD_GUARD.summary(),
+                "rollProfiles": ROLL_DB.summary(),
+                "diceSkillTargets": DICE_SKILL_DB.summary(),
             })
         elif u.path == "/api/catalog":
             self._json(CAT)
+        elif u.path == "/api/dice-skills":
+            profile_id = parse_qs(u.query).get("profile", [""])[0]
+            selector = DICE_SKILL_DB.selector(profile_id)
+            if selector is None:
+                self._json({"err": "unknown dice skill profile"}, 404)
+            elif not DICE_SKILL_DB.available:
+                self._json({"err": selector["message"], "selector": selector})
+            else:
+                self._json({
+                    "selector": selector,
+                    "targets": DICE_SKILL_DB.targets(profile_id),
+                })
         elif u.path.startswith("/api/char/"):
             self._json(read_char(int(u.path.rsplit("/", 1)[1])))
         elif u.path == "/api/stash":
@@ -1805,7 +2453,7 @@ class H(BaseHTTPRequestHandler):
         elif u.path == "/api/sets":
             self._json(SETS)
         elif u.path == "/api/runewords":
-            self._json(RUNEWORDS)
+            self._json(runeword_api_rows())
         elif u.path == "/api/relics":
             self._json(relic_list())
         elif u.path == "/api/stackables":
@@ -1843,34 +2491,35 @@ class H(BaseHTTPRequestHandler):
         body = json.loads(self.rfile.read(n) or b"{}")
         u = urlparse(self.path)
         try:
-            if u.path == "/api/add":
-                self._json(op_add(body))
-            elif u.path == "/api/move":
-                self._json(op_move(body))
-            elif u.path == "/api/addmany":
-                self._json(op_addmany(body))
-            elif u.path == "/api/forge":
-                self._json(op_forge(body))
-            elif u.path == "/api/loadout":
-                self._json(op_loadout(body))
-            elif u.path == "/api/restorebak":
-                self._json(op_restore_backup(body))
-            elif u.path == "/api/sockets":
-                self._json(op_sockets(body))
-            elif u.path == "/api/makerelic":
-                self._json(op_make_relic(body))
-            elif u.path == "/api/makestackable":
-                self._json(op_make_stackable(body))
-            elif u.path == "/api/makes10access":
-                self._json(op_make_s10_access(body))
-            elif u.path == "/api/modify":
-                self._json(op_modify(body))
-            elif u.path == "/api/delete":
-                self._json(op_delete(body))
-            elif u.path == "/api/health/fix":
-                self._json(op_fix_save_health())
-            else:
-                self._json({"err": "not found"}, 404)
+            with SAVE_WRITE_LOCK:
+                if u.path == "/api/add":
+                    self._json(op_add(body))
+                elif u.path == "/api/move":
+                    self._json(op_move(body))
+                elif u.path == "/api/addmany":
+                    self._json(op_addmany(body))
+                elif u.path == "/api/forge":
+                    self._json(op_forge(body))
+                elif u.path == "/api/loadout":
+                    self._json(op_loadout(body))
+                elif u.path == "/api/restorebak":
+                    self._json(op_restore_backup(body))
+                elif u.path == "/api/sockets":
+                    self._json(op_sockets(body))
+                elif u.path == "/api/makerelic":
+                    self._json(op_make_relic(body))
+                elif u.path == "/api/makestackable":
+                    self._json(op_make_stackable(body))
+                elif u.path == "/api/makes10access":
+                    self._json(op_make_s10_access(body))
+                elif u.path == "/api/modify":
+                    self._json(op_modify(body))
+                elif u.path == "/api/delete":
+                    self._json(op_delete(body))
+                elif u.path == "/api/health/fix":
+                    self._json(op_fix_save_health())
+                else:
+                    self._json({"err": "not found"}, 404)
         except Exception as e:
             self._json({"err": f"error: {e}"}, 500)
 
@@ -1954,6 +2603,7 @@ button.act:hover{background:#6f421a}
 .setadd{background:#234a2a;color:#9fe8b0;border:1px solid #3da55e;border-radius:4px;padding:4px 12px;cursor:pointer;font-size:12px;margin-left:8px}
 .setadd:hover{background:#2d5e36}
 .setadd[disabled]{opacity:.4;cursor:default}
+.perfect-pill{display:inline-flex;align-items:center;gap:5px;margin-top:7px;padding:4px 8px;border:1px solid #3da55e;border-radius:999px;background:#122a1a;color:#74ee98;font-size:11px;font-weight:700;letter-spacing:.4px}
 #ctxmenu{position:fixed;z-index:120;display:none;background:#1c1013;border:1px solid #6a3a40;border-radius:6px;box-shadow:0 4px 16px rgba(0,0,0,.7);min-width:170px}
 #ctxmenu div{padding:8px 14px;font-size:13px;cursor:pointer}
 #ctxmenu div:hover{background:#3a1c22;color:var(--gold)}
@@ -1965,7 +2615,11 @@ button.act:hover{background:#6f421a}
 .sockrow img{width:24px;height:24px;image-rendering:pixelated}
 .sockrow input{flex:1}
 .sockrow button{background:#3a1c22;color:#c9a;border:1px solid var(--line);border-radius:4px;cursor:pointer;padding:4px 9px}
-.rwcard{background:var(--card);border:1px solid var(--line);border-radius:6px;padding:8px 14px;margin:6px 0;max-width:920px;display:grid;grid-template-columns:240px 1fr 92px;align-items:center;gap:16px}
+.skill-search{width:100%;margin:10px 0 8px;padding:8px 10px}
+.skill-select{width:100%;min-height:310px;padding:5px}
+.skill-current{margin:8px 0;padding:8px 10px;border:1px solid #30445c;border-radius:7px;background:#0b121c;color:#9ddff0;font-size:12px}
+.skill-proof{margin:8px 0;color:#7f8da1;font-size:11px;line-height:1.5}
+.rwcard{background:var(--card);border:1px solid var(--line);border-radius:6px;padding:8px 14px;margin:6px 0;max-width:1120px;display:grid;grid-template-columns:220px minmax(180px,1fr) minmax(250px,340px) 92px;align-items:center;gap:12px}
 .tipbar{background:#241a2e;border:1px solid #4a3a6a;border-radius:6px;padding:7px 12px;margin:0 0 12px;font-size:12px;color:#bfb3d6;max-width:920px}
 .tipbar b{color:#d8c9ff}
 .jlrow{display:flex;align-items:center;gap:10px;margin:7px 0;max-width:760px}
@@ -1977,6 +2631,7 @@ button.act:hover{background:#6f421a}
 .rwrunes{display:flex;gap:5px;flex-wrap:wrap}
 .rwrune{display:inline-flex;align-items:center;gap:3px;background:#1a0e10;border:1px solid #4a3a26;border-radius:4px;padding:2px 6px;font-size:11px;color:#d8c9a0}
 .rwrune img{width:18px;height:18px;image-rendering:pixelated}
+.rwbase{width:100%;min-width:0;background:#120a0c;color:var(--tx);border:1px solid var(--line);border-radius:4px;padding:6px 8px;font-size:11px}
 .forgebtn{background:#4a2a13;color:#ffd9a0;border:1px solid #8a5a26;border-radius:4px;padding:6px 0;cursor:pointer;font-size:12px;width:100%}
 .forgebtn:hover{background:#6f421a}
 /* ---- item tooltip ---- */
@@ -2101,6 +2756,7 @@ input,select{background:#0b111a;color:#dfe7f0;border-color:#2d3b50;border-radius
   <div id="results"></div>
   <div id="addzone" style="border-top:1px solid var(--line);padding-top:8px">
     <div id="selinfo" class="muted">No item selected</div>
+    <div class="perfect-pill" id="rollstatus">ROLL PROFILE DATABASE CHECKING...</div>
     <div class="flex" id="targetrow" style="margin-top:6px"></div>
     <button class="act" id="addbtn" disabled>Add</button>
     <div id="msg"></div>
@@ -2108,12 +2764,15 @@ input,select{background:#0b111a;color:#dfe7f0;border-color:#2d3b50;border-radius
 </aside>
 <script>
 let CAT=[], SETS_DB=[], RW_DB=[], chars=[], view=null, sel=null, curChar=null, charData=null, stashData=null;
+const DICE_TARGET_CACHE={};
+const DICE_ADD_SELECTION={};
 const CLS={0:"Helmet",1:"Body Armor",2:"Boots",3:"Weapon",4:"Gloves",5:"Amulet",6:"Shield",7:"Ring",8:"Belt",10:"Charm",11:"Potion / Codex",12:"Key",13:"Boss Part / Tarot",14:"Material",15:"Rune / Gem / Orb",16:"Relic",18:"Flask",19:"Essence Vault","-2":"Runeword"};
 const SLOTS={0:"Helmet",1:"Body Armor",2:"Boots",3:"Weapon I",4:"Gloves",5:"Amulet",6:"Offhand I",7:"Ring I",8:"Belt",9:"Ring II",10:"Relic 1",11:"Relic 2",12:"Relic 3",13:"Relic 4",14:"Relic 5",16:"Weapon II",17:"Offhand II"};
 const DIMS={inventory_tab:[15,6],inventory_charms:[3,11],inventory_key_tab:[15,6],inventory_material_tab:[15,6],inventory_socket_tab:[15,6],inventory_relic_tab:[15,6],inventory_tarot_tab:[15,6],inventory_vault_tab:[15,6],inventory_vault_active:[15,6],stash_tab:[17,18],material_tab:[17,18],socket_tab:[17,18],potions:[5,2],personal_stash:[17,18]};
 const BAG_LABELS={inventory_tab_0:"Main",inventory_tab_1:"Extra 1",inventory_tab_2:"Extra 2",inventory_tab_3:"Extra 3",inventory_tab_4:"Extra 4",inventory_socket_tab:"Runes & Gems",inventory_material_tab:"Materials",inventory_key_tab:"Keys",inventory_relic_tab:"Relics",inventory_tarot_tab:"Tarot",inventory_vault_tab:"Essence Vaults",inventory_vault_active_0:"Active Vault",inventory_charms:"Charms",personal_stash:"Personal Stash"};
 const CELL=26;
-const TIPBAR=`<div class="tipbar">&#128161; <b>Right-click any item</b> for: Edit sockets, Reroll stats, Duplicate, Edit stack, Delete &nbsp;&middot;&nbsp; <b>Drag</b> items to move them or drop onto an equipment slot &nbsp;&middot;&nbsp; drag from the <b>Item Catalog</b> (right) to add a new item</div>`;
+const TIPBAR=`<div class="tipbar">&#128161; <b>Right-click any item</b> for: Verified MAX / Best Roll, Dice skill target, Edit sockets, Random reroll, Duplicate, Edit stack, Delete &nbsp;&middot;&nbsp; <b>Verified item profiles are applied automatically when available</b> &nbsp;&middot;&nbsp; <b>Drag</b> items to move them or drop onto an equipment slot</div>`;
+const STASH_DRAG_TIP=`<div class="tipbar">&#8597; <b>Moving between stash tabs:</b> while holding an item, use the mouse wheel or keep the pointer near the top/bottom edge to auto-scroll. The item is saved only when dropped on a valid cell.</div>`;
 async function j(u,opt){const r=await fetch(u,opt);return r.json()}
 async function boot(){
   CAT=await j('/api/catalog'); SETS_DB=await j('/api/sets'); RW_DB=await j('/api/runewords');
@@ -2125,6 +2784,12 @@ async function boot(){
   [...labels].sort().forEach(l=>{const o=document.createElement('option');o.value=l;dl.appendChild(o)});
   const ov=await j('/api/overview'); chars=ov.chars;
   document.getElementById('version').textContent=`${ov.profile||'Season 10'} · v${ov.version||''} · ${ov.catalogItems||0} items`;
+  const rollStatus=document.getElementById('rollstatus'), rpdb=ov.rollProfiles||{};
+  rollStatus.innerHTML=rpdb.available
+    ?`&#10003; ${rpdb.profileCount||0} VERIFIED PROFILES · ${rpdb.actionableCount||0} MAX/BEST`
+    :`&#9888; ROLL PROFILES DISABLED · ${esc(rpdb.message||'database unavailable')}`;
+  rollStatus.style.borderColor=rpdb.available?'#3da55e':'#b45a43';
+  rollStatus.style.color=rpdb.available?'#74ee98':'#ff9b83';
   document.getElementById('status').textContent=ov.gameRunning?'GAME RUNNING - VIEW ONLY, WRITING LOCKED':'GAME CLOSED - EDITING ENABLED';
   document.getElementById('status').className=ov.gameRunning?'warn':'';
   const cd=document.getElementById('chars'); cd.innerHTML='';
@@ -2169,7 +2834,7 @@ function gridHTML(tab,items,delTarget){
     const p=it.pos||[0,0];
     const rr=it.rar&&it.rar!=='?'?it.rar:'_';
     const inner=it.spr?`<img src="/icons/${it.spr}.png?v=2" loading="lazy">`:esc(short(it.name));
-    h+=`<div class="item b-${rr}" draggable="true" title="" data-i="${i}" data-del='${JSON.stringify(delTarget)}' data-key="${it.key}" data-w="${it.w||1}" data-h="${it.h||1}" data-cid="${it.cid??''}" data-rwcid="${it.rwcid??''}" data-raw='${esc(JSON.stringify(it.raw||{}))}'
+    h+=`<div class="item b-${rr}" draggable="true" title="" data-i="${i}" data-del='${JSON.stringify(delTarget)}' data-key="${it.key}" data-w="${it.w||1}" data-h="${it.h||1}" data-cid="${it.cid??''}" data-rwcid="${it.rwcid??''}" data-roll="${esc(JSON.stringify(it.rollProfile||null))}" data-skill="${esc(JSON.stringify(it.skillSelector||null))}" data-raw='${esc(JSON.stringify(it.raw||{}))}'
       style="left:${p[0]*CELL}px;top:${p[1]*CELL}px;width:${(it.w||1)*CELL-2}px;height:${(it.h||1)*CELL-2}px">${inner}${it.stack?`<span class="stk">x${it.stack}</span>`:''}</div>`;
   });
   return h+'</div>';
@@ -2183,7 +2848,42 @@ function occFree(g,x,y,w,h,skipKey){
   }
   return true;
 }
-let dragInfo=null;
+let dragInfo=null, dragScrollFrame=0, dragScrollSpeed=0;
+const DRAG_SCROLL_MAX=24;
+function dragScrollVelocity(y,top,height){const edge=Math.min(88,Math.max(48,height*.15));if(y<top||y>top+height)return 0;if(y<top+edge)return -Math.max(2,Math.ceil(DRAG_SCROLL_MAX*(top+edge-y)/edge));if(y>top+height-edge)return Math.max(2,Math.ceil(DRAG_SCROLL_MAX*(y-(top+height-edge))/edge));return 0}
+function stopDragScroll(){
+  dragScrollSpeed=0;
+  if(dragScrollFrame){cancelAnimationFrame(dragScrollFrame);dragScrollFrame=0}
+}
+function dragScrollTick(){
+  dragScrollFrame=0;
+  if(!dragInfo||view!=='stash'||!dragScrollSpeed)return;
+  const mid=document.getElementById('mid');
+  const before=mid.scrollTop, limit=Math.max(0,mid.scrollHeight-mid.clientHeight);
+  mid.scrollTop=Math.max(0,Math.min(limit,before+dragScrollSpeed));
+  clearGhost();
+  if(mid.scrollTop===before){dragScrollSpeed=0;return}
+  dragScrollFrame=requestAnimationFrame(dragScrollTick);
+}
+function updateDragScroll(e){
+  if(!dragInfo||view!=='stash'){stopDragScroll();return}
+  const mid=document.getElementById('mid'), rect=mid.getBoundingClientRect();
+  const insideX=e.clientX>=rect.left&&e.clientX<=rect.right;
+  const speed=insideX?dragScrollVelocity(e.clientY,rect.top,rect.height):0;
+  if(speed===dragScrollSpeed&&(!speed||dragScrollFrame))return;
+  dragScrollSpeed=speed;
+  if(!speed){stopDragScroll();return}
+  if(!dragScrollFrame)dragScrollFrame=requestAnimationFrame(dragScrollTick);
+}
+function wheelDragScroll(e){
+  if(!dragInfo||view!=='stash')return;
+  const mid=document.getElementById('mid');
+  const unit=e.deltaMode===1?36:(e.deltaMode===2?Math.max(1,mid.clientHeight*.85):1);
+  const before=mid.scrollTop, limit=Math.max(0,mid.scrollHeight-mid.clientHeight);
+  mid.scrollTop=Math.max(0,Math.min(limit,before+e.deltaY*unit));
+  if(mid.scrollTop!==before){e.preventDefault();clearGhost()}
+}
+function finishDrag(){stopDragScroll();clearGhost();dragInfo=null}
 function slotAccepts(g){
   if(!dragInfo)return false;
   if(dollEq[g])return false;  // slot dolu
@@ -2195,6 +2895,8 @@ function slotAccepts(g){
 }
 function setupDnD(){
   const mid=document.getElementById('mid');
+  document.addEventListener('wheel',wheelDragScroll,{capture:true,passive:false});
+  document.addEventListener('dragend',finishDrag,true);
   mid.addEventListener('dragstart',e=>{
     const el=e.target.closest('.item,.dslot[draggable]'); if(!el)return;
     dragInfo={mode:'move',from:JSON.parse(el.dataset.del),key:el.dataset.key,w:+el.dataset.w,h:+el.dataset.h,cid:el.dataset.cid};
@@ -2202,7 +2904,8 @@ function setupDnD(){
   });
   mid.addEventListener('dragover',e=>{
     clearGhost();
-    if(!dragInfo)return;
+    if(!dragInfo){stopDragScroll();return}
+    updateDragScroll(e);
     const sEl=e.target.closest('.dslot');
     if(sEl){
       e.preventDefault();
@@ -2224,50 +2927,54 @@ function setupDnD(){
     gh.dataset.x=x; gh.dataset.y=y; gh.dataset.free=free?'1':'';
     gEl.appendChild(gh);
   });
-  mid.addEventListener('dragleave',e=>{ if(!e.target.closest('.grid')&&!e.target.closest('.dslot'))clearGhost() });
+  mid.addEventListener('dragleave',e=>{
+    if(!mid.contains(e.relatedTarget))stopDragScroll();
+    if(!e.target.closest('.grid')&&!e.target.closest('.dslot'))clearGhost();
+  });
   mid.addEventListener('drop',async e=>{
     if(!dragInfo)return;
+    stopDragScroll();
     const sEl=e.target.closest('.dslot');
     if(sEl){
       e.preventDefault();
       const g=+sEl.dataset.g;
       clearGhost();
-      if(!slotAccepts(g)){flash({err:dollEq[g]?'slot occupied - unequip first':'this item does not fit that slot'});dragInfo=null;return}
+      if(!slotAccepts(g)){flash({err:dollEq[g]?'slot occupied - unequip first':'this item does not fit that slot'});finishDrag();return}
       let r;
       if(dragInfo.mode==='add'){
-        r=await j('/api/add',{method:'POST',body:JSON.stringify({cid:dragInfo.cid,target:{type:'equip',slot:curChar,g}})});
+        r=await j('/api/add',{method:'POST',body:JSON.stringify({cid:dragInfo.cid,target:{type:'equip',slot:curChar,g},skillId:dragInfo.skillId})});
       }else{
         r=await j('/api/move',{method:'POST',body:JSON.stringify({from:dragInfo.from,to:{type:'equip',slot:curChar,g},key:dragInfo.key})});
       }
-      flash(r); dragInfo=null; refresh();
+      flash(r); finishDrag(); refresh();
       return;
     }
     const gEl=e.target.closest('.grid'); if(!gEl)return;
     e.preventDefault();
     const gh=gEl.querySelector('.ghost');
     const g=gridReg[gEl.dataset.gid];
-    if(!gh||!gh.dataset.free){clearGhost();dragInfo=null;return}
+    if(!gh||!gh.dataset.free){finishDrag();return}
     const pos=[+gh.dataset.x,+gh.dataset.y];
     clearGhost();
     let r;
     if(dragInfo.mode==='move'){
       r=await j('/api/move',{method:'POST',body:JSON.stringify({from:dragInfo.from,to:g.target,key:dragInfo.key,pos})});
     }else{
-      r=await j('/api/add',{method:'POST',body:JSON.stringify({cid:dragInfo.cid,target:{...g.target,pos}})});
+      r=await j('/api/add',{method:'POST',body:JSON.stringify({cid:dragInfo.cid,target:{...g.target,pos},skillId:dragInfo.skillId})});
     }
-    flash(r); dragInfo=null; refresh();
+    flash(r); finishDrag(); refresh();
   });
-  mid.addEventListener('dragend',()=>{clearGhost();dragInfo=null});
 }
 function clearGhost(){
   document.querySelectorAll('.ghost').forEach(g=>g.remove());
   document.querySelectorAll('.drophl-ok,.drophl-no').forEach(s=>s.classList.remove('drophl-ok','drophl-no'));
 }
-// ---- soket editoru ----
+// ---- socket editor ----
 function openSocketEditor(target,key,el){
   const old=document.getElementById('sockmodal'); if(old)old.remove();
-  // mevcut soketleri raw'dan al -- her soket: {orig:{a,b,n}|null, b:<secili>|null}
-  // orig = save'deki tam icerik; dokunulmadiginda AYNEN geri yazilir (tohum/varyant korunur)
+  // read the current sockets from raw -- each socket: {orig:{a,b,n}|null, b:<selected>|null}
+  // orig = the exact contents from the save; written back UNCHANGED when untouched
+  // (seed/variant preserved)
   let raw={};
   try{raw=JSON.parse(el.dataset.raw||'{}')}catch(e){}
   const cur=[];
@@ -2302,7 +3009,7 @@ function openSocketEditor(target,key,el){
         const i=+inp.dataset.i;
         const b=byName[inp.value.toLowerCase()];
         const nb=(b===undefined?null:b);
-        // ayni gem yeniden secildiyse orijinali (tohum/varyant) koru; aksi halde yeni
+        // if the same gem is picked again keep the original (seed/variant); otherwise new
         if(rows[i].orig&&rows[i].orig.b===nb)rows[i]={orig:rows[i].orig,b:nb};
         else rows[i]={orig:null,b:nb};
         render();
@@ -2314,7 +3021,7 @@ function openSocketEditor(target,key,el){
     modal.querySelector('#sockadd').onclick=()=>{if(rows.length<6){rows.push({orig:null,b:null});render()}};
     modal.querySelector('#sockcancel').onclick=()=>modal.remove();
     modal.querySelector('#socksave').onclick=async()=>{
-      // dokunulmayan soket -> {keep:orig}; degisen/yeni -> {b}; bos -> null
+      // untouched socket -> {keep:orig}; changed/new -> {b}; empty -> null
       const payload=rows.map(row=>row.b==null?null:(row.orig&&row.orig.b===row.b?{keep:row.orig}:{b:row.b}));
       const r=await j('/api/sockets',{method:'POST',body:JSON.stringify({target,key,sockets:payload})});
       modal.remove(); flash(r); refresh();
@@ -2324,16 +3031,107 @@ function openSocketEditor(target,key,el){
   modal.onclick=(e)=>{if(e.target===modal)modal.remove()};
   document.body.appendChild(modal);
 }
+// ---- Loaded Dice / Overloaded Dice target-skill editor ----
+async function openDiceSkillEditor(target,key,selector){
+  const old=document.getElementById('sockmodal'); if(old)old.remove();
+  if(!selector||!selector.profileId){flash({err:'This item has no selectable skill profile.'});return}
+  if(selector.available===false){flash({err:selector.message||'Dice skill targets are unavailable.'});return}
+  let payload=DICE_TARGET_CACHE[selector.profileId];
+  if(!payload){
+    payload=await j('/api/dice-skills?profile='+encodeURIComponent(selector.profileId));
+    if(payload.err){flash(payload);return}
+    DICE_TARGET_CACHE[selector.profileId]=payload;
+  }
+  const targets=payload.targets||[];
+  if(!targets.length){flash({err:'No verified targets are available for this item.'});return}
+  const modal=document.createElement('div'); modal.id='sockmodal';
+  let chosenId=selector.current&&selector.current.id!=null?Number(selector.current.id):Number(targets[0].id);
+  const currentText=selector.current
+    ?`${selector.current.className}: ${selector.current.name} (ID ${selector.current.id})`
+    :'Current target could not be decoded from the saved seed.';
+  const noun=selector.targetKind==='subskill'?'subskill-capable skill':'skill';
+  modal.innerHTML=`<div id="sockbox" style="width:min(620px,90vw)"><h3>${esc(selector.name||'Dice')} · Choose ${esc(noun)}</h3>
+    <div class="skill-current"><b>Current:</b> ${esc(currentText)}</div>
+    <div class="skill-proof">Every option below has a clean-build replay proof. Saving changes only the item's <b>a</b> seed; +12/+1 fixed values, sockets, and every other field stay untouched.</div>
+    <input class="skill-search" id="skillsearch" placeholder="Search by skill, class, key, or ID..." autocomplete="off">
+    <select class="skill-select" id="skillchoice" size="14"></select>
+    <div class="flex" style="margin-top:12px">
+      <button class="act" style="margin:0;background:#234a2a;border-color:#3da55e" id="skillsave">Apply chosen skill</button>
+      <button class="act" style="margin:0" id="skillcancel">Cancel</button>
+    </div></div>`;
+  const search=modal.querySelector('#skillsearch');
+  const choice=modal.querySelector('#skillchoice');
+  function renderChoices(){
+    const q=search.value.trim().toLowerCase();
+    const matches=targets.filter(row=>!q||String(row.id)===q||row.name.toLowerCase().includes(q)||row.className.toLowerCase().includes(q)||(row.key||'').toLowerCase().includes(q));
+    if(matches.length&&!matches.some(row=>Number(row.id)===chosenId))chosenId=Number(matches[0].id);
+    const groups=new Map();
+    [...matches].sort((a,b)=>Number(a.classId)-Number(b.classId)||a.name.localeCompare(b.name)).forEach(row=>{
+      if(!groups.has(row.className))groups.set(row.className,[]);
+      groups.get(row.className).push(row);
+    });
+    choice.innerHTML=[...groups.entries()].map(([className,rows])=>`<optgroup label="${esc(className)}">${rows.map(row=>`<option value="${row.id}" ${Number(row.id)===chosenId?'selected':''}>${esc(row.name)} · ID ${row.id}</option>`).join('')}</optgroup>`).join('');
+    choice.disabled=matches.length===0;
+    modal.querySelector('#skillsave').disabled=matches.length===0;
+  }
+  search.oninput=renderChoices;
+  choice.onchange=()=>{chosenId=Number(choice.value)};
+  modal.querySelector('#skillcancel').onclick=()=>modal.remove();
+  const skillSave=modal.querySelector('#skillsave');
+  const skillCancel=modal.querySelector('#skillcancel');
+  skillSave.onclick=async()=>{
+    if(skillSave.disabled||choice.disabled||!Number.isInteger(Number(choice.value)))return;
+    const selectedSkillId=Number(choice.value);
+    skillSave.disabled=true; skillCancel.disabled=true; choice.disabled=true; search.disabled=true;
+    try{
+      const result=await j('/api/modify',{method:'POST',body:JSON.stringify({action:'selectskill',target,key,skillId:selectedSkillId})});
+      modal.remove(); flash(result); refresh();
+    }finally{
+      if(modal.isConnected){skillSave.disabled=false;skillCancel.disabled=false;choice.disabled=false;search.disabled=false}
+    }
+  };
+  renderChoices();
+  modal.onclick=(e)=>{if(e.target===modal)modal.remove()};
+  document.body.appendChild(modal);
+  search.focus();
+}
 // ---- item tooltip ----
 function setupTip(){
   const tip=document.createElement('div'); tip.id='tip'; document.body.appendChild(tip);
-  function show(cid,extra,x,y){
+  function show(cid,extra,x,y,raw,profileOverride,skillSelector){
     const r=CAT[cid]; if(!r){tip.style.display='none';return}
     let h=`<div class="tname r-${r.rar}">${esc(r.name)}</div>`;
     const meta=r.kind==='runeword'?'Runeword':`${CLS[r.cls]||''}${r.cls===3?' / '+(SUBN[r.sub]||r.sub):''} &middot; ${r.rar} &middot; ${r.kind}`;
     h+=`<div class="ttype">${meta}${r.tier?` &middot; Tier ${r.tier}`:''}${extra||''}</div>`;
     if(r.lvl)h+=`<div class="ttype">Requires Level ${r.lvl}</div>`;
-    for(const [lbl,val] of (r.stats||[]))h+=`<div class="tstat"><b>${esc(val)}</b> ${esc(lbl)}</div>`;
+    const profile=profileOverride||r.rollProfile||null;
+    const fieldSeeds=profile&&profile.fieldSeeds&&typeof profile.fieldSeeds==='object'?profile.fieldSeeds:{};
+    const seedFields=['a','i','s'].filter(field=>Object.prototype.hasOwnProperty.call(fieldSeeds,field));
+    const hasSeed=raw&&raw.a!==undefined&&Number.isFinite(Number(raw.a));
+    if(skillSelector){
+      if(skillSelector.current){
+        const kind=skillSelector.targetKind==='subskill'?'SUBSKILL TARGET':'SKILL TARGET';
+        h+=`<div class="ttype" style="color:#72dfdf">&#10003; ${kind} &middot; ${esc(skillSelector.current.className)}: ${esc(skillSelector.current.name)} &middot; ID ${skillSelector.current.id} &middot; a=${hasSeed?Number(raw.a):'missing'}</div>`;
+      }else if(!raw&&skillSelector.available){
+        h+=`<div class="ttype" style="color:#72dfdf">&#10003; VERIFIED ${skillSelector.targetKind==='subskill'?'SUBSKILL':'SKILL'} SELECTOR &middot; choose a target before adding</div>`;
+      }else{
+        h+=`<div class="ttype" style="color:#ffb46e">Skill target unavailable &middot; ${esc(skillSelector.message||'saved seed could not be decoded')}</div>`;
+      }
+    }else if(profile&&profile.mode==='fixed'){
+      h+=`<div class="ttype" style="color:#74ee98">&#10003; FIXED DEFINITION STATS &middot; no variable roll</div>`;
+    }else if(profile&&seedFields.length&&raw){
+      const applied=seedFields.every(field=>Number.isFinite(Number(raw[field]))&&Number(raw[field])===Number(fieldSeeds[field]));
+      const label=applied?(profile.mode==='exact'?'&#10003; EXACT MAX':'&#9733; BEST POSSIBLE'):'Current roll seed';
+      const values=seedFields.map(field=>`${field}=${raw[field]===undefined?'missing':Number(raw[field])}`).join(', ');
+      h+=`<div class="ttype" style="color:${applied?'#74ee98':'#a9bdd2'}">${label} &middot; ${esc(values)}${applied?` &middot; ${esc(profile.detail)}`:''}</div>`;
+    }else if(hasSeed){
+      h+=`<div class="ttype" style="color:#a9bdd2">Current roll seed &middot; a=${Number(raw.a)}</div>`;
+    }else if(profile){
+      h+=`<div class="ttype" style="color:#74ee98">Verified ${profile.mode==='exact'?'EXACT MAX':'BEST POSSIBLE'} profile available &middot; ${esc(profile.detail)}</div>`;
+    }
+    for(const [lbl,val] of (r.stats||[])){
+      h+=`<div class="tstat"><b>${esc(val)}</b> ${esc(lbl)}</div>`;
+    }
     if(r.set!==undefined){const s=SETS_DB.find(x=>x.set===r.set);
       h+=`<div class="tset">${esc(r.setName||(s&&s.name)||('Set #'+r.set))}</div>`;
       if(s)for(const pc of s.pieces)h+=`<div class="tset" style="color:#3da55e">&nbsp;&nbsp;${esc(pc.name)}</div>`;
@@ -2354,7 +3152,10 @@ function setupTip(){
       tip.style.display='none';return;
     }
     const stk=el.querySelector('.stk');
-    show(+cid,stk?` &middot; ${stk.textContent}`:'',e.clientX,e.clientY);
+    let raw=null; try{raw=JSON.parse(el.dataset.raw||'null')}catch(e){}
+    let rollProfile=null; try{rollProfile=JSON.parse(el.dataset.roll||'null')}catch(e){}
+    let skillSelector=null; try{skillSelector=JSON.parse(el.dataset.skill||'null')}catch(e){}
+    show(+cid,stk?` &middot; ${stk.textContent}`:'',e.clientX,e.clientY,raw,rollProfile,skillSelector);
   });
 }
 const SUBN={1:"Sword",2:"Dagger",3:"Mace",4:"Axe",5:"Claw",6:"Polearm",7:"Chainsaw",8:"Staff",9:"Cane",10:"Wand",11:"Book",12:"Spellblade",13:"Bow",14:"Gun",15:"Flask",16:"Throwing",17:"Universal"}
@@ -2365,8 +3166,8 @@ async function openStash(){
   gridReg={}; gridSeq=0;
   document.querySelectorAll('.charbtn').forEach(b=>b.classList.remove('sel'));
   const md=document.getElementById('mid');
-  const order=Object.keys(stashData).sort();
-  let h='<h2>Stash (shared)</h2>'+TIPBAR;
+  const order=Object.keys(stashData).sort((a,b)=>a.localeCompare(b,undefined,{numeric:true,sensitivity:'base'}));
+  let h='<h2>Stash (shared)</h2>'+TIPBAR+STASH_DRAG_TIP;
   for(const tab of order){
     const items=stashData[tab];
     h+=`<h2 data-find-tab="${esc(tab)}">${tab} <span class="muted">(${items.length})</span></h2>`;
@@ -2387,7 +3188,7 @@ function dslot(g,w,h,label){
   const rr=e&&e.rar&&e.rar!=='?'?e.rar:null;
   const del=JSON.stringify({type:"equipped",slot:curChar,tab:"equipped_items"});
   return `<div class="dslot${rr?' b-'+rr:''}" data-g="${g}" style="width:${w*DC}px;height:${h*DC}px"
-    ${e?`draggable="true" data-del='${del}' data-key="${e.key}" data-w="${e.w||1}" data-h="${e.h||1}" data-cid="${e.cid??''}" data-rwcid="${e.rwcid??''}" data-raw='${esc(JSON.stringify(e.raw||{}))}'`:`title="${label} (empty)"`}>
+    ${e?`draggable="true" data-del='${del}' data-key="${e.key}" data-w="${e.w||1}" data-h="${e.h||1}" data-cid="${e.cid??''}" data-rwcid="${e.rwcid??''}" data-roll="${esc(JSON.stringify(e.rollProfile||null))}" data-skill="${esc(JSON.stringify(e.skillSelector||null))}" data-raw='${esc(JSON.stringify(e.raw||{}))}'`:`title="${label} (empty)"`}>
     <span class="lbl">${label}</span>${e&&e.spr?`<img src="/icons/${e.spr}.png?v=2">`:(e?esc(short(e.name)):'')}</div>`;
 }
 function wpanel(side){
@@ -2641,21 +3442,35 @@ function openRunewords(){
   document.querySelectorAll('.charbtn').forEach(b=>b.classList.remove('sel'));
   const md=document.getElementById('mid');
   let h=`<h2>Runeword Builder <span class="muted">(${RW_DB.length} runewords)</span></h2>
-  <div class="muted" style="margin-bottom:8px">Forges a completed runeword codex (with the correct runes socketed) into the stash tab below. Hover a name for its stats.</div>
+  <div class="muted" style="margin-bottom:8px">Forges a completed runeword on the compatible base you choose, with the correct runes socketed. Hover a name for its stats.</div>
   <div class="flex" style="margin-bottom:10px">Target: <select id="rwtab">${[1,2,3,4,5,6,7,8,9].map(i=>`<option value="stash_tab_${i}">Stash tab ${i}</option>`).join('')}</select>
   <input id="rwq" placeholder="filter runewords..." style="flex:1;max-width:240px"></div>
   <div id="rwlist"></div>`;
   md.innerHTML=h;
   const render=()=>{
     const q=(document.getElementById('rwq').value||'').toLowerCase();
-    document.getElementById('rwlist').innerHTML=RW_DB.filter(r=>!q||r.name.toLowerCase().includes(q)).map(r=>
-      `<div class="rwcard"><div class="rwhead"><span class="rwname r-Runeword" data-cid="${r.cid??''}">${esc(r.name)}</span><span class="rwtarget">${esc(r.target||'')}</span></div><span class="rwrunes">`+
+    document.getElementById('rwlist').innerHTML=RW_DB.filter(r=>!q||r.name.toLowerCase().includes(q)).map(r=>{
+      const bases=r.bases||[];
+      const availableBases=bases.filter(base=>base.available!==false&&!base.disabled);
+      const firstAvailable=availableBases.length?availableBases[0].cid:null;
+      const baseOptions=bases.map(base=>{
+        const subtype=base.cls===3?`${SUBN[base.sub]||base.sub} · `:'';
+        const available=base.available!==false&&!base.disabled;
+        const roll=base.rollMode==='exact'?'EXACT MAX':base.rollMode==='best'?'BEST POSSIBLE':base.rollMode==='fixed'?'FIXED':'UNAVAILABLE';
+        const reason=!available&&base.unavailableReason?` · ${base.unavailableReason}`:'';
+        return `<option value="${base.cid}" ${available?'':'disabled'} ${available&&base.cid===firstAvailable?'selected':''}>${esc(subtype+(base.name||base.key||'Base')+` · b${base.b} · ${roll}${reason}`)}</option>`;
+      }).join('');
+      const unavailable=!availableBases.length&&r.unavailableReason?` · ${r.unavailableReason}`:'';
+      return `<div class="rwcard"><div class="rwhead"><span class="rwname r-Runeword" data-cid="${r.cid??''}">${esc(r.name)}</span><span class="rwtarget">${esc(r.target||'')} · ${availableBases.length}/${bases.length} verified base${bases.length===1?'':'s'}${esc(unavailable)}</span></div><span class="rwrunes">`+
       r.runes.map(rn=>`<span class="rwrune">${rn.spr?`<img src="/icons/${rn.spr}.png?v=2" loading="lazy">`:''}${esc(rn.name)}</span>`).join('')+
-      `</span><button class="forgebtn" data-rw="${r.rw}">Forge</button></div>`).join('');
+      `</span><select class="rwbase" data-rwbase="${r.rw}" ${availableBases.length?'':'disabled'}>${baseOptions||'<option>No valid base</option>'}</select><button class="forgebtn" data-rw="${r.rw}" ${availableBases.length?'':'disabled'}>Forge</button></div>`;
+    }).join('');
     document.querySelectorAll('.forgebtn').forEach(b=>{
       b.onclick=async()=>{
         b.disabled=true;
-        const r=await j('/api/forge',{method:'POST',body:JSON.stringify({rw:+b.dataset.rw,tab:document.getElementById('rwtab').value})});
+        const base=document.querySelector(`[data-rwbase="${b.dataset.rw}"]`);
+        const requestId=(globalThis.crypto&&crypto.randomUUID)?crypto.randomUUID():`${Date.now()}-${Math.random().toString(36).slice(2)}`;
+        const r=await j('/api/forge',{method:'POST',body:JSON.stringify({rw:+b.dataset.rw,baseCid:+base.value,tab:document.getElementById('rwtab').value,requestId})});
         flash(r); b.disabled=false;
       };
     });
@@ -2778,7 +3593,13 @@ function showCtx(x,y,target,key,el){
   const isEq=target.type==='equipped';
   const acts=[];
   if(!isEq)acts.push(['Duplicate','duplicate','']);
-  acts.push(['Reroll stats','reroll','']);
+  let rollProfile=null;
+  try{rollProfile=JSON.parse((el&&el.dataset&&el.dataset.roll)||'null')}catch(e){}
+  let skillSelector=null;
+  try{skillSelector=JSON.parse((el&&el.dataset&&el.dataset.skill)||'null')}catch(e){}
+  if(skillSelector)acts.push([skillSelector.targetKind==='subskill'?'Choose subskill target...':'Choose skill target...','SKILL','']);
+  else if(rollProfile&&['exact','best'].includes(rollProfile.mode))acts.push([rollProfile.mode==='exact'?'Apply EXACT MAX':'Apply BEST POSSIBLE','perfect','']);
+  acts.push(['Random reroll','reroll','']);
   acts.push(['Edit sockets...','SOCKETS','']);
   if(!isEq)acts.push(['Edit stack...','setstack','']);
   acts.push(['Delete','DELETE','danger']);
@@ -2793,6 +3614,8 @@ function showCtx(x,y,target,key,el){
         r=await j('/api/delete',{method:'POST',body:JSON.stringify({target,key})});
       }else if(act==='SOCKETS'){
         openSocketEditor(target,key,el);return;
+      }else if(act==='SKILL'){
+        openDiceSkillEditor(target,key,skillSelector);return;
       }else if(act==='setstack'){
         const n=prompt('New stack count:','999');
         if(n==null)return;
@@ -2817,47 +3640,87 @@ function search(){
   const out=CAT.filter(r=>r.available!==false&&r.kind!=='runeword'&&(!q||r.name.toLowerCase().includes(q)||(r.key||'').includes(q))&&(!fk||r.kind===fk)&&(fc===''||String(r.cls)===fc)&&(!fr||r.rar===fr)&&(fs===''||(fs==='any'?r.set!==undefined:r.set===+fs))&&(!fst||(r.stats||[]).some(([l,v])=>l.toLowerCase().includes(fst)))).slice(0,100);
   const rd=document.getElementById('results'); rd.innerHTML='';
   out.forEach(r=>{const d=document.createElement('div');d.className='res'+(sel&&sel.id===r.id?' sel':'');
-    d.draggable=true; d.dataset.cid=r.id;
+    d.draggable=true; d.dataset.cid=r.id; d.dataset.skill=JSON.stringify(r.skillSelector||null);
     let statHint='';
     if(fst){const hit=(r.stats||[]).find(([l,v])=>l.toLowerCase().includes(fst));
       if(hit)statHint=` <span class="muted" style="color:#8fb7ff">${esc(hit[1])} ${esc(hit[0])}</span>`;}
     d.innerHTML=`${r.spr?`<img src="/icons/${r.spr}.png?v=2" loading="lazy">`:''}<span class="r-${r.rar}">${esc(r.name)}</span>${statHint}`;
     d.onclick=()=>{sel=r;document.querySelectorAll('.res').forEach(x=>x.classList.remove('sel'));d.classList.add('sel');renderTargets()};
     d.addEventListener('dragstart',e=>{
-      dragInfo={mode:'add',cid:r.id,w:r.w||1,h:r.h||1};
+      dragInfo={mode:'add',cid:r.id,w:r.w||1,h:r.h||1,skillId:DICE_ADD_SELECTION[r.id]};
       e.dataTransfer.effectAllowed='copy';
     });
     rd.appendChild(d)});
 }
-function renderTargets(){
+async function renderTargets(){
   const si=document.getElementById('selinfo'), tr=document.getElementById('targetrow'), btn=document.getElementById('addbtn');
   if(!sel){si.textContent='No item selected';tr.innerHTML='';btn.disabled=true;return}
-  si.innerHTML=`Selected: <span class="r-${sel.rar}">${esc(sel.name)}</span> <span class="muted">${sel.w}x${sel.h}</span>`;
+  const selectedRow=sel, selectedId=selectedRow.id;
+  tr.innerHTML=''; btn.disabled=true; btn.onclick=null;
+  const rp=selectedRow.rollProfile||null;
+  const diceSelector=selectedRow.skillSelector||null;
+  const actionable=rp&&['exact','best'].includes(rp.mode);
+  const rollText=diceSelector
+    ?(diceSelector.available?`Choose exact ${diceSelector.targetKind==='subskill'?'subskill':'skill'} target`:`Skill targets disabled · ${diceSelector.message||'database unavailable'}`)
+    :(!rp?'Random roll · no verified profile':rp.mode==='fixed'?'Fixed definition stats · no roll needed':rp.mode==='exact'?`Exact MAX ${rp.maxed}/${rp.total}`:`Best Possible ${rp.maxed}/${rp.total} MAX`);
+  si.innerHTML=`Selected: <span class="r-${selectedRow.rar}">${esc(selectedRow.name)}</span> <span class="muted">${selectedRow.w}x${selectedRow.h}</span> <span style="color:${(rp||diceSelector&&diceSelector.available)?'#74ee98':'#e0a05b'}">&middot; ${esc(rollText)}</span>`;
+  let dicePayload=null;
+  if(diceSelector&&diceSelector.available){
+    dicePayload=DICE_TARGET_CACHE[diceSelector.profileId];
+    if(!dicePayload){
+      dicePayload=await j('/api/dice-skills?profile='+encodeURIComponent(diceSelector.profileId));
+      if(dicePayload.err){si.innerHTML+=`<br><span style="color:#ff7060">${esc(dicePayload.err)}</span>`;dicePayload=null}
+      else DICE_TARGET_CACHE[diceSelector.profileId]=dicePayload;
+    }
+    if(!sel||sel.id!==selectedId)return;
+  }
   const options=[], seen=new Set();
   const addOpt=(target,label)=>{const value=JSON.stringify(target);if(!seen.has(value)){seen.add(value);options.push({value,label})}};
-  if(sel.kind==='unique')addOpt({type:'stash_unique'},'Stash > Unique tab');
+  if(selectedRow.kind==='unique')addOpt({type:'stash_unique'},'Stash > Unique tab');
   if(view==='char'&&curChar!==null){
     let preferred=null;
-    if(sel.cls===10)preferred='inventory_charms';
-    else if(sel.cls===12)preferred='inventory_key_tab';
-    else if(sel.cls===13)preferred=((sel.b>=19&&sel.b<=40)||(sel.b>=54&&sel.b<=57))?'inventory_tarot_tab':'inventory_material_tab';
-    else if(sel.cls===14)preferred='inventory_material_tab';
-    else if(sel.cls===15)preferred='inventory_socket_tab';
-    else if(sel.cls===16)preferred='inventory_relic_tab';
-    else if(sel.cls===19)preferred='inventory_vault_tab';
+    if(selectedRow.cls===10)preferred='inventory_charms';
+    else if(selectedRow.cls===12)preferred='inventory_key_tab';
+    else if(selectedRow.cls===13)preferred=((selectedRow.b>=19&&selectedRow.b<=40)||(selectedRow.b>=54&&selectedRow.b<=57))?'inventory_tarot_tab':'inventory_material_tab';
+    else if(selectedRow.cls===14)preferred='inventory_material_tab';
+    else if(selectedRow.cls===15)preferred='inventory_socket_tab';
+    else if(selectedRow.cls===16)preferred='inventory_relic_tab';
+    else if(selectedRow.cls===19)preferred='inventory_vault_tab';
     if(preferred)addOpt({type:'bag',slot:curChar,tab:preferred},`Recommended: ${BAG_LABELS[preferred]||preferred}`);
-    if(sel.cls===18)addOpt({type:'potions',slot:curChar},'Recommended: Potion belt');
+    if(selectedRow.cls===18)addOpt({type:'potions',slot:curChar},'Recommended: Potion belt');
     for(let i=0;i<5;i++)addOpt({type:'bag',slot:curChar,tab:`inventory_tab_${i}`},`Bag: ${i===0?'Main':'Extra '+i}`);
     addOpt({type:'personal_stash',slot:curChar},'Personal Stash');
-    for(const g in SLOTS)if((ACCEPT[g]||[]).includes(sel.cls))addOpt({type:'equip',slot:curChar,g:+g},`EQUIP: ${SLOTS[g]}`);
+    for(const g in SLOTS)if((ACCEPT[g]||[]).includes(selectedRow.cls))addOpt({type:'equip',slot:curChar,g:+g},`EQUIP: ${SLOTS[g]}`);
   }
   for(let i=1;i<=9;i++)addOpt({type:'stash',tab:`stash_tab_${i}`},`Stash tab ${i}`);
-  tr.innerHTML=`<select id="tsel">${options.map(o=>`<option value='${esc(o.value)}'>${esc(o.label)}</option>`).join('')}</select>`;
-  btn.disabled=options.length===0;
+  let skillHtml='';
+  if(dicePayload&&dicePayload.targets&&dicePayload.targets.length){
+    const rows=[...dicePayload.targets].sort((a,b)=>Number(a.classId)-Number(b.classId)||a.name.localeCompare(b.name));
+    let chosen=DICE_ADD_SELECTION[selectedId];
+    if(!rows.some(row=>Number(row.id)===Number(chosen)))chosen=Number(rows[0].id);
+    DICE_ADD_SELECTION[selectedId]=chosen;
+    const groups=new Map();
+    rows.forEach(row=>{if(!groups.has(row.className))groups.set(row.className,[]);groups.get(row.className).push(row)});
+    skillHtml=`<select id="skilladdselect" title="Chosen skill target">${[...groups.entries()].map(([className,classRows])=>`<optgroup label="${esc(className)}">${classRows.map(row=>`<option value="${row.id}" ${Number(row.id)===chosen?'selected':''}>${esc(row.name)} · ID ${row.id}</option>`).join('')}</optgroup>`).join('')}</select>`;
+  }
+  tr.innerHTML=skillHtml+`<select id="tsel">${options.map(o=>`<option value='${esc(o.value)}'>${esc(o.label)}</option>`).join('')}</select>`;
+  const skillSelect=document.getElementById('skilladdselect');
+  if(skillSelect)skillSelect.onchange=()=>{DICE_ADD_SELECTION[selectedId]=Number(skillSelect.value)};
+  btn.disabled=options.length===0||Boolean(diceSelector&&!skillSelect);
+  btn.textContent=diceSelector?'Add · CHOSEN SKILL':(actionable?(rp.mode==='exact'?'Add · EXACT MAX':'Add · BEST POSSIBLE'):(rp&&rp.mode==='fixed'?'Add · FIXED STATS':'Add · RANDOM ROLL'));
   btn.onclick=async()=>{
+    if(btn.disabled)return;
+    btn.disabled=true;
     const t=JSON.parse(document.getElementById('tsel').value);
-    const r=await j('/api/add',{method:'POST',body:JSON.stringify({cid:sel.id,target:t})});
-    flash(r); refresh();
+    const body={cid:selectedId,target:t};
+    const chosen=document.getElementById('skilladdselect');
+    if(chosen)body.skillId=Number(chosen.value);
+    try{
+      const r=await j('/api/add',{method:'POST',body:JSON.stringify(body)});
+      flash(r); refresh();
+    }finally{
+      if(sel&&sel.id===selectedId)btn.disabled=false;
+    }
   };
 }
 function flash(r){const m=document.getElementById('msg');
@@ -2867,30 +3730,70 @@ boot();
 </script></body></html>"""
 
 
-def _open_window():
-    """Native desktop window via pywebview; falls back to the browser if unavailable."""
-    url = f"http://127.0.0.1:{PORT}"
+def _open_window(port: int) -> bool:
+    """Open the UI and report whether a blocking native window was used.
+
+    The distinction matters because ``webview.start()`` owns the process until
+    its window closes, while ``webbrowser.open()`` returns immediately.  The
+    caller must keep the HTTP server alive for the browser fallback.
+    """
+    url = f"http://127.0.0.1:{port}"
     try:
         import webview
         webview.create_window(f"Hero Siege Item Editor {APP_VERSION}", url,
                               width=1480, height=920, min_size=(1100, 680))
         webview.start()
+        return True
     except Exception:
         import webbrowser
         webbrowser.open(url)
+        return False
+
+
+def _served_version(port: int):
+    """Return the version of an existing editor server, if the port is ours."""
+    try:
+        with urlopen(f"http://127.0.0.1:{port}/api/instance", timeout=1) as response:
+            identity = json.loads(response.read())
+            if identity.get("application") != APPLICATION_ID:
+                return None
+            version = identity.get("version")
+            return version if isinstance(version, str) else None
+    except Exception:
+        return None
 
 
 def main():
     import threading
+    srv = None
+    port = PORT
+    for candidate in range(PORT, PORT + 10):
+        try:
+            srv = ThreadingHTTPServer(("127.0.0.1", candidate), H)
+            port = candidate
+            break
+        except OSError:
+            # Reuse only an instance that actually runs this source version.
+            # Otherwise move to a free port instead of opening a stale editor.
+            if _served_version(candidate) == APP_VERSION:
+                _open_window(candidate)
+                return
+    if srv is None:
+        raise OSError(f"no free editor port in {PORT}..{PORT + 9}")
+    server_thread = threading.Thread(target=srv.serve_forever, daemon=True)
+    server_thread.start()
     try:
-        srv = ThreadingHTTPServer(("127.0.0.1", PORT), H)
-    except OSError:
-        # Another instance already serves the port -> just open a window onto it.
-        _open_window()
-        return
-    threading.Thread(target=srv.serve_forever, daemon=True).start()
-    _open_window()
-    # window closed -> exit the whole app (server thread is daemon)
+        native_window = _open_window(port)
+        if not native_window:
+            # A browser launch is non-blocking.  Keep the source/fallback
+            # process (and therefore the daemon HTTP thread) alive until the
+            # user interrupts it instead of immediately serving a dead URL.
+            server_thread.join()
+    except KeyboardInterrupt:
+        pass
+    finally:
+        srv.shutdown()
+        srv.server_close()
 
 
 if __name__ == "__main__":
