@@ -8,7 +8,22 @@ A local/offline save editor for **Hero Siege** (Pixel Prone Games). Manage items
 
 Single file, no install, no Python needed. Just run it.
 
-## What's new in v2.8.0
+## What's new in v2.8.1
+
+- **ForgePact/Aurie compatibility:** the editor now recognizes the exact
+  AuriePatcher layout shipped by ForgePact while still proving that the complete
+  underlying Season 10 executable is the verified `438B...A7DE4` build.
+- Patched full-file hashes are never allowlisted. The verifier reconstructs the
+  clean PE header in memory, excludes only the strictly validated final
+  `.aurie` loader section, and hashes every byte of the original executable.
+- A changed game section, malformed loader layout, unexpected overlay, wrong
+  entry point, or verification-time file change still disables build-specific
+  Perfect/Best and Dice seeds without touching the item.
+
+See [the v2.8.1 release notes](RELEASE_NOTES_v2.8.1.md) for the compatibility
+and verification details.
+
+## Previously added in v2.8.0
 
 - **Infinite Vault:** move items from every grid-backed Shared Stash tab — all
   numbered tabs (currently 1-19), Material, and Socket — into an unlimited,
