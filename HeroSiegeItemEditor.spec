@@ -4,9 +4,10 @@
 Run from this directory after the generated roll database has been installed:
     py -3 -m PyInstaller --clean HeroSiegeItemEditor.spec
 
-Keeping the generated model as Python code and the verified profile database as
-data is intentional: both are independently hash-checked by roll_profile_db at
-startup before any Perfect/Best Possible seed can be exposed.
+Keeping the generated roll implementation as Python code and the verified
+profile/tooltip databases as data is intentional: the runtime independently
+hash-checks every build-bound asset before Perfect/Best seeds or exact tooltip
+numbers can be exposed.
 """
 
 from pathlib import Path
@@ -21,6 +22,7 @@ required_data = (
     "hs_sets.json",
     "hs_perfect_roll_profiles.json",
     "hs_dice_skill_targets.json",
+    "hs_tooltip_roll_models.json",
 )
 datas = [(str(source_dir / name), ".") for name in required_data]
 datas.append((str(source_dir / "item_icons"), "item_icons"))
@@ -31,9 +33,11 @@ hiddenimports = [
     "roll_profile_db",
     "generated_pool_model",
     "dice_skill_selector",
+    "torch_class_selector",
     "game_build_identity",
     "hss_recovery",
     "infinite_vault",
+    "exact_tooltip",
 ]
 webview_bundle = collect_all("webview")
 datas += webview_bundle[0]
@@ -66,7 +70,7 @@ exe = EXE(
     debug=False,
     bootloader_ignore_signals=False,
     strip=False,
-    upx=True,
+    upx=False,
     upx_exclude=[],
     runtime_tmpdir=None,
     console=False,

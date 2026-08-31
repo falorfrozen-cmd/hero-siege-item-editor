@@ -358,6 +358,12 @@ def _validate_stash_document(
     return len(item_rows), tuple(counts), manifest
 
 
+def validate_stash_document(document: Any) -> tuple[int, tuple[tuple[str, int], ...], str]:
+    """Validate the exact supported S10 stash schema without changing it."""
+
+    return _validate_stash_document(document)
+
+
 def _count_sentinel(value: Any) -> int:
     if value == _RECOVERY_SENTINEL:
         return 1

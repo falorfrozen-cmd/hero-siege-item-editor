@@ -18,13 +18,24 @@ def catalog_row(key: str) -> dict:
     return next(row for row in editor.CAT if row.get("key") == key)
 
 
-def roll_profile(profile_id, kind, name, mode, field_seeds, maxed, total, deficit):
+def roll_profile(
+    profile_id,
+    kind,
+    name,
+    mode,
+    field_seeds,
+    maxed,
+    total,
+    deficit,
+    *,
+    max_sockets=None,
+):
     return {
         "addressKey": profile_id,
         "kind": kind,
         "name": name,
         "sourceKey": "test_fixture",
-        "maxSockets": None,
+        "maxSockets": max_sockets,
         "mode": mode,
         "maxed": maxed,
         "total": total,
@@ -56,6 +67,10 @@ class FixtureRollDatabase:
             roll_profile(
                 "unique:3:3:18", "unique", "The Dawn Bringer", "best",
                 {"a": 17_234_404}, 8, 9, 9,
+            ),
+            roll_profile(
+                "unique:3:13:2", "unique", "Poison Ivy", "best",
+                {"a": 4_677_950}, 6, 7, 1, max_sockets=4,
             ),
             roll_profile(
                 "unique:7:0:61", "unique", "Parasite Loop", "exact",
@@ -101,16 +116,29 @@ class ItemEditorSeason10Tests(unittest.TestCase):
         self.old_loadouts_file = editor.LOADOUTS_FILE
         self.old_build_export_dir = editor.BUILD_EXPORT_DIR
         self.old_roll_db = editor.ROLL_DB
+        self.old_dice_db = editor.DICE_SKILL_DB
+        self.old_torch_db = editor.TORCH_CLASS_DB
         self.old_catalog_profiles = [row.get("rollProfile") for row in editor.CAT]
+        self.old_catalog_selectors = [row.get("skillSelector") for row in editor.CAT]
         editor.SAVES = self.saves
         editor.LOADOUTS_FILE = self.saves / "hs_loadouts.json"
         editor.BUILD_EXPORT_DIR = self.saves / "exports"
         editor.ROLL_DB = FixtureRollDatabase()
+        # Unit fixtures exercise the immutable proven-build Dice database and
+        # must not depend on whichever Hero Siege patch is installed locally.
+        # Runtime mismatch behavior is covered explicitly in its own test.
+        editor.DICE_SKILL_DB = editor.load_dice_skill_database(editor.BASE)
+        editor.TORCH_CLASS_DB = editor.load_torch_class_database()
         for row in editor.CAT:
             row.pop("rollProfile", None)
             profile = editor.catalog_roll_profile(row)
             if profile:
                 row["rollProfile"] = profile
+            row.pop("skillSelector", None)
+            target_profile_id = editor.catalog_skill_profile_id(row)
+            if target_profile_id:
+                database = editor.skill_target_database(target_profile_id)
+                row["skillSelector"] = database.selector(target_profile_id)
 
         stash = {
             "stash_tab_1": {},
@@ -154,11 +182,19 @@ class ItemEditorSeason10Tests(unittest.TestCase):
         editor.LOADOUTS_FILE = self.old_loadouts_file
         editor.BUILD_EXPORT_DIR = self.old_build_export_dir
         editor.ROLL_DB = self.old_roll_db
-        for row, profile in zip(editor.CAT, self.old_catalog_profiles):
+        editor.DICE_SKILL_DB = self.old_dice_db
+        editor.TORCH_CLASS_DB = self.old_torch_db
+        for row, profile, selector in zip(
+            editor.CAT, self.old_catalog_profiles, self.old_catalog_selectors
+        ):
             if profile is None:
                 row.pop("rollProfile", None)
             else:
                 row["rollProfile"] = profile
+            if selector is None:
+                row.pop("skillSelector", None)
+            else:
+                row["skillSelector"] = selector
         self.temp.cleanup()
 
     def test_codec_round_trip_and_corruption_rejection(self):
@@ -315,6 +351,82 @@ class ItemEditorSeason10Tests(unittest.TestCase):
         self.assertIn("8/9 variable stats MAX", result["ok"])
         self.assertIn("minimum total deficit 9", result["ok"])
 
+    def test_poison_ivy_generation_persists_verified_four_socket_capacity(self):
+        ivy = catalog_row("w_bow_poison_ivy")
+
+        result = editor.op_add({"cid": ivy["id"], "target": {
+            "type": "bag", "slot": 1, "tab": "inventory_tab_0"}})
+
+        self.assertIn("ok", result)
+        bags = json.loads(editor.decode_hss(self.saves / "inventory_order_1.hss"))
+        data = next(iter(bags["inventory_tab_0"].values()))["data"]
+        self.assertEqual(data["a"], 4_677_950.0)
+        self.assertEqual(data["zz"], {"sockets": 4.0})
+
+    def test_poison_ivy_perfect_repairs_stale_one_socket_override(self):
+        ivy = catalog_row("w_bow_poison_ivy")
+        editor.op_add({"cid": ivy["id"], "target": {
+            "type": "bag", "slot": 1, "tab": "inventory_tab_0"}})
+        path = self.saves / "inventory_order_1.hss"
+        bags = json.loads(editor.decode_hss(path))
+        key, entry = next(iter(bags["inventory_tab_0"].items()))
+        socket_payload = base64.b64encode(
+            json.dumps({"a": 919_191, "b": 17, "n": 4}).encode()
+        ).decode()
+        entry["data"].update({
+            "a": 4_677_950.0,
+            "s1": socket_payload,
+            "zz": {"sockets": 1.0, "opaque": {"keep": True}},
+        })
+        path.write_text(editor.encode_hss(json.dumps(bags)), encoding="ascii")
+
+        result = editor.op_modify({
+            "action": "perfect",
+            "target": {"type": "bag", "slot": 1, "tab": "inventory_tab_0"},
+            "key": key,
+        })
+
+        self.assertIn("BEST POSSIBLE", result["ok"])
+        self.assertIn("zz.sockets=4", result["ok"])
+        data = json.loads(editor.decode_hss(path))["inventory_tab_0"][key]["data"]
+        self.assertEqual(data["a"], 4_677_950.0)
+        self.assertEqual(data["zz"], {"sockets": 4.0, "opaque": {"keep": True}})
+        self.assertEqual(data["s1"], socket_payload)
+
+    def test_poison_ivy_perfect_rejects_hidden_payload_beyond_verified_capacity(self):
+        ivy = catalog_row("w_bow_poison_ivy")
+        editor.op_add({"cid": ivy["id"], "target": {
+            "type": "bag", "slot": 1, "tab": "inventory_tab_0"}})
+        path = self.saves / "inventory_order_1.hss"
+        bags = json.loads(editor.decode_hss(path))
+        key, entry = next(iter(bags["inventory_tab_0"].items()))
+        hidden_payload = base64.b64encode(
+            json.dumps({"a": 818_181, "b": 17, "n": 2}).encode()
+        ).decode()
+        entry["data"].update({
+            "a": 1.0,
+            "s5": hidden_payload,
+            "zz": {"sockets": 1.0},
+        })
+        path.write_text(editor.encode_hss(json.dumps(bags)), encoding="ascii")
+        before = path.read_bytes()
+        backups_before = set(self.saves.glob("inventory_order_1.hss.guibak_*"))
+
+        result = editor.op_modify({
+            "action": "perfect",
+            "target": {"type": "bag", "slot": 1, "tab": "inventory_tab_0"},
+            "key": key,
+        })
+
+        self.assertIn("s5", result["err"])
+        self.assertIn("verified maximum of 4", result["err"])
+        self.assertIn("Save Health Check", result["err"])
+        self.assertEqual(path.read_bytes(), before)
+        self.assertEqual(
+            set(self.saves.glob("inventory_order_1.hss.guibak_*")),
+            backups_before,
+        )
+
     def test_unavailable_roll_database_leaves_item_unchanged(self):
         ring = catalog_row("rings_parasite_loop")
         editor.op_add({"cid": ring["id"], "target": {
@@ -410,6 +522,282 @@ class ItemEditorSeason10Tests(unittest.TestCase):
         self.assertNotIn("skillSelector", chaos)
         self.assertTrue(loaded["skillSelector"]["available"])
         self.assertTrue(overloaded["skillSelector"]["available"])
+
+    def test_torch_generation_requires_class_and_uses_4_of_4_max_seed(self):
+        torch = catalog_row("charms_torch_of_shadows")
+        target_ref = {"type": "bag", "slot": 1, "tab": "inventory_tab_0"}
+        path = self.saves / "inventory_order_1.hss"
+        before = path.read_bytes()
+
+        rejected = editor.op_add({"cid": torch["id"], "target": target_ref})
+        self.assertIn("choose a verified class target", rejected["err"])
+        self.assertEqual(path.read_bytes(), before)
+
+        added = editor.op_add({
+            "cid": torch["id"], "targetId": 4, "target": target_ref,
+        })
+        self.assertIn("All Skills class: Pirate", added["ok"])
+        bags = json.loads(editor.decode_hss(path))
+        key, entry = next(iter(bags["inventory_tab_0"].items()))
+        self.assertEqual(entry["data"]["a"], 331_867.0)
+        replay = editor.TORCH_CLASS_DB.target("unique:10:0:23", 4)
+        self.assertEqual(replay["seed"], 331_867)
+        resolved = editor.resolve(key, entry["data"])
+        self.assertEqual(resolved["skillSelector"]["targetKind"], "class")
+        self.assertEqual(resolved["skillSelector"]["current"]["name"], "Pirate")
+
+    def test_existing_torch_class_change_only_replaces_a_and_keeps_metadata(self):
+        torch = catalog_row("charms_torch_of_shadows")
+        target_ref = {"type": "bag", "slot": 1, "tab": "inventory_tab_0"}
+        editor.op_add({"cid": torch["id"], "targetId": 4, "target": target_ref})
+        path = self.saves / "inventory_order_1.hss"
+        bags = json.loads(editor.decode_hss(path))
+        key, entry = next(iter(bags["inventory_tab_0"].items()))
+        entry["data"].update({
+            "i": 202_002.0,
+            "s": 303_003.0,
+            "s1": "opaque-socket",
+            "zz": {"sockets": 4.0, "opaque": True},
+            "future": {"keep": [1, 2, 3]},
+        })
+        entry["pos"] = [7.0, 8.0]
+        untouched_data = {
+            field: value for field, value in entry["data"].items() if field != "a"
+        }
+        untouched_pos = list(entry["pos"])
+        path.write_text(editor.encode_hss(json.dumps(bags)), encoding="ascii")
+
+        changed = editor.op_modify({
+            "action": "selectskill",
+            "target": target_ref,
+            "key": key,
+            "targetId": 1,
+        })
+        self.assertIn("All Skills class -> Viking", changed["ok"])
+        self.assertIn("4/4 stats MAX", changed["ok"])
+        updated_entry = json.loads(editor.decode_hss(path))["inventory_tab_0"][key]
+        self.assertEqual(updated_entry["data"]["a"], 332_503.0)
+        self.assertEqual(
+            {field: value for field, value in updated_entry["data"].items() if field != "a"},
+            untouched_data,
+        )
+        self.assertEqual(updated_entry["pos"], untouched_pos)
+        self.assertEqual(
+            editor.resolve(key, updated_entry["data"])["skillSelector"]["current"]["id"],
+            1,
+        )
+
+    def test_existing_torch_same_class_nonmax_seed_is_replaced_by_max_seed(self):
+        torch = catalog_row("charms_torch_of_shadows")
+        target_ref = {"type": "bag", "slot": 1, "tab": "inventory_tab_0"}
+        editor.op_add({"cid": torch["id"], "targetId": 4, "target": target_ref})
+        path = self.saves / "inventory_order_1.hss"
+        bags = json.loads(editor.decode_hss(path))
+        key, entry = next(iter(bags["inventory_tab_0"].items()))
+        # Seed 3 also selects Pirate, but replays variable rolls (0,1,8,0),
+        # so identity equality alone must not suppress the MAX-seed repair.
+        entry["data"]["a"] = 3.0
+        entry["data"]["future"] = {"keep": True}
+        path.write_text(editor.encode_hss(json.dumps(bags)), encoding="ascii")
+
+        result = editor.op_modify({
+            "action": "selectskill",
+            "target": target_ref,
+            "key": key,
+            "targetId": 4,
+        })
+        self.assertIn("All Skills class -> Pirate", result["ok"])
+        updated = json.loads(editor.decode_hss(path))["inventory_tab_0"][key]["data"]
+        self.assertEqual(updated["a"], 331_867.0)
+        self.assertEqual(updated["future"], {"keep": True})
+
+    def test_non_torch_target_and_unique_bulk_without_torch_class_fail_closed(self):
+        crown = catalog_row("helmet_leviathans_crown")
+        torch = catalog_row("charms_torch_of_shadows")
+        bag_path = self.saves / "inventory_order_1.hss"
+        stash_path = self.saves / "stash.hss"
+        bag_before = bag_path.read_bytes()
+        stash_before = stash_path.read_bytes()
+
+        non_torch = editor.op_add({
+            "cid": crown["id"],
+            "targetId": 4,
+            "target": {"type": "bag", "slot": 1, "tab": "inventory_tab_0"},
+        })
+        self.assertIn("does not support skill or class targeting", non_torch["err"])
+        self.assertEqual(bag_path.read_bytes(), bag_before)
+
+        with patch.object(editor, "CAT", [torch]):
+            bulk = editor.op_fill_stash({"tab": "unique_items"})
+        self.assertIn("explicit verified class target", bulk["err"])
+        self.assertEqual(stash_path.read_bytes(), stash_before)
+
+        with patch.object(editor, "CAT", [torch]):
+            filled = editor.op_fill_stash({
+                "tab": "unique_items",
+                "identityTargetIds": {"unique:10:0:23": 1},
+            })
+        self.assertEqual((filled["added"], filled["existing"]), (1, 0))
+        unique_items = json.loads(editor.decode_hss(stash_path))["unique_items"]
+        self.assertEqual(len(unique_items), 1)
+        self.assertEqual(next(iter(unique_items.values()))["data"]["a"], 332_503.0)
+
+    def test_unique_fill_frontend_supplies_and_explains_torch_class_default(self):
+        self.assertIn(
+            'const STASH_FILL_IDENTITY_TARGETS={"unique:10:0:23":1,',
+            editor.HTML,
+        )
+        self.assertIn(
+            "body.identityTargetIds=STASH_FILL_IDENTITY_TARGETS",
+            editor.HTML,
+        )
+        self.assertIn(
+            "Torch of Shadows uses All Skills: Viking with 4/4 variable stats MAX",
+            editor.HTML,
+        )
+
+    def test_torch_706_hash_override_requires_stable_build_mismatch_status(self):
+        # Select the new hash independent of summary ordering.
+        digest = next(value for value in editor.TORCH_CLASS_DB.summary()["supportedExeSha256"]
+                      if value.startswith("2034FAD4"))
+
+        class StubGuard:
+            def __init__(self, summary):
+                self._summary = summary
+
+            def summary(self):
+                return dict(self._summary)
+
+        with patch.object(editor, "GAME_BUILD_GUARD", StubGuard({
+            "matched": False,
+            "code": "unstable",
+            "detectedSha256": digest,
+            "message": "executable changed while hashing",
+        })):
+            self.assertEqual(
+                editor._torch_runtime_build_error(),
+                "executable changed while hashing",
+            )
+        with patch.object(editor, "GAME_BUILD_GUARD", StubGuard({
+            "matched": False,
+            "code": "build_mismatch",
+            "detectedSha256": digest,
+            "message": "expected old hash",
+        })):
+            self.assertIsNone(editor._torch_runtime_build_error())
+
+    def test_roll_706_compatibility_is_stable_and_does_not_unlock_dice(self):
+        digest = next(
+            value
+            for value in editor.TORCH_CLASS_DB.summary()["supportedExeSha256"]
+            if value.startswith("2034FAD4")
+        )
+        self.assertTrue(editor.roll_supports_executable_sha256(digest))
+
+        class StubGuard:
+            def __init__(self, summary):
+                self._summary = summary
+
+            def summary(self):
+                return dict(self._summary)
+
+            def error(self):
+                return (
+                    None
+                    if self._summary.get("matched")
+                    else str(self._summary.get("message") or "unverified")
+                )
+
+        with patch.object(editor, "GAME_BUILD_GUARD", StubGuard({
+            "matched": False,
+            "code": "unstable",
+            "detectedSha256": digest,
+            "message": "executable changed while hashing",
+        })):
+            self.assertEqual(
+                editor._roll_runtime_build_error(),
+                "executable changed while hashing",
+            )
+
+        with patch.object(editor, "GAME_BUILD_GUARD", StubGuard({
+            "matched": False,
+            "code": "build_mismatch",
+            "detectedSha256": digest,
+            "message": "Dice still requires its original build proof",
+        })):
+            self.assertIsNone(editor._roll_runtime_build_error())
+            self.assertEqual(
+                editor.GAME_BUILD_GUARD.error(),
+                "Dice still requires its original build proof",
+            )
+
+        with patch.object(editor, "GAME_BUILD_GUARD", StubGuard({
+            "matched": False,
+            "code": "build_mismatch",
+            "detectedSha256": "0" * 64,
+            "message": "unknown executable",
+        })):
+            self.assertEqual(
+                editor._roll_runtime_build_error(),
+                "unknown executable",
+            )
+
+        compatible_status = {
+            "matched": False,
+            "code": "build_mismatch",
+            "expectedSha256": editor.EXPECTED_GAME_EXE_SHA256,
+            "detectedSha256": digest,
+            "message": "source build differs",
+        }
+        zephy = catalog_row("armors_zephys_gown")
+        promoted = editor._tooltip_runtime_build_status(zephy, compatible_status)
+        self.assertTrue(promoted["matched"])
+        self.assertEqual(promoted["code"], "ready_compatible")
+        self.assertFalse(compatible_status["matched"])  # caller data is immutable
+
+        for key in ("charms_loaded_dice", "charms_overloaded_dice"):
+            with self.subTest(key=key):
+                dice_status = editor._tooltip_runtime_build_status(
+                    catalog_row(key), compatible_status
+                )
+                self.assertFalse(dice_status["matched"])
+                self.assertEqual(dice_status["code"], "build_mismatch")
+
+        for rejected in (
+            dict(compatible_status, code="unstable"),
+            dict(compatible_status, detectedSha256="0" * 64),
+        ):
+            with self.subTest(rejected=rejected):
+                self.assertFalse(
+                    editor._tooltip_runtime_build_status(zephy, rejected)["matched"]
+                )
+
+        zephy_item = editor.resolve("0-0-1-1", editor.make_data(zephy))
+        zephy_item["rollProfile"] = self.old_roll_db.lookup("unique", 1, 0, 52)
+        zephy_tooltip = editor._game_tooltip_model(
+            zephy_item, build_status=compatible_status
+        )
+        self.assertTrue(zephy_tooltip["calculation"]["numbersExact"])
+        self.assertEqual(zephy_tooltip["buildGuard"]["code"], "ready_compatible")
+
+        loaded = catalog_row("charms_loaded_dice")
+        loaded_item = editor.resolve(
+            "0-0-2-10", {"a": 1.0, "j": 0.0, "b": 31.0, "c": 1.0}
+        )
+        loaded_item["rollProfile"] = self.old_roll_db.lookup("unique", 10, 0, 31)
+        loaded_tooltip = editor._game_tooltip_model(
+            loaded_item, build_status=compatible_status
+        )
+        self.assertFalse(loaded_tooltip["calculation"]["numbersExact"])
+        self.assertFalse(loaded_tooltip["calculation"]["buildMatched"])
+        self.assertEqual(loaded_tooltip["buildGuard"]["code"], "build_mismatch")
+
+    def test_capability_banner_distinguishes_roll_torch_and_dice(self):
+        self.assertIn("MAX/BEST READY", editor.HTML)
+        self.assertIn("TORCH TARGETS READY", editor.HTML)
+        self.assertIn("DICE TARGETS UNAVAILABLE", editor.HTML)
+        self.assertIn("Dice targets: ${diceDb.message", editor.HTML)
+        self.assertNotIn("ROLL PROFILES DISABLED", editor.HTML)
 
     def test_bulk_add_rejects_dice_without_an_explicit_target(self):
         loaded = catalog_row("charms_loaded_dice")
@@ -728,7 +1116,7 @@ class ItemEditorSeason10Tests(unittest.TestCase):
             backups_before,
         )
 
-    def test_every_direct_equipment_address_fails_closed_without_a_profile(self):
+    def test_every_build_specific_equipment_address_fails_closed_without_a_profile(self):
         class EmptyRollDatabase:
             available = True
             status = type("Status", (), {"message": "fixture database ready"})()
@@ -742,6 +1130,7 @@ class ItemEditorSeason10Tests(unittest.TestCase):
             if row.get("kind") in {"normal", "unique"}
             and int(row.get("cls", -1)) in editor.ROLL_PROFILE_GEAR_CLASSES
             and row.get("available", True)
+            and not editor.is_ordinary_small_charm_row(row)
         ]
         self.assertTrue(any(row["kind"] == "normal" for row in equipment))
         self.assertTrue(any(row["kind"] == "unique" for row in equipment))
@@ -1090,6 +1479,230 @@ class ItemEditorSeason10Tests(unittest.TestCase):
             self.assertEqual(set(entry["data"]), {"a", "j", "b", "c", "o"})
             self.assertEqual((entry["data"]["b"], entry["data"]["c"]),
                              (float(base_id), 0.0))
+
+    def test_stash_fill_catalog_contract(self):
+        unique_label, unique_rows = editor.stash_fill_catalog("unique_items")
+        material_label, material_rows = editor.stash_fill_catalog("material_tab_1")
+        socket_label, socket_rows = editor.stash_fill_catalog("socket_tab_1")
+
+        self.assertEqual(unique_label, "Unique tab")
+        self.assertEqual(len(unique_rows), 944)
+        self.assertEqual(len(material_rows), 139)
+        self.assertEqual(len(socket_rows), 144)
+        self.assertEqual({row["cls"] for row in material_rows}, {13, 14})
+        self.assertEqual({row["cls"] for row in socket_rows}, {15})
+        self.assertEqual(
+            len({editor._native_catalog_address(row) for row in unique_rows}),
+            len(unique_rows),
+        )
+        self.assertFalse(any(row.get("available") is False for row in unique_rows))
+        with self.assertRaisesRegex(ValueError, "Only the Unique"):
+            editor.stash_fill_catalog("stash_tab_1")
+
+    def test_material_and_socket_fill_are_complete_native_and_idempotent(self):
+        stash_path = self.saves / "stash.hss"
+        material = editor.op_fill_stash({"tab": "material_tab_1"})
+        socket = editor.op_fill_stash({"tab": "socket_tab_1"})
+
+        self.assertEqual((material["total"], material["added"]), (139, 139))
+        self.assertEqual((socket["total"], socket["added"]), (144, 144))
+        stash = json.loads(editor.decode_hss(stash_path))
+        material_items = stash["material_tab_1"]
+        socket_items = stash["socket_tab_1"]
+        self.assertEqual(len(material_items), 139)
+        self.assertEqual(len(socket_items), 144)
+
+        singleton_addresses = set()
+        for key, entry in material_items.items():
+            address = editor._native_entry_address(key, entry)
+            short_address = (address[1], address[3])
+            if short_address in editor.MATERIAL_SINGLETON_ADDRESSES:
+                singleton_addresses.add(short_address)
+                self.assertNotIn("o", entry["data"])
+            else:
+                self.assertEqual(entry["data"]["o"], float(editor.FULL_STACK_AMOUNT))
+        self.assertEqual(singleton_addresses, set(editor.MATERIAL_SINGLETON_ADDRESSES))
+        self.assertTrue(all(
+            entry["data"]["o"] == float(editor.FULL_STACK_AMOUNT)
+            for entry in socket_items.values()
+        ))
+
+        # Catalog dimensions, including the 1x2 Tarot cards, must not overlap.
+        for tab, items in (("material_tab_1", material_items),
+                           ("socket_tab_1", socket_items)):
+            occupied = set()
+            for key, entry in items.items():
+                item = editor.resolve(key, entry["data"])
+                x, y = map(int, entry["pos"])
+                cells = {
+                    (x + dx, y + dy)
+                    for dx in range(item["w"])
+                    for dy in range(item["h"])
+                }
+                self.assertTrue(occupied.isdisjoint(cells))
+                occupied.update(cells)
+
+        before = stash_path.read_bytes()
+        backups_before = set(self.saves.glob("stash.hss.guibak_*"))
+        material_again = editor.op_fill_stash({"tab": "material_tab_1"})
+        socket_again = editor.op_fill_stash({"tab": "socket_tab_1"})
+        self.assertEqual(material_again["backup"], "")
+        self.assertEqual(socket_again["backup"], "")
+        self.assertEqual(stash_path.read_bytes(), before)
+        self.assertEqual(set(self.saves.glob("stash.hss.guibak_*")), backups_before)
+
+    def test_unique_fill_requires_explicit_dice_targets_and_preserves_owned_data(self):
+        crown = catalog_row("helmet_leviathans_crown")
+        loaded = catalog_row("charms_loaded_dice")
+        overloaded = catalog_row("charms_overloaded_dice")
+        rows = [crown, loaded, overloaded]
+        stash_path = self.saves / "stash.hss"
+        stash = json.loads(editor.decode_hss(stash_path))
+        owned_data = editor.make_data(crown)
+        owned_data.update({"future": {"keep": True}, "s1": "opaque"})
+        stash["unique_items"]["0-0-777-0"] = {"data": owned_data}
+        stash_path.write_text(editor.encode_hss(json.dumps(stash)), encoding="ascii")
+        before = stash_path.read_bytes()
+
+        class StubDiceDatabase:
+            seeds = {2: 202.0, 7: 707.0}
+
+            def target(self, profile_id, skill_id):
+                skill_id = int(skill_id)
+                if skill_id not in self.seeds:
+                    raise editor.DiceSkillValidationError("invalid fixture target")
+                return {
+                    "id": skill_id,
+                    "seed": self.seeds[skill_id],
+                    "className": "Fixture",
+                    "name": f"Skill {skill_id}",
+                    "profileId": profile_id,
+                }
+
+        with (
+            patch.object(editor, "CAT", rows),
+            patch.object(editor, "DICE_SKILL_DB", StubDiceDatabase()),
+        ):
+            rejected = editor.op_fill_stash({"tab": "unique_items"})
+            self.assertIn("explicit verified skill target", rejected["err"])
+            self.assertEqual(stash_path.read_bytes(), before)
+
+            filled = editor.op_fill_stash({
+                "tab": "unique_items",
+                "diceSkillIds": {
+                    "unique:10:0:31": 2,
+                    "unique:10:0:89": 7,
+                },
+            })
+            self.assertEqual((filled["total"], filled["added"], filled["existing"]),
+                             (3, 2, 1))
+            self.assertEqual(len(filled["diceTargets"]), 2)
+            updated = json.loads(editor.decode_hss(stash_path))["unique_items"]
+            self.assertEqual(updated["0-0-777-0"]["data"], owned_data)
+            self.assertTrue(all("pos" not in entry for entry in updated.values()))
+            dice_seeds = {
+                int(entry["data"]["b"]): entry["data"]["a"]
+                for entry in updated.values()
+                if int(entry["data"]["b"]) in (31, 89)
+            }
+            self.assertEqual(dice_seeds, {31: 202.0, 89: 707.0})
+
+            complete = editor.op_fill_stash({"tab": "unique_items"})
+            self.assertEqual(complete["backup"], "")
+            self.assertEqual(complete["added"], 0)
+
+    def test_stash_fill_capacity_failure_is_atomic(self):
+        material_rows = [
+            row for row in editor.CAT
+            if row.get("kind") == "normal"
+            and row.get("available", True)
+            and row.get("cls") == 14
+        ][:2]
+        stash_path = self.saves / "stash.hss"
+        stash = json.loads(editor.decode_hss(stash_path))
+        stash["material_tab_1"] = {
+            f"0-0-{index}-12": {
+                "pos": [float(index % 17), float(index // 17)],
+                "data": {"a": 1.0, "j": 0.0, "b": 9999.0,
+                         "c": 0.0, "o": 1.0},
+            }
+            for index in range(305)
+        }
+        stash_path.write_text(editor.encode_hss(json.dumps(stash)), encoding="ascii")
+        before = stash_path.read_bytes()
+        backups_before = set(self.saves.glob("stash.hss.guibak_*"))
+
+        with patch.object(editor, "CAT", material_rows):
+            result = editor.op_fill_stash({"tab": "material_tab_1"})
+
+        self.assertIn("enough valid grid space", result["err"])
+        self.assertEqual(stash_path.read_bytes(), before)
+        self.assertEqual(set(self.saves.glob("stash.hss.guibak_*")), backups_before)
+
+    def test_stash_fill_maxes_preserved_duplicates_and_rejects_hidden_grid_items(self):
+        row = next(
+            item for item in editor.CAT
+            if item.get("kind") == "normal"
+            and item.get("available", True)
+            and item.get("cls") == 14
+            and (item["cls"], item["b"]) not in editor.MATERIAL_SINGLETON_ADDRESSES
+        )
+        stash_path = self.saves / "stash.hss"
+        stash = json.loads(editor.decode_hss(stash_path))
+        stash["material_tab_1"] = {
+            "0-0-501-14": {
+                "pos": [0.0, 0.0],
+                "data": {"a": 11.0, "j": 0.0, "b": float(row["b"]),
+                         "c": 0.0, "o": 2.0, "future": {"keep": 1}},
+            },
+            "0-0-502-14": {
+                "pos": [1.0, 0.0],
+                "data": {"a": 22.0, "j": 0.0, "b": float(row["b"]),
+                         "c": 0.0, "o": 3.0, "future": {"keep": 2}},
+            },
+        }
+        stash_path.write_text(editor.encode_hss(json.dumps(stash)), encoding="ascii")
+
+        with patch.object(editor, "CAT", [row]):
+            result = editor.op_fill_stash({"tab": "material_tab_1"})
+        self.assertEqual((result["added"], result["updated"], result["existing"]),
+                         (0, 2, 1))
+        updated = json.loads(editor.decode_hss(stash_path))["material_tab_1"]
+        self.assertEqual(len(updated), 2)
+        self.assertTrue(all(
+            entry["data"]["o"] == float(editor.FULL_STACK_AMOUNT)
+            for entry in updated.values()
+        ))
+        self.assertEqual(updated["0-0-501-14"]["data"]["future"], {"keep": 1})
+        self.assertEqual(updated["0-0-502-14"]["data"]["future"], {"keep": 2})
+
+        del updated["0-0-501-14"]["pos"]
+        stash = json.loads(editor.decode_hss(stash_path))
+        stash["material_tab_1"] = updated
+        stash_path.write_text(editor.encode_hss(json.dumps(stash)), encoding="ascii")
+        before = stash_path.read_bytes()
+        backups_before = set(self.saves.glob("stash.hss.guibak_*"))
+        with patch.object(editor, "CAT", [row]):
+            rejected = editor.op_fill_stash({"tab": "material_tab_1"})
+        self.assertIn("invalid grid", rejected["err"])
+        self.assertIn("Save Health Check", rejected["err"])
+        self.assertEqual(stash_path.read_bytes(), before)
+        self.assertEqual(set(self.saves.glob("stash.hss.guibak_*")), backups_before)
+
+    def test_stash_fill_game_gate_and_missing_tab_do_not_write(self):
+        stash_path = self.saves / "stash.hss"
+        before = stash_path.read_bytes()
+        backups_before = set(self.saves.glob("stash.hss.guibak_*"))
+        with patch.object(editor, "game_running", return_value=True):
+            running = editor.op_fill_stash({"tab": "socket_tab_1"})
+        missing = editor.op_fill_stash({"tab": "material_tab_2"})
+        invalid = editor.op_fill_stash({"tab": "stash_tab_1"})
+
+        self.assertIn("Game is running", running["err"])
+        self.assertIn("does not exist", missing["err"])
+        self.assertIn("Only the Unique", invalid["err"])
+        self.assertEqual(stash_path.read_bytes(), before)
+        self.assertEqual(set(self.saves.glob("stash.hss.guibak_*")), backups_before)
 
     def test_s10_access_kits_use_verified_key_routes(self):
         groups = {group["id"]: group for group in editor.s10_access_list()}

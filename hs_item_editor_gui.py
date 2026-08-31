@@ -8,6 +8,7 @@ Data source: the game's own item repositories (itemRepoNormal/Unique/Runeword du
 """
 
 import base64
+import copy
 import hashlib
 import html as html_lib
 import json
@@ -33,17 +34,21 @@ try:
     from roll_profile_db import (
         EXPECTED_EXE_SHA256 as EXPECTED_GAME_EXE_SHA256,
         load_roll_profile_database,
+        supports_executable_sha256 as roll_supports_executable_sha256,
     )
 except ModuleNotFoundError:  # package-style import used by the unit tests
     from HSItemEditor.roll_profile_db import (
         EXPECTED_EXE_SHA256 as EXPECTED_GAME_EXE_SHA256,
         load_roll_profile_database,
+        supports_executable_sha256 as roll_supports_executable_sha256,
     )
 
 try:
     from dice_skill_selector import (
         DiceSkillValidationError,
         EXPECTED_EXE_SHA256 as DICE_EXPECTED_GAME_EXE_SHA256,
+        LOADED_PROFILE_ID,
+        OVERLOADED_PROFILE_ID,
         load_dice_skill_database,
         profile_id_for_address as dice_profile_id_for_address,
     )
@@ -51,8 +56,27 @@ except ModuleNotFoundError:  # package-style import used by the unit tests
     from HSItemEditor.dice_skill_selector import (
         DiceSkillValidationError,
         EXPECTED_EXE_SHA256 as DICE_EXPECTED_GAME_EXE_SHA256,
+        LOADED_PROFILE_ID,
+        OVERLOADED_PROFILE_ID,
         load_dice_skill_database,
         profile_id_for_address as dice_profile_id_for_address,
+    )
+
+try:
+    from torch_class_selector import (
+        TORCH_PROFILE_ID,
+        TorchClassValidationError,
+        load_torch_class_database,
+        profile_id_for_address as torch_profile_id_for_address,
+        supports_executable_sha256 as torch_supports_executable_sha256,
+    )
+except ModuleNotFoundError:  # package-style import used by the unit tests
+    from HSItemEditor.torch_class_selector import (
+        TORCH_PROFILE_ID,
+        TorchClassValidationError,
+        load_torch_class_database,
+        profile_id_for_address as torch_profile_id_for_address,
+        supports_executable_sha256 as torch_supports_executable_sha256,
     )
 
 try:
@@ -63,38 +87,67 @@ except ModuleNotFoundError:
 try:
     from hss_recovery import (
         HSSRecoveryError,
+        MAX_HSS_DECODED_BYTES,
+        MAX_HSS_FILE_BYTES,
         RecoveryPlan,
         analyze_stash_hss,
+        decode_hss_bytes_strict,
         materialize_recovery,
+        validate_stash_document,
     )
 except ModuleNotFoundError:
     from HSItemEditor.hss_recovery import (
         HSSRecoveryError,
+        MAX_HSS_DECODED_BYTES,
+        MAX_HSS_FILE_BYTES,
         RecoveryPlan,
         analyze_stash_hss,
+        decode_hss_bytes_strict,
         materialize_recovery,
+        validate_stash_document,
     )
 
 try:
     from infinite_vault import (
         InfiniteVault,
+        MAX_TEXT_FIELD_LENGTH,
         VaultConflictError,
         VaultError,
         VaultNotFoundError,
         VaultStateError,
         VaultValidationError,
         canonical_request_hash,
+        validate_raw_item_json,
     )
 except ModuleNotFoundError:
     from HSItemEditor.infinite_vault import (
         InfiniteVault,
+        MAX_TEXT_FIELD_LENGTH,
         VaultConflictError,
         VaultError,
         VaultNotFoundError,
         VaultStateError,
         VaultValidationError,
         canonical_request_hash,
+        validate_raw_item_json,
     )
+
+try:
+    from exact_tooltip import (
+        build_tooltip_model as _build_exact_tooltip_model,
+        load_tooltip_model_database as _load_tooltip_model_database,
+    )
+except ModuleNotFoundError:
+    try:
+        from HSItemEditor.exact_tooltip import (
+            build_tooltip_model as _build_exact_tooltip_model,
+            load_tooltip_model_database as _load_tooltip_model_database,
+        )
+    except ModuleNotFoundError:
+        # Source checkouts made before the exact-tooltip bundle existed must
+        # remain usable.  The UI will show an explicit catalog-only preview.
+        _build_exact_tooltip_model = None
+        _load_tooltip_model_database = None
 
 ROOT = Path.home() / "AppData" / "Local" / "Hero_Siege"
 SAVES = ROOT / "hs2saves"
@@ -115,7 +168,7 @@ def _resource_base() -> Path:
 BASE = _resource_base()
 CATALOG_FILE = BASE / "hs_full_catalog.json"
 PORT = 8765
-APP_VERSION = "2.8.2-s10"
+APP_VERSION = "2.11.1-s10"
 APPLICATION_ID = "hero-siege-item-editor"
 CATALOG_PROFILE = "Season 10"
 MAX_POST_BYTES = 2 * 1024 * 1024
@@ -123,11 +176,53 @@ EDITOR_REQUEST_HEADER = "X-Hero-Siege-Item-Editor"
 if DICE_EXPECTED_GAME_EXE_SHA256 != EXPECTED_GAME_EXE_SHA256:
     raise RuntimeError("roll and Dice databases target different Hero Siege builds")
 GAME_BUILD_GUARD = GameBuildGuard(EXPECTED_GAME_EXE_SHA256)
+
+
+def _roll_runtime_build_error() -> str | None:
+    """Accept only stable executables covered by the complete roll proof."""
+
+    summary = GAME_BUILD_GUARD.summary()
+    if summary.get("matched"):
+        return None
+    if (
+        summary.get("code") == "build_mismatch"
+        and roll_supports_executable_sha256(summary.get("detectedSha256"))
+    ):
+        return None
+    return str(summary.get("message") or "Installed Hero Siege build is unverified")
+
+
+def _torch_runtime_build_error() -> str | None:
+    """Accept only the two statically matched Torch paths (plus proven 7.0.5 Aurie)."""
+
+    summary = GAME_BUILD_GUARD.summary()
+    if summary.get("matched"):
+        # GameBuildGuard separately normalizes the known 7.0.5 Aurie patch to
+        # its clean base image; Dice keeps using this same existing decision.
+        return None
+    if (
+        summary.get("code") == "build_mismatch"
+        and torch_supports_executable_sha256(summary.get("detectedSha256"))
+    ):
+        return None
+    return str(summary.get("message") or "Installed Hero Siege build is unverified")
+
+
 ROLL_DB = load_roll_profile_database(
-    BASE, runtime_build_check=GAME_BUILD_GUARD.error
+    BASE, runtime_build_check=_roll_runtime_build_error
 )
+# Dice has a separate identity/rejection model.  A build proven compatible for
+# numeric Perfect/Best rolls must not silently unlock Dice skill targets.
 DICE_SKILL_DB = load_dice_skill_database(
     BASE, runtime_build_check=GAME_BUILD_GUARD.error
+)
+TORCH_CLASS_DB = load_torch_class_database(
+    runtime_build_check=_torch_runtime_build_error
+)
+TOOLTIP_MODEL_DB = (
+    _load_tooltip_model_database(BASE)
+    if _load_tooltip_model_database is not None
+    else None
 )
 
 # GetItemSeed emits this inclusive save-field range in the clean S10 build.
@@ -494,6 +589,25 @@ def _vault_item_json(entry: dict) -> str:
     return json.dumps(entry, ensure_ascii=False, separators=(",", ":"), allow_nan=False)
 
 
+BULK_STASH_ITEM_TABS = (
+    "material_tab",
+    "socket_tab",
+    "unique_items",
+    *(f"stash_tab_{index}" for index in range(1, 20)),
+)
+BULK_DEPOSIT_ALL_TABS = "all"
+BULK_WITHDRAWAL_AUTO = "auto"
+BULK_ROUTING_VERSION = 3
+
+
+def _vault_source_display(source: str | None) -> str:
+    if source == "unique_items":
+        return "Unique Tab"
+    if source and (_is_vault_shared_grid_tab(source)):
+        return _vault_shared_grid_label(source)
+    return source or "Shared Stash"
+
+
 CAT = json.loads(CATALOG_FILE.read_text(encoding="utf-8"))
 SETS_FILE = BASE / "hs_sets.json"
 SETS = json.loads(SETS_FILE.read_text(encoding="utf-8")) if SETS_FILE.exists() else []
@@ -557,6 +671,60 @@ def apply_s10_catalog_overlay() -> None:
 apply_s10_catalog_overlay()
 
 
+def apply_socket_choice_labels() -> None:
+    """Give duplicate-name socketables an unambiguous native base ID label."""
+
+    rows = [
+        row for row in CAT
+        if row.get("kind") == "normal"
+        and row.get("available", True)
+        and int(row.get("cls", -1)) == 15
+    ]
+    name_counts: dict[str, int] = {}
+    for row in rows:
+        folded = str(row.get("name") or "").strip().casefold()
+        name_counts[folded] = name_counts.get(folded, 0) + 1
+    for row in rows:
+        name = str(row.get("name") or "Unknown socketable").strip()
+        folded = name.casefold()
+        row["socketChoiceLabel"] = (
+            f"{name} [ID {int(row['b'])}]" if name_counts.get(folded, 0) > 1 else name
+        )
+
+
+apply_socket_choice_labels()
+
+
+SMALL_CHARM_KEY = "charms_normal_small_charm"
+
+
+def is_ordinary_small_charm_row(row: object) -> bool:
+    """Match only the native normal Small Charm family.
+
+    These items use a normal random ``a`` seed and do not consume any of the
+    build-specific Perfect/Best or Dice seeds.  Keep this identity predicate
+    separate from display metadata so a game update cannot accidentally turn
+    every class-10 charm into an unverified exception.
+    """
+
+    if not isinstance(row, dict):
+        return False
+    try:
+        return bool(
+            row.get("kind") == "normal"
+            and row.get("key") == SMALL_CHARM_KEY
+            and not isinstance(row.get("cls"), bool)
+            and not isinstance(row.get("sub", 0), bool)
+            and not isinstance(row.get("b"), bool)
+            and int(row.get("cls", -1)) == 10
+            and int(row.get("sub", 0)) == 0
+            and 0 <= int(row.get("b", -1)) <= 19
+        )
+    except (TypeError, ValueError):
+        pass
+    return False
+
+
 def catalog_roll_profile(row: dict) -> dict | None:
     """Return the verified direct-address profile for a catalog row."""
     kind = row.get("kind")
@@ -587,11 +755,51 @@ def catalog_dice_profile_id(row: dict) -> str | None:
         return None
 
 
+def catalog_torch_profile_id(row: dict) -> str | None:
+    """Return the class selector only for Torch of Shadows' exact address."""
+
+    try:
+        return torch_profile_id_for_address(
+            str(row.get("kind")),
+            int(row["cls"]),
+            int(row.get("sub", 0)),
+            int(row["b"]),
+        )
+    except (KeyError, TypeError, ValueError):
+        return None
+
+
+def catalog_skill_profile_id(row: dict) -> str | None:
+    """Return an exact-address selectable identity profile for one row."""
+
+    return catalog_dice_profile_id(row) or catalog_torch_profile_id(row)
+
+
+def skill_target_database(profile_id: str):
+    """Route a selector profile without weakening either database's guard."""
+
+    if profile_id in {LOADED_PROFILE_ID, OVERLOADED_PROFILE_ID}:
+        return DICE_SKILL_DB
+    if profile_id == TORCH_PROFILE_ID:
+        return TORCH_CLASS_DB
+    return None
+
+
 def dice_target_for_row(row: dict, skill_id: object) -> dict:
     profile_id = catalog_dice_profile_id(row)
     if profile_id is None:
         raise DiceSkillValidationError("this item does not support skill targeting")
     return DICE_SKILL_DB.target(profile_id, skill_id)
+
+
+def skill_target_for_row(row: dict, target_id: object) -> dict:
+    profile_id = catalog_skill_profile_id(row)
+    database = skill_target_database(profile_id) if profile_id is not None else None
+    if database is None:
+        raise TorchClassValidationError(
+            "this item does not support skill or class targeting"
+        )
+    return database.target(profile_id, target_id)
 
 
 def roll_database_message() -> str:
@@ -616,6 +824,11 @@ def generation_roll_profile(row: dict) -> dict | None:
     or unique equipment address, including fixed-stat equipment, must have a
     validated database entry before the editor is allowed to create it.
     """
+    if is_ordinary_small_charm_row(row):
+        # Ordinary Small Charms are rebuilt by the game from a fresh native
+        # random seed. They do not use a build-bound Perfect/Best/Dice seed,
+        # so an unrelated executable update must not block their creation.
+        return None
     is_profiled_equipment = (
         row.get("kind") in {"normal", "unique"}
         and int(row.get("cls", -1)) in ROLL_PROFILE_GEAR_CLASSES
@@ -632,13 +845,33 @@ def generation_roll_profile(row: dict) -> dict | None:
     return profile
 
 
+def generation_roll_profile_for_request(
+    row: dict,
+    target_id: object = None,
+) -> dict | None:
+    """Validate generation, allowing a proven Torch class seed to own ``a``.
+
+    The roll artifact keeps its 7.0.5 source provenance while the complete
+    general numeric path is independently proven compatible with exact 7.0.6.
+    Torch still uses its dedicated selector proof and may own ``a`` only when
+    an explicit class target is present and valid.
+    """
+
+    if catalog_torch_profile_id(row) is not None and target_id is not None:
+        skill_target_for_row(row, target_id)
+        return None
+    return generation_roll_profile(row)
+
+
 for _r in CAT:
     _profile = catalog_roll_profile(_r)
     if _profile:
         _r["rollProfile"] = _profile
-    _dice_profile_id = catalog_dice_profile_id(_r)
-    if _dice_profile_id:
-        _r["skillSelector"] = DICE_SKILL_DB.selector(_dice_profile_id)
+    _skill_profile_id = catalog_skill_profile_id(_r)
+    if _skill_profile_id:
+        _target_database = skill_target_database(_skill_profile_id)
+        if _target_database is not None:
+            _r["skillSelector"] = _target_database.selector(_skill_profile_id)
 BY_ADDR = {}
 for _r in CAT:
     kindbit = 1 if _r["kind"] == "unique" else 0
@@ -812,6 +1045,73 @@ def socket_rune_seq(data: dict) -> tuple:
     return tuple(seq)
 
 
+def decode_existing_socket_payload(value: object) -> dict:
+    """Decode one saved socket payload or raise without normalizing it."""
+
+    if not isinstance(value, str) or not value:
+        raise ValueError("socket payload is not a non-empty string")
+    decoded = json.loads(base64.b64decode(value, validate=True))
+    if not isinstance(decoded, dict):
+        raise ValueError("socket payload is not an object")
+    base_id = decoded.get("b")
+    if (
+        isinstance(base_id, bool)
+        or not isinstance(base_id, (int, float))
+        or not math.isfinite(float(base_id))
+    ):
+        raise ValueError("socket payload has no valid base id")
+    return decoded
+
+
+def catalog_socket_limit(row: object, default: int = 0) -> int:
+    """Return the catalog's advertised maximum socket count, capped by save format.
+
+    The editor can serialize at most ``s1`` through ``s6``.  Equipment entries
+    which publish a ``Sockets`` stat carry a narrower native maximum (for
+    example Poison Ivy is ``1-4``); honoring that maximum prevents the socket
+    editor from creating a count the item definition cannot represent.
+    """
+
+    if isinstance(row, dict):
+        for stat in row.get("stats") or ():
+            if (
+                not isinstance(stat, (list, tuple))
+                or len(stat) != 2
+                or str(stat[0]).strip().casefold() != "sockets"
+            ):
+                continue
+            values = [int(value) for value in re.findall(r"\d+", str(stat[1]))]
+            if values:
+                return max(0, min(6, max(values)))
+    return max(0, min(6, int(default)))
+
+
+def item_socket_limit(item: object) -> int:
+    """Resolve one existing item to the socket editor's safe upper bound."""
+
+    if not isinstance(item, dict):
+        return 0
+    if item.get("isRW"):
+        return 6
+    profile = item.get("rollProfile")
+    if isinstance(profile, dict):
+        verified = profile.get("maxSockets")
+        if (
+            isinstance(verified, int)
+            and not isinstance(verified, bool)
+            and 1 <= verified <= 6
+        ):
+            return verified
+    catalog_id = item.get("cid")
+    if (
+        isinstance(catalog_id, int)
+        and not isinstance(catalog_id, bool)
+        and 0 <= catalog_id < len(CAT)
+    ):
+        return catalog_socket_limit(CAT[catalog_id])
+    return 0
+
+
 def resolve(key: str, data: dict) -> dict:
     """Save kaydini katalog girdisine cozer."""
     try:
@@ -831,10 +1131,14 @@ def resolve(key: str, data: dict) -> dict:
                        set=r.get("set"), clsName=CLASS_NAMES.get(r["cls"], "?"), spr=r.get("spr"))
             if r.get("rollProfile"):
                 out["rollProfile"] = r["rollProfile"]
-            dice_profile_id = catalog_dice_profile_id(r)
-            if dice_profile_id:
-                out["skillSelector"] = DICE_SKILL_DB.selector(
-                    dice_profile_id, data.get("a")
+            skill_profile_id = catalog_skill_profile_id(r)
+            target_database = (
+                skill_target_database(skill_profile_id)
+                if skill_profile_id is not None else None
+            )
+            if target_database is not None:
+                out["skillSelector"] = target_database.selector(
+                    skill_profile_id, data.get("a")
                 )
         else:
             out.update(name=f"? (c{c} s{sfx} j{j} b{int(b)})", rar="?", w=1, h=1, cid=None)
@@ -873,17 +1177,224 @@ def resolve(key: str, data: dict) -> dict:
                 out["rollProfile"] = profile
             else:
                 out.pop("rollProfile", None)
+    out["socketLimit"] = item_socket_limit(out)
     return out
 
 
-def _vault_item_payload(record) -> dict:
+def _catalog_row_for_item(item: dict) -> dict:
+    catalog_id = item.get("rwcid")
+    if not isinstance(catalog_id, int):
+        catalog_id = item.get("cid")
+    if isinstance(catalog_id, int) and not isinstance(catalog_id, bool):
+        if 0 <= catalog_id < len(CAT):
+            return CAT[catalog_id]
+    # Preserve the resolved native identity even when this build does not know
+    # the address.  Exact calculation remains fail-closed in that case.
+    return {
+        "id": catalog_id,
+        "name": item.get("name", "Unknown item"),
+        "rar": item.get("rar", "?"),
+        "tier": None,
+        "lvl": None,
+        "spr": item.get("spr"),
+        "stats": [],
+    }
+
+
+def _catalog_only_tooltip_model(
+    item: dict,
+    catalog_row: dict,
+    *,
+    custom_name: str | None = None,
+    warning: str = "Exact-tooltip model is unavailable.",
+) -> dict:
+    raw = item.get("raw") if isinstance(item.get("raw"), dict) else {}
+    ordinary_small_charm = is_ordinary_small_charm_row(catalog_row)
+    try:
+        canonical = json.dumps(
+            raw, ensure_ascii=False, sort_keys=True,
+            separators=(",", ":"), allow_nan=False,
+        ).encode("utf-8")
+    except (TypeError, ValueError, UnicodeError):
+        canonical = b"{}"
+    canonical_name = str(item.get("name") or catalog_row.get("name") or "Unknown item")
+    alias = custom_name.strip() if isinstance(custom_name, str) and custom_name.strip() else None
+    warnings = [warning]
+    unsupported_paths = ["tooltip_model_unavailable"]
+    if ordinary_small_charm:
+        warnings.insert(
+            0,
+            "Rolled rarity and affixes are generated in-game from seed a; "
+            "this build does not decode that native path.",
+        )
+        unsupported_paths.append("generated_affixes_unmodelled:small_charm")
+    stats = []
+    for index, row in enumerate(catalog_row.get("stats") or []):
+        if not isinstance(row, (list, tuple)) or len(row) != 2:
+            continue
+        stats.append({
+            "id": f"catalog:{index}",
+            "statKey": None,
+            "label": str(row[0]),
+            "value": None,
+            "formattedValue": str(row[1]),
+            "minimum": None,
+            "maximum": None,
+            "percent": str(row[1]).strip().endswith("%"),
+            "rolled": True,
+            "saveField": None,
+            "role": "catalog",
+            "confidence": "catalog_only",
+            "catalogLineIndex": index,
+            "sourceRange": str(row[1]),
+        })
+    return {
+        "schemaVersion": 1,
+        "profileId": None,
+        "fingerprint": hashlib.sha256(canonical).hexdigest().upper()[:16],
+        "item": {
+            "name": alias or canonical_name,
+            "canonicalName": canonical_name,
+            "customName": alias,
+            "rarity": "Unresolved" if ordinary_small_charm else item.get("rar"),
+            "baseRarity": item.get("rar") if ordinary_small_charm else None,
+            "rolledRarityKnown": False if ordinary_small_charm else True,
+            "tier": catalog_row.get("tier"),
+            "requiredLevel": catalog_row.get("lvl"),
+            "iconId": item.get("spr"),
+            "catalogId": catalog_row.get("id"),
+        },
+        "seeds": {
+            field: raw[field] for field in ("a", "i", "s")
+            if isinstance(raw.get(field), (int, float)) and not isinstance(raw.get(field), bool)
+        },
+        "stats": stats,
+        "sockets": [],
+        "identities": [],
+        "rollQuality": {"maxed": 0, "total": 0, "endpointDeficit": 0, "percent": None},
+        "calculation": {
+            "coverage": "catalog_only",
+            "numbersExact": False,
+            "textExact": False,
+            "buildMatched": False,
+            "unsupportedPaths": unsupported_paths,
+            "warnings": warnings,
+        },
+        "buildGuard": {"matched": False, "message": warning},
+    }
+
+
+def _tooltip_runtime_build_status(
+    catalog_row: dict,
+    build_status: object,
+) -> object:
+    """Promote only non-Dice items covered by the exact 7.0.6 roll proof."""
+
+    if not isinstance(build_status, dict):
+        return build_status
+    status = dict(build_status)
+    if status.get("matched") is True:
+        return status
+    expected = str(status.get("expectedSha256") or "").upper()
+    detected = str(status.get("detectedSha256") or "").upper()
+    if not (
+        status.get("code") == "build_mismatch"
+        and expected == EXPECTED_GAME_EXE_SHA256
+        and detected != EXPECTED_GAME_EXE_SHA256
+        and roll_supports_executable_sha256(detected)
+    ):
+        return status
+    if catalog_dice_profile_id(catalog_row) is not None:
+        return status
+    status.update({
+        "matched": True,
+        "code": "ready_compatible",
+        "message": (
+            "Installed Hero Siege build matches an independently audited "
+            "numeric tooltip/roll compatibility proof."
+        ),
+    })
+    return status
+
+
+def _game_tooltip_model(
+    item: dict,
+    *,
+    custom_name: str | None = None,
+    build_status: dict | None = None,
+) -> dict:
+    row = _catalog_row_for_item(item)
+    if _build_exact_tooltip_model is None or TOOLTIP_MODEL_DB is None:
+        return _catalog_only_tooltip_model(item, row, custom_name=custom_name)
+    if build_status is None:
+        try:
+            build_status = GAME_BUILD_GUARD.summary()
+        except Exception as exc:
+            build_status = {
+                "matched": False,
+                "code": "build_check_failed",
+                "message": f"Game build could not be verified: {exc}",
+            }
+    build_status = _tooltip_runtime_build_status(row, build_status)
+    try:
+        model = _build_exact_tooltip_model(
+            row,
+            item.get("raw") if isinstance(item.get("raw"), dict) else {},
+            item.get("rollProfile") if isinstance(item.get("rollProfile"), dict) else None,
+            db=TOOLTIP_MODEL_DB,
+            build_status=build_status,
+            custom_name=custom_name,
+        )
+        identities = model.get("identities") if isinstance(model, dict) else None
+        selector = item.get("skillSelector") if isinstance(item.get("skillSelector"), dict) else {}
+        current_target = selector.get("current") if isinstance(selector.get("current"), dict) else {}
+        if isinstance(identities, list):
+            for identity in identities:
+                if not isinstance(identity, dict):
+                    continue
+                selected = identity.get("selectedIdentity")
+                source = str(identity.get("source") or "")
+                if (
+                    "subskill" in source
+                    and selected == current_target.get("id")
+                    and current_target.get("name")
+                ):
+                    class_name = str(current_target.get("className") or "").strip()
+                    identity["selectedName"] = (
+                        f"{class_name}: {current_target['name']}"
+                        if class_name else str(current_target["name"])
+                    )
+                elif isinstance(selected, int) and not isinstance(selected, bool):
+                    stat_label = TOOLTIP_MODEL_DB.stat_label(selected)
+                    if stat_label.get("label"):
+                        identity["selectedName"] = str(stat_label["label"])
+        return model
+    except Exception as exc:
+        return _catalog_only_tooltip_model(
+            item,
+            row,
+            custom_name=custom_name,
+            warning=f"Exact tooltip could not be calculated: {exc}",
+        )
+
+
+def _attach_game_tooltip(item: dict, build_status: dict | None = None) -> dict:
+    item["gameTooltip"] = _game_tooltip_model(item, build_status=build_status)
+    return item
+
+
+def _vault_item_payload(record, build_status: dict | None = None) -> dict:
     entry = record.decoded_item()
     key = record.source_item_key or "0-0-0--1"
     item = resolve(key, entry.get("data", {}))
+    game_tooltip = _game_tooltip_model(
+        item, custom_name=record.custom_name, build_status=build_status
+    )
     return {
         "id": record.id,
         "collectionId": record.collection_id,
         "collectionName": record.collection_name,
+        "customName": record.custom_name,
         "name": item.get("name", "Unknown item"),
         "rar": item.get("rar", "?"),
         "cls": item.get("cls"),
@@ -894,10 +1405,9 @@ def _vault_item_payload(record) -> dict:
         "w": item.get("w", 1),
         "h": item.get("h", 1),
         "stack": item.get("stack"),
-        "raw": entry.get("data", {}),
-        "rollProfile": item.get("rollProfile"),
-        "skillSelector": item.get("skillSelector"),
-        "sourceLabel": record.source or "Shared Stash",
+        "gameTooltip": game_tooltip,
+        "fingerprint": game_tooltip.get("fingerprint"),
+        "sourceLabel": _vault_source_display(record.source),
         "sourceItemKey": record.source_item_key,
         "createdAt": record.created_at,
     }
@@ -929,6 +1439,14 @@ def read_char(slot: int) -> dict:
     txt = decode_hss(SAVES / f"herosiege{slot}.hss")
     m = re.search(r'inventory="([A-Za-z0-9+/=]+)"', txt)
     inv = json.loads(base64.b64decode(m.group(1))) if m else {}
+    try:
+        tooltip_build_status = GAME_BUILD_GUARD.summary()
+    except Exception:
+        tooltip_build_status = {
+            "matched": False,
+            "code": "build_check_failed",
+            "message": "Game build could not be verified.",
+        }
     out = {"equipped": [], "potions": [], "personal_stash": []}
     for k, v in inv.get("equipped_items", {}).items():
         it = resolve(k, v["data"])
@@ -936,11 +1454,13 @@ def read_char(slot: int) -> dict:
         it["slotName"] = SLOT_NAMES.get(it["g"], f"Slot {it['g']}")
         if v["data"].get("o") is not None:
             it["relicLevel"] = int(float(v["data"]["o"]))
+        _attach_game_tooltip(it, tooltip_build_status)
         out["equipped"].append(it)
     for sec in ("potions", "personal_stash"):
         for k, v in inv.get(sec, {}).items():
             it = resolve(k, v["data"])
             it["pos"] = v.get("pos", [0, 0])
+            _attach_game_tooltip(it, tooltip_build_status)
             out[sec].append(it)
     # bag file
     bags = {}
@@ -955,6 +1475,7 @@ def read_char(slot: int) -> dict:
                 for k, v in items.items():
                     it = resolve(k, v.get("data", {}))
                     it["pos"] = v.get("pos", [0, 0])
+                    _attach_game_tooltip(it, tooltip_build_status)
                     lst.append(it)
                 bags[tab] = lst
         except Exception:
@@ -965,6 +1486,14 @@ def read_char(slot: int) -> dict:
 
 def read_stash() -> dict:
     d = json.loads(decode_hss(SAVES / "stash.hss"))
+    try:
+        tooltip_build_status = GAME_BUILD_GUARD.summary()
+    except Exception:
+        tooltip_build_status = {
+            "matched": False,
+            "code": "build_check_failed",
+            "message": "Game build could not be verified.",
+        }
     out = {}
     for tab, items in d.items():
         if not isinstance(items, dict) or tab == "stash_tab_data":
@@ -976,6 +1505,7 @@ def read_stash() -> dict:
             it = resolve(k, v["data"])
             if "pos" in v:
                 it["pos"] = v["pos"]
+            _attach_game_tooltip(it, tooltip_build_status)
             lst.append(it)
         out[tab] = lst
     return out
@@ -1037,6 +1567,22 @@ def roll_profile_field_seeds(profile: dict | None) -> dict[str, float]:
     return output
 
 
+def roll_profile_max_sockets(profile: dict | None) -> int | None:
+    """Return a validated native socket-capacity maximum from a roll profile.
+
+    ``maxSockets`` comes from the same authenticated definition database as the
+    proven seed chains.  The save format supports at most six socket payloads;
+    reject anything outside that native range instead of serializing it.
+    """
+
+    if not isinstance(profile, dict):
+        return None
+    value = profile.get("maxSockets")
+    if isinstance(value, bool) or not isinstance(value, int):
+        return None
+    return value if 1 <= value <= 6 else None
+
+
 def preferred_item_seed(row: dict) -> float:
     """Use a proven item profile when one exists; otherwise create a real roll."""
     profile = row.get("rollProfile") or catalog_roll_profile(row)
@@ -1045,11 +1591,11 @@ def preferred_item_seed(row: dict) -> float:
 
 
 def item_seed_for_generation(row: dict, skill_id: object = None) -> float:
-    """Return the ordinary roll seed or an exact, verified Dice target seed."""
+    """Return the ordinary roll seed or an exact skill/class target seed."""
 
     if skill_id is None:
         return preferred_item_seed(row)
-    return float(dice_target_for_row(row, skill_id)["seed"])
+    return float(skill_target_for_row(row, skill_id)["seed"])
 
 
 def preferred_runeword_seeds(
@@ -1126,7 +1672,7 @@ def forged_entry_matches(entry: object, recipe: dict, base: dict) -> bool:
 def make_data(r: dict, equipped_g=None, skill_id: object = None) -> dict:
     c = 1.0 if r["kind"] == "unique" else 0.0
     j = float(r["sub"] if r["cls"] == 3 else 0)
-    profile = generation_roll_profile(r)
+    profile = generation_roll_profile_for_request(r, skill_id)
     verified_seeds = roll_profile_field_seeds(profile)
     item_seed = (
         item_seed_for_generation(r, skill_id)
@@ -1141,6 +1687,12 @@ def make_data(r: dict, equipped_g=None, skill_id: object = None) -> dict:
     if r.get("cls") in (12, 13, 14, 15):
         # Native S10 drops use the compact a/b/c/j/o shape in dedicated bags.
         return {"a": d["a"], "j": 0.0, "b": d["b"], "c": 0.0, "o": 1.0}
+    max_sockets = roll_profile_max_sockets(profile)
+    if max_sockets is not None:
+        # The game gives an explicit saved override precedence over the CPR
+        # roll.  Persist the proven maximum so an item generated as Perfect /
+        # Best Possible cannot later surface with a stale one-socket override.
+        d["zz"] = {"sockets": float(max_sockets)}
     if equipped_g is not None:
         d.update({"g": float(equipped_g), "d": 0.0, "n": 0.0, "e": 0.0})
     elif c == 1.0:
@@ -1228,6 +1780,748 @@ def pos_free(items: dict, tab: str, pos, w: int, h: int, skip_key=None) -> bool:
     return True
 
 
+def _bulk_stash_tab_label(tab: str) -> str:
+    return "Unique Tab" if tab == "unique_items" else _vault_shared_grid_label(tab)
+
+
+def _bulk_deposit_source_tab(value: object = None) -> str:
+    """Return one exact bulk-deposit source or the backwards-compatible all scope."""
+
+    if value is None or value == BULK_DEPOSIT_ALL_TABS:
+        return BULK_DEPOSIT_ALL_TABS
+    if not isinstance(value, str) or value not in BULK_STASH_ITEM_TABS:
+        raise VaultValidationError(
+            "sourceTab must be all or an exact Season 10 Shared Stash item tab"
+        )
+    return value
+
+
+def _bulk_deposit_source_label(source_tab: str) -> str:
+    if source_tab == BULK_DEPOSIT_ALL_TABS:
+        return "All item tabs"
+    return _bulk_stash_tab_label(source_tab)
+
+
+def _bulk_deposit_source_options() -> list[dict[str, str]]:
+    """Stable UI choices; the backend still validates every submitted value."""
+
+    ordered_tabs = (
+        *(f"stash_tab_{index}" for index in range(1, 20)),
+        "material_tab",
+        "socket_tab",
+        "unique_items",
+    )
+    return [
+        {
+            "tab": BULK_DEPOSIT_ALL_TABS,
+            "label": "All item tabs (Shared 1-19 + Material + Socket + Unique)",
+        },
+        *[
+            {"tab": tab, "label": _bulk_stash_tab_label(tab)}
+            for tab in ordered_tabs
+        ],
+    ]
+
+
+def _bulk_withdrawal_destination_tab(value: object = None) -> str:
+    """Return an exact Shared Stash destination or native automatic routing."""
+
+    if value is None or value == BULK_WITHDRAWAL_AUTO:
+        return BULK_WITHDRAWAL_AUTO
+    if not isinstance(value, str) or value not in BULK_STASH_ITEM_TABS:
+        raise VaultValidationError(
+            "destinationTab must be auto or an exact Season 10 Shared Stash item tab"
+        )
+    return value
+
+
+def _bulk_withdrawal_destination_label(destination_tab: str) -> str:
+    if destination_tab == BULK_WITHDRAWAL_AUTO:
+        return "Automatic (original tabs + safe routing)"
+    return _bulk_stash_tab_label(destination_tab)
+
+
+def _bulk_withdrawal_destination_options() -> list[dict[str, str]]:
+    """Stable, strictly whitelisted bulk-withdrawal destinations for the UI."""
+
+    ordered_tabs = (
+        *(f"stash_tab_{index}" for index in range(1, 20)),
+        "material_tab",
+        "socket_tab",
+        "unique_items",
+    )
+    return [
+        {
+            "tab": BULK_WITHDRAWAL_AUTO,
+            "label": "Automatic (original tabs + safe routing)",
+        },
+        *[
+            {"tab": tab, "label": _bulk_stash_tab_label(tab)}
+            for tab in ordered_tabs
+        ],
+    ]
+
+
+def _bulk_validate_stash_document(document: object) -> dict:
+    if not isinstance(document, dict):
+        raise VaultValidationError("Shared Stash root is not an object")
+    try:
+        validate_stash_document(document)
+    except HSSRecoveryError as exc:
+        raise VaultValidationError(
+            f"Shared Stash does not match the complete Season 10 schema ({exc}); "
+            "run Save Health Check first"
+        ) from exc
+    for tab in BULK_STASH_ITEM_TABS:
+        items = document.get(tab)
+        if not isinstance(items, dict):
+            raise VaultValidationError(
+                f"{_bulk_stash_tab_label(tab)} is missing or malformed; run Save Health Check first"
+            )
+        if tab != "unique_items":
+            grid_error = _stash_fill_grid_error(items, tab)
+            if grid_error:
+                raise VaultValidationError(
+                    f"{_bulk_stash_tab_label(tab)} has an invalid grid ({grid_error}); "
+                    "run Save Health Check first"
+                )
+        else:
+            for key, entry in items.items():
+                if not isinstance(entry, dict) or not isinstance(entry.get("data"), dict):
+                    raise VaultValidationError(
+                        f"Unique Tab record {key!r} is malformed; run Save Health Check first"
+                    )
+    return document
+
+
+def _bulk_existing_origin_tab(record, journal_origins: dict[str, str]) -> str | None:
+    origin = journal_origins.get(record.id)
+    if origin in BULK_STASH_ITEM_TABS:
+        return origin
+    if record.source in BULK_STASH_ITEM_TABS:
+        return record.source
+    source = str(record.source or "")
+    match = re.fullmatch(r"Shared Stash Tab (\d+)", source)
+    if match:
+        candidate = f"stash_tab_{int(match.group(1))}"
+        return candidate if candidate in BULK_STASH_ITEM_TABS else None
+    match = re.fullmatch(r"(Material|Socket) Tab(?: (\d+))?", source)
+    if match and not match.group(2):
+        return "material_tab" if match.group(1) == "Material" else "socket_tab"
+    if source.casefold() == "unique tab":
+        return "unique_items"
+    return None
+
+
+def _bulk_item_class(key: str | None, data: dict, resolved: dict) -> int:
+    if not isinstance(key, str):
+        raise VaultValidationError("a Vault item has no original native class key")
+    match = re.search(r"-(-?\d+)$", key)
+    if not match:
+        raise VaultValidationError("a Vault item has no original native class key")
+    return int(match.group(1))
+
+
+def _bulk_deterministic_key(
+    record_id: str, cls: int, tab: str, existing: dict, preferred: str | None
+) -> str:
+    if preferred and preferred not in existing:
+        return preferred
+    digest = hashlib.sha256(f"{record_id}|{tab}|{cls}".encode("utf-8")).digest()
+    numeric = 1_000_000_000_000 + (
+        int.from_bytes(digest[:8], "big") % 8_000_000_000_000
+    )
+    candidate = f"0-0-{numeric}-{cls}"
+    while candidate in existing:
+        numeric += 1
+        if numeric >= 9_000_000_000_000:
+            numeric = 1_000_000_000_000
+        candidate = f"0-0-{numeric}-{cls}"
+    return candidate
+
+
+def _bulk_clean_text_field(value: object, label: str) -> str:
+    """Mirror the Vault metadata limits so a successful preview can be prepared."""
+
+    if not isinstance(value, str):
+        raise VaultValidationError(f"{label} must be text")
+    cleaned = value.strip()
+    if not cleaned:
+        raise VaultValidationError(f"{label} cannot be empty")
+    if len(cleaned) > MAX_TEXT_FIELD_LENGTH:
+        raise VaultValidationError(
+            f"{label} cannot exceed {MAX_TEXT_FIELD_LENGTH} characters"
+        )
+    if any(char in "\x00\r\n" for char in cleaned):
+        raise VaultValidationError(f"{label} contains forbidden control characters")
+    return cleaned
+
+
+def _bulk_native_item_info(
+    source_key: str, raw_json: str, origin_tab: str
+) -> tuple[dict, dict, int]:
+    """Prove that one exact native record can make the round trip safely."""
+
+    decoded = validate_raw_item_json(raw_json)
+    data = decoded["data"]
+    try:
+        resolved = resolve(source_key, data)
+        cls = _bulk_item_class(source_key, data, resolved)
+    except Exception as exc:
+        raise VaultValidationError(
+            f"{_bulk_stash_tab_label(origin_tab)} item {source_key!r} has an "
+            "unsupported native key and was left untouched"
+        ) from exc
+    known_address = resolved.get("cid") is not None or resolved.get("rwcid") is not None
+    if origin_tab != "unique_items" and not known_address:
+        raise VaultValidationError(
+            f"{_bulk_stash_tab_label(origin_tab)} item {source_key!r} is not in "
+            "the proven Season 10 catalog; it was left untouched"
+        )
+    return decoded, resolved, cls
+
+
+def _bulk_encode_stash_document(data: dict) -> str:
+    """Encode only a stash that both HSS recovery limits can decode later."""
+
+    serialized = json.dumps(data, separators=(", ", ": "))
+    try:
+        decoded_bytes = len(serialized.encode("latin-1")) * 2
+    except UnicodeEncodeError as exc:
+        raise VaultValidationError(
+            "The planned stash contains unsupported text; nothing was moved"
+        ) from exc
+    if decoded_bytes > MAX_HSS_DECODED_BYTES:
+        raise VaultValidationError(
+            "The planned stash would exceed the supported decoded HSS size limit; "
+            "nothing was moved"
+        )
+    encoded = encode_hss(serialized)
+    if len(encoded.encode("ascii")) > MAX_HSS_FILE_BYTES:
+        raise VaultValidationError(
+            "The planned stash would exceed the supported HSS file size limit; "
+            "nothing was moved"
+        )
+    return encoded
+
+
+def _bulk_deposit_plan(
+    document: dict,
+    collection_id: int,
+    source_tab: str = BULK_DEPOSIT_ALL_TABS,
+) -> dict:
+    _bulk_validate_stash_document(document)
+    source_tab = _bulk_deposit_source_tab(source_tab)
+    selected_tabs = (
+        BULK_STASH_ITEM_TABS
+        if source_tab == BULK_DEPOSIT_ALL_TABS
+        else (source_tab,)
+    )
+    work = copy.deepcopy(document)
+    entries = []
+    tab_counts = []
+    for tab in selected_tabs:
+        items = document[tab]
+        tab_counts.append({
+            "tab": tab,
+            "label": _bulk_stash_tab_label(tab),
+            "count": len(items),
+        })
+        for key in sorted(items):
+            entry = items[key]
+            raw_json = _vault_item_json(entry)
+            raw_source_key = str(key)
+            source_key = _bulk_clean_text_field(raw_source_key, "source key")
+            if source_key != raw_source_key:
+                raise VaultValidationError(
+                    f"{_bulk_stash_tab_label(tab)} item key {raw_source_key!r} "
+                    "contains unsupported outer whitespace; it was left untouched"
+                )
+            _decoded, resolved, _cls = _bulk_native_item_info(
+                source_key, raw_json, tab
+            )
+            label = _bulk_clean_text_field(
+                str(resolved.get("name") or source_key), "item label"
+            )
+            entries.append({
+                "raw_item_json": raw_json,
+                "source_tab": tab,
+                "source_key": source_key,
+                "label": label,
+                # Keep the machine tab, not only a friendly label. This makes
+                # a later full return origin-exact even across app restarts.
+                "source": tab,
+            })
+        work[tab] = {}
+    intent_hash = canonical_request_hash({
+        "direction": "bulk_deposit",
+        "collectionId": collection_id,
+        "items": [
+            {
+                "sourceTab": row["source_tab"],
+                "sourceKey": row["source_key"],
+                "rawSha256": hashlib.sha256(
+                    row["raw_item_json"].encode("utf-8")
+                ).hexdigest(),
+            }
+            for row in entries
+        ],
+    })
+    encoded_after = _bulk_encode_stash_document(work)
+    return {
+        "entries": entries,
+        "work": work,
+        "encodedAfter": encoded_after,
+        "intentHash": intent_hash,
+        "tabCounts": [row for row in tab_counts if row["count"]],
+        "itemCount": len(entries),
+        "customNamedCount": 0,
+        "sourceTab": source_tab,
+        "sourceLabel": _bulk_deposit_source_label(source_tab),
+    }
+
+
+def _bulk_withdrawal_candidates(origin: str | None, cls: int, unique: bool) -> list[str]:
+    candidates: list[str] = []
+
+    def add(tab: str) -> None:
+        if tab in BULK_STASH_ITEM_TABS and tab not in candidates:
+            candidates.append(tab)
+
+    if unique:
+        add("unique_items")
+        return candidates
+    if cls in {13, 14}:
+        add("material_tab")
+    elif cls == 15:
+        add("socket_tab")
+    # Exact original cells were already reserved in a separate first pass.
+    # For displaced flexible records, prefer their dedicated container so a
+    # material/socket never consumes the only slot a generic item can use.
+    if origin:
+        add(origin)
+    for index in range(1, 20):
+        add(f"stash_tab_{index}")
+    return candidates
+
+
+def _bulk_vault_metadata_hash(record) -> str:
+    return canonical_request_hash({
+        "id": record.id,
+        "collectionId": record.collection_id,
+        "collectionName": record.collection_name,
+        "sourceItemKey": record.source_item_key,
+        "label": record.label,
+        "customName": record.custom_name,
+        "source": record.source,
+        "depositKey": record.deposit_key,
+        "createdAt": record.created_at,
+        "updatedAt": record.updated_at,
+    })
+
+
+def _bulk_withdrawal_plan(
+    document: dict,
+    records: list,
+    journal_origins: dict[str, str],
+    destination_tab: str = BULK_WITHDRAWAL_AUTO,
+) -> dict:
+    _bulk_validate_stash_document(document)
+    destination_tab = _bulk_withdrawal_destination_tab(destination_tab)
+    work = copy.deepcopy(document)
+    prepared = []
+    custom_named_count = 0
+    for record in records:
+        actual_sha256 = hashlib.sha256(
+            record.raw_item_json.encode("utf-8")
+        ).hexdigest()
+        if actual_sha256 != record.raw_sha256:
+            raise VaultValidationError(
+                f"Vault item {record.id[:8]} failed its integrity hash; it remains safe in Infinite Vault"
+            )
+        try:
+            entry = validate_raw_item_json(record.raw_item_json)
+        except VaultValidationError as exc:
+            raise VaultValidationError(
+                f"Vault item {record.id[:8]} is malformed; it remains safe in Infinite Vault"
+            ) from exc
+        data = entry["data"]
+        key = record.source_item_key
+        try:
+            if not isinstance(key, str):
+                raise VaultValidationError(
+                    f"Vault item {record.id[:8]} has no original native key"
+                )
+            resolved = resolve(key, data)
+            width = max(1, int(resolved.get("w") or 1))
+            height = max(1, int(resolved.get("h") or 1))
+        except Exception as exc:
+            raise VaultValidationError(
+                f"Vault item {record.id[:8]} has unknown dimensions and cannot be packed safely"
+            ) from exc
+        cls = _bulk_item_class(key, data, resolved)
+        try:
+            unique = int(data.get("c", 0)) == 1
+        except (TypeError, ValueError):
+            unique = False
+        if destination_tab != BULK_WITHDRAWAL_AUTO:
+            if destination_tab == "unique_items":
+                if not unique:
+                    raise VaultValidationError(
+                        f"{record.custom_name or record.label or record.id[:8]} is not a Unique item; "
+                        "nothing was moved"
+                    )
+            elif destination_tab == "material_tab" and (
+                unique or cls not in {13, 14}
+            ):
+                raise VaultValidationError(
+                    f"{record.custom_name or record.label or record.id[:8]} is not a Material/Consumable; "
+                    "nothing was moved"
+                )
+            elif destination_tab == "socket_tab" and (unique or cls != 15):
+                raise VaultValidationError(
+                    f"{record.custom_name or record.label or record.id[:8]} is not a Socket item; "
+                    "nothing was moved"
+                )
+            # Numbered Shared Stash grids natively accept both normal and
+            # Unique items. Their exact dimensions are verified below before
+            # any placement is planned.
+        origin = _bulk_existing_origin_tab(record, journal_origins)
+        known_address = resolved.get("cid") is not None or resolved.get("rwcid") is not None
+        exact_grid_destination = destination_tab not in {
+            BULK_WITHDRAWAL_AUTO, "unique_items"
+        }
+        if not known_address and (
+            origin != "unique_items" or exact_grid_destination
+        ):
+            raise VaultValidationError(
+                f"Vault item {record.id[:8]} has unknown grid dimensions; it remains safe in Infinite Vault"
+            )
+        prepared.append({
+            "record": record,
+            "entry": entry,
+            "cls": cls,
+            "width": width,
+            "height": height,
+            "origin": origin,
+            "unique": unique,
+            "candidates": (
+                _bulk_withdrawal_candidates(origin, cls, unique)
+                if destination_tab == BULK_WITHDRAWAL_AUTO
+                else [destination_tab]
+            ),
+        })
+        if record.custom_name:
+            custom_named_count += 1
+
+    # Larger records first reduces fragmentation, while every record still
+    # gets its exact origin position before any first-free fallback.
+    prepared.sort(
+        key=lambda row: (
+            -(row["width"] * row["height"]),
+            -max(row["width"], row["height"]),
+            row["record"].created_at,
+            row["record"].id,
+        )
+    )
+    targets = []
+    destination_counts: dict[str, int] = {}
+
+    def record_target(row: dict, tab: str, target_key: str, target_pos) -> None:
+        record = row["record"]
+        target_entry = copy.deepcopy(row["entry"])
+        if target_pos is None:
+            target_entry.pop("pos", None)
+        else:
+            target_entry["pos"] = target_pos
+        work[tab][target_key] = target_entry
+        row["placed"] = True
+        targets.append({
+            "item_id": record.id,
+            "raw_sha256": record.raw_sha256,
+            "metadata_sha256": _bulk_vault_metadata_hash(record),
+            "target_tab": tab,
+            "target_key": target_key,
+            "target_pos": (
+                [int(target_pos[0]), int(target_pos[1])]
+                if target_pos is not None else None
+            ),
+        })
+        destination_counts[tab] = destination_counts.get(tab, 0) + 1
+
+    for row in prepared:
+        row["placed"] = False
+
+    # Automatic routing reserves every still-free exact origin position first.
+    # An exact destination intentionally ignores other origin tabs and packs
+    # every compatible record into the selected container only.
+    if destination_tab == BULK_WITHDRAWAL_AUTO:
+        for row in prepared:
+            origin = row["origin"]
+            if origin not in BULK_STASH_ITEM_TABS:
+                continue
+            items = work[origin]
+            target_key = _bulk_deterministic_key(
+                row["record"].id, row["cls"], origin, items,
+                row["record"].source_item_key,
+            )
+            if origin == "unique_items":
+                record_target(row, origin, target_key, None)
+                continue
+            original_pos = row["entry"].get("pos")
+            if (
+                isinstance(original_pos, list)
+                and len(original_pos) >= 2
+                and pos_free(
+                    items, origin, original_pos, row["width"], row["height"]
+                )
+            ):
+                record_target(
+                    row, origin, target_key,
+                    [float(int(original_pos[0])), float(int(original_pos[1]))],
+                )
+
+    for row in prepared:
+        if row["placed"]:
+            continue
+        record = row["record"]
+        placed = False
+        for tab in row["candidates"]:
+            items = work[tab]
+            target_key = _bulk_deterministic_key(
+                record.id, row["cls"], tab, items, record.source_item_key
+            )
+            if tab == "unique_items":
+                target_pos = None
+                placed = True
+            else:
+                target_pos = find_free_pos(
+                    items, tab, row["width"], row["height"]
+                )
+                if target_pos is None:
+                    continue
+                placed = True
+            if placed:
+                record_target(row, tab, target_key, target_pos)
+                break
+        if not placed:
+            raise VaultValidationError(
+                f"No safe Shared Stash space remains for {record.custom_name or record.label or record.id[:8]}; "
+                "nothing was moved"
+            )
+
+    intent = {
+        "direction": "bulk_withdrawal",
+        "items": [
+            {
+                "itemId": row["item_id"],
+                "rawSha256": row["raw_sha256"],
+                "metadataSha256": row["metadata_sha256"],
+                "targetTab": row["target_tab"],
+                "targetKey": row["target_key"],
+                "targetPos": row["target_pos"],
+            }
+            for row in targets
+        ],
+    }
+    if destination_tab != BULK_WITHDRAWAL_AUTO:
+        intent["destinationTab"] = destination_tab
+    intent_hash = canonical_request_hash(intent)
+    encoded_after = _bulk_encode_stash_document(work)
+    return {
+        "targets": targets,
+        "work": work,
+        "encodedAfter": encoded_after,
+        "intentHash": intent_hash,
+        "tabCounts": [
+            {
+                "tab": tab,
+                "label": _bulk_stash_tab_label(tab),
+                "count": destination_counts[tab],
+            }
+            for tab in BULK_STASH_ITEM_TABS if destination_counts.get(tab)
+        ],
+        "itemCount": len(targets),
+        "customNamedCount": custom_named_count,
+        "destinationTab": destination_tab,
+        "destinationLabel": _bulk_withdrawal_destination_label(destination_tab),
+    }
+
+
+def _bulk_preview_token(
+    direction: str,
+    stash_sha256: str,
+    intent_hash: str,
+    item_count: int,
+    collection_id: int | None,
+) -> str:
+    return canonical_request_hash({
+        "kind": "vault_bulk_preview",
+        "routingVersion": BULK_ROUTING_VERSION,
+        "direction": direction,
+        "collectionId": collection_id,
+        "stashSha256": stash_sha256,
+        "intentHash": intent_hash,
+        "itemCount": item_count,
+    })
+
+
+def _bulk_plan_locked(
+    direction: str,
+    collection_id: int | None,
+    source_tab: object = None,
+    destination_tab: object = None,
+) -> dict:
+    stash_path = SAVES / "stash.hss"
+    stash_sha256 = _file_sha256(stash_path)
+    document = json.loads(decode_hss_bytes_strict(stash_path.read_bytes(), XOR_KEY))
+    store = vault_store()
+    collection_name = None
+    if direction == "stash-to-vault":
+        source_tab = _bulk_deposit_source_tab(source_tab)
+        if collection_id is None:
+            raise VaultValidationError("a destination Vault collection is required")
+        collection = next(
+            (row for row in store.list_collections() if row.id == collection_id), None
+        )
+        if collection is None:
+            raise VaultValidationError("destination Vault collection was not found")
+        collection_name = collection.name
+        plan = _bulk_deposit_plan(document, collection_id, source_tab)
+    elif direction == "vault-to-stash":
+        if source_tab not in (None, BULK_DEPOSIT_ALL_TABS):
+            raise VaultValidationError(
+                "sourceTab can only be used when moving Shared Stash items into the Vault"
+            )
+        source_tab = None
+        destination_tab = _bulk_withdrawal_destination_tab(destination_tab)
+        records = store.list_all_available_items()
+        plan = _bulk_withdrawal_plan(
+            document, records, store.available_item_origin_tabs(), destination_tab
+        ) if records else {
+            "targets": [], "work": document,
+            "encodedAfter": _bulk_encode_stash_document(document),
+            "intentHash": canonical_request_hash({
+                "direction": "bulk_withdrawal", "items": [],
+                **({"destinationTab": destination_tab}
+                   if destination_tab != BULK_WITHDRAWAL_AUTO else {}),
+            }),
+            "tabCounts": [], "itemCount": 0, "customNamedCount": 0,
+            "destinationTab": destination_tab,
+            "destinationLabel": _bulk_withdrawal_destination_label(destination_tab),
+        }
+    else:
+        raise VaultValidationError("unknown bulk transfer direction")
+    plan.update({
+        "direction": direction,
+        "collectionId": collection_id,
+        "collectionName": collection_name,
+        "sourceTab": source_tab,
+        "sourceLabel": (
+            _bulk_deposit_source_label(source_tab)
+            if direction == "stash-to-vault" else None
+        ),
+        "destinationTab": (
+            plan.get("destinationTab") if direction == "vault-to-stash" else None
+        ),
+        "destinationLabel": (
+            plan.get("destinationLabel") if direction == "vault-to-stash" else None
+        ),
+        "stashSha256": stash_sha256,
+        "previewToken": _bulk_preview_token(
+            direction, stash_sha256, plan["intentHash"], plan["itemCount"],
+            collection_id if direction == "stash-to-vault" else None,
+        ),
+    })
+    return plan
+
+
+def _bulk_public_preview(plan: dict, *, game_is_running: bool) -> dict:
+    item_count = int(plan["itemCount"])
+    return {
+        "direction": plan["direction"],
+        "itemCount": item_count,
+        "tabCounts": plan["tabCounts"],
+        "collectionId": plan.get("collectionId"),
+        "collectionName": plan.get("collectionName"),
+        "sourceTab": plan.get("sourceTab"),
+        "sourceLabel": plan.get("sourceLabel"),
+        "destinationTab": plan.get("destinationTab"),
+        "destinationLabel": plan.get("destinationLabel"),
+        "customNamedCount": int(plan.get("customNamedCount", 0)),
+        "previewToken": plan["previewToken"],
+        "routingVersion": BULK_ROUTING_VERSION,
+        "gameRunning": game_is_running,
+        "canRun": bool(item_count and not game_is_running),
+        "empty": item_count == 0,
+    }
+
+
+def vault_bulk_preview(query: dict) -> dict:
+    direction = query.get("direction", [""])[0]
+    collection_id = None
+    source_tab = None
+    destination_tab = None
+    if direction == "stash-to-vault":
+        if "destinationTab" in query:
+            return {
+                "err": "destinationTab can only be used when returning Vault items to Shared Stash"
+            }
+        raw_collection = query.get("collectionId", [None])[0]
+        try:
+            collection_id = int(raw_collection)
+        except (TypeError, ValueError):
+            return {"err": "Select a destination Vault collection."}
+        try:
+            source_tab = _bulk_deposit_source_tab(
+                query.get("sourceTab", [None])[0]
+            )
+        except VaultValidationError as exc:
+            return {"err": str(exc)}
+    elif direction == "vault-to-stash":
+        if query.get("sourceTab", [None])[0] not in (
+            None, BULK_DEPOSIT_ALL_TABS
+        ):
+            return {
+                "err": "sourceTab can only be used when moving Shared Stash items into the Vault"
+            }
+        try:
+            destination_tab = _bulk_withdrawal_destination_tab(
+                query.get("destinationTab", [None])[0]
+            )
+        except VaultValidationError as exc:
+            return {"err": str(exc)}
+    elif "destinationTab" in query:
+        return {
+            "err": "destinationTab can only be used when returning Vault items to Shared Stash"
+        }
+    peer_error = _active_peer_editor_error()
+    if peer_error:
+        return {"err": peer_error}
+    try:
+        with SAVE_WRITE_LOCK:
+            stash_path = SAVES / "stash.hss"
+            with _exclusive_save_file(stash_path):
+                peer_error = _active_peer_editor_error()
+                if peer_error:
+                    return {"err": peer_error}
+                running = game_running()
+                if not running:
+                    recovery = _reconcile_vault_transfers_locked(stash_path)
+                    if recovery.get("err"):
+                        return {"err": recovery["err"]}
+                    if recovery.get("pending") or recovery.get("conflicts"):
+                        return {
+                            "err": "An interrupted Infinite Vault transfer must be recovered first."
+                        }
+                plan = _bulk_plan_locked(
+                    direction, collection_id, source_tab, destination_tab
+                )
+                return _bulk_public_preview(plan, game_is_running=running)
+    except (VaultError, OSError, ValueError, json.JSONDecodeError) as exc:
+        return {"err": f"Bulk transfer preview failed: {exc}"}
+
+
 def _vault_transfer_result(transfer, backup_name: str = "") -> dict:
     if transfer.status == "conflict":
         return {"err": "Infinite Vault transfer needs recovery: " + (transfer.error or "state conflict")}
@@ -1251,56 +2545,201 @@ def _reconcile_vault_transfers_locked(stash_path: Path) -> dict:
         return {"recovered": 0, "conflicts": 1, "pending": None,
                 "err": "stash.hss is missing; pending vault transfers were left untouched"}
     recovered = 0
+    recovery_warnings = []
     current_hash = _file_sha256(stash_path)
-    stash = json.loads(decode_hss(stash_path))
     store = vault_store()
+    stash = None
+
+    def decoded_stash() -> dict:
+        nonlocal stash
+        if stash is None:
+            stash = json.loads(decode_hss(stash_path))
+        return stash
+
+    # Parent batches are always resolved as a whole. Their member rows are
+    # deliberately excluded from list_pending_transfers().
+    for batch in store.list_pending_transfer_batches():
+        previous = batch.status
+        if current_hash in {batch.stash_before_sha256, batch.stash_after_sha256}:
+            updated_batch = store.reconcile_transfer_batch(
+                batch.request_id, current_hash
+            )
+        else:
+            members = store.list_transfer_batch_members(batch.request_id)
+            try:
+                document = decoded_stash()
+            except Exception:
+                # When the save cannot be decoded there is no trustworthy
+                # per-item evidence.  Resolve toward Vault ownership: make
+                # prepared deposit copies available, or release withdrawal
+                # reservations back to the Vault.  This may leave duplicates
+                # in an unreadable/recovered stash, but never destroys the
+                # only item copy we can still prove and inspect.
+                outcome = (
+                    "committed" if batch.direction == "deposit" else "cancelled"
+                )
+                updated_batch = store.resolve_transfer_batch_by_evidence(
+                    batch.request_id, outcome, current_hash,
+                    "stash payload was unreadable; Vault ownership was preserved and Shared Stash may contain duplicate copies",
+                )
+                recovery_warnings.append({
+                    "code": "vault_ownership_preserved_possible_duplicate",
+                    "requestId": batch.request_id,
+                    "direction": batch.direction,
+                    "itemCount": batch.item_count,
+                    "outcome": outcome,
+                    "possibleDuplicate": True,
+                    "message": (
+                        f"Vault ownership was preserved for {batch.item_count} items because "
+                        "stash.hss could not be decoded. Shared Stash may contain duplicate copies after recovery."
+                    ),
+                })
+            else:
+                if batch.direction == "deposit":
+                    evidence = []
+                    for member in members:
+                        entries = document.get(member.source_tab, {})
+                        candidate = (
+                            entries.get(member.source_key)
+                            if isinstance(entries, dict) else None
+                        )
+                        evidence.append(candidate == member.decoded_item())
+                    if all(evidence):
+                        updated_batch = store.resolve_transfer_batch_by_evidence(
+                            batch.request_id, "cancelled", current_hash,
+                            "all exact journaled source entries still exist",
+                        )
+                    elif not any(evidence):
+                        updated_batch = store.resolve_transfer_batch_by_evidence(
+                            batch.request_id, "committed", current_hash,
+                            "all exact journaled source entries are absent",
+                        )
+                    else:
+                        updated_batch = store.mark_transfer_batch_conflict(
+                            batch.request_id,
+                            "only part of the prepared deposit batch exists in Shared Stash",
+                            observed_stash_sha256=current_hash,
+                        )
+                else:
+                    exact_targets = []
+                    empty_targets = []
+                    for member in members:
+                        entries = document.get(member.target_tab, {})
+                        candidate = (
+                            entries.get(member.target_key)
+                            if isinstance(entries, dict) else None
+                        )
+                        expected = member.decoded_item()
+                        if member.target_tab == "unique_items":
+                            expected.pop("pos", None)
+                        elif member.target_pos is not None:
+                            expected["pos"] = [
+                                float(member.target_pos[0]), float(member.target_pos[1])
+                            ]
+                        exact_targets.append(candidate == expected)
+                        empty_targets.append(candidate is None)
+                    if all(exact_targets):
+                        updated_batch = store.resolve_transfer_batch_by_evidence(
+                            batch.request_id, "committed", current_hash,
+                            "all exact prepared target entries exist",
+                        )
+                    elif all(empty_targets):
+                        updated_batch = store.resolve_transfer_batch_by_evidence(
+                            batch.request_id, "cancelled", current_hash,
+                            "all prepared target keys are absent",
+                        )
+                    else:
+                        updated_batch = store.mark_transfer_batch_conflict(
+                            batch.request_id,
+                            "only part of the prepared withdrawal batch exists in Shared Stash",
+                            observed_stash_sha256=current_hash,
+                        )
+        if (
+            updated_batch.status in {"committed", "cancelled"}
+            and previous not in {"committed", "cancelled"}
+        ):
+            recovered += 1
+
     pending = store.list_pending_transfers()
     for transfer in pending:
         previous = transfer.status
         if current_hash in {transfer.stash_before_sha256, transfer.stash_after_sha256}:
             updated = store.reconcile_transfer(transfer.request_id, current_hash)
-        elif transfer.direction == "deposit":
-            expected = transfer.decoded_item()
-            source_entries = stash.get(transfer.source_tab, {})
-            source_entry = (
-                source_entries.get(transfer.source_key)
-                if isinstance(source_entries, dict) else None
-            )
-            exact_source_exists = source_entry == expected
-            outcome = "cancelled" if exact_source_exists else "committed"
-            updated = store.resolve_transfer_by_evidence(
-                transfer.request_id, outcome, current_hash,
-                "exact journaled source entry exists" if exact_source_exists
-                else "exact journaled source entry is absent",
-            )
         else:
-            entries = stash.get(transfer.target_tab, {})
-            candidate = entries.get(transfer.target_key) if isinstance(entries, dict) else None
-            expected = transfer.decoded_item()
-            if transfer.target_pos is not None:
-                expected["pos"] = [float(transfer.target_pos[0]), float(transfer.target_pos[1])]
-            if candidate == expected:
-                updated = store.resolve_transfer_by_evidence(
-                    transfer.request_id, "committed", current_hash,
-                    "exact prepared target entry exists",
+            try:
+                document = decoded_stash()
+            except Exception:
+                # Legacy single-item journals need the same fail-safe as
+                # parent batches.  With no readable per-item evidence, keep
+                # the protected Vault-side copy/reservation and explicitly
+                # warn that a recovered stash could contain a duplicate.
+                outcome = (
+                    "committed" if transfer.direction == "deposit" else "cancelled"
                 )
-            elif candidate is None:
                 updated = store.resolve_transfer_by_evidence(
-                    transfer.request_id, "cancelled", current_hash,
-                    "prepared target key is absent",
+                    transfer.request_id, outcome, current_hash,
+                    "stash payload was unreadable; Vault ownership was preserved and Shared Stash may contain a duplicate copy",
                 )
+                recovery_warnings.append({
+                    "code": "vault_ownership_preserved_possible_duplicate",
+                    "requestId": transfer.request_id,
+                    "direction": transfer.direction,
+                    "itemCount": 1,
+                    "outcome": outcome,
+                    "possibleDuplicate": True,
+                    "message": (
+                        "Vault ownership was preserved for 1 item because stash.hss "
+                        "could not be decoded. Shared Stash may contain a duplicate copy after recovery."
+                    ),
+                })
             else:
-                updated = store.resolve_transfer_by_evidence(
-                    transfer.request_id, "cancelled", current_hash,
-                    "prepared target key contains a different item",
-                )
+                if transfer.direction == "deposit":
+                    expected = transfer.decoded_item()
+                    source_entries = document.get(transfer.source_tab, {})
+                    source_entry = (
+                        source_entries.get(transfer.source_key)
+                        if isinstance(source_entries, dict) else None
+                    )
+                    exact_source_exists = source_entry == expected
+                    outcome = "cancelled" if exact_source_exists else "committed"
+                    updated = store.resolve_transfer_by_evidence(
+                        transfer.request_id, outcome, current_hash,
+                        "exact journaled source entry exists" if exact_source_exists
+                        else "exact journaled source entry is absent",
+                    )
+                else:
+                    entries = document.get(transfer.target_tab, {})
+                    candidate = entries.get(transfer.target_key) if isinstance(entries, dict) else None
+                    expected = transfer.decoded_item()
+                    if transfer.target_pos is not None:
+                        expected["pos"] = [float(transfer.target_pos[0]), float(transfer.target_pos[1])]
+                    if candidate == expected:
+                        updated = store.resolve_transfer_by_evidence(
+                            transfer.request_id, "committed", current_hash,
+                            "exact prepared target entry exists",
+                        )
+                    elif candidate is None:
+                        updated = store.resolve_transfer_by_evidence(
+                            transfer.request_id, "cancelled", current_hash,
+                            "prepared target key is absent",
+                        )
+                    else:
+                        updated = store.resolve_transfer_by_evidence(
+                            transfer.request_id, "cancelled", current_hash,
+                            "prepared target key contains a different item",
+                        )
         if updated.status in {"committed", "cancelled"} and previous not in {"committed", "cancelled"}:
             recovered += 1
     remaining = store.list_pending_transfers()
+    remaining_batches = store.list_pending_transfer_batches()
     return {
         "recovered": recovered,
-        "conflicts": sum(1 for row in remaining if row.status == "conflict"),
-        "pending": len(remaining),
+        "conflicts": (
+            sum(1 for row in remaining if row.status == "conflict")
+            + sum(1 for row in remaining_batches if row.status == "conflict")
+        ),
+        "pending": len(remaining) + len(remaining_batches),
+        "warnings": recovery_warnings,
     }
 
 
@@ -1348,11 +2787,27 @@ def vault_meta() -> dict:
     store = vault_store()
     if running:
         pending_rows = store.list_pending_transfers()
+        pending_batches = store.list_pending_transfer_batches()
         recovery = {
-            "pending": len(pending_rows),
-            "conflicts": sum(1 for row in pending_rows if row.status == "conflict"),
+            "pending": len(pending_rows) + len(pending_batches),
+            "conflicts": (
+                sum(1 for row in pending_rows if row.status == "conflict")
+                + sum(1 for row in pending_batches if row.status == "conflict")
+            ),
         }
     collections = store.list_collections()
+    recovery_batches = [
+        {
+            "requestId": row.request_id,
+            "direction": row.direction,
+            "status": row.status,
+            "itemCount": row.item_count,
+            "error": row.error,
+            "recommendedAction": "preserve-vault-ownership",
+            "possibleDuplicate": True,
+        }
+        for row in store.list_pending_transfer_batches()
+    ]
     default = next((row for row in collections if row.name == "Vault"),
                    collections[0] if collections else None)
     return {
@@ -1362,8 +2817,12 @@ def vault_meta() -> dict:
         "gameRunning": running,
         "pending": recovery.get("pending"),
         "conflicts": recovery.get("conflicts", 0),
+        "recoveryWarnings": recovery.get("warnings", []),
+        "recoveryBatches": recovery_batches,
         "databaseName": Path(VAULT_DB_FILE).name,
         "transferTabs": _vault_transfer_tabs(),
+        "bulkDepositTabs": _bulk_deposit_source_options(),
+        "bulkWithdrawalTabs": _bulk_withdrawal_destination_options(),
     }
 
 
@@ -1392,13 +2851,100 @@ def vault_items(query: dict) -> dict:
         total = offset + len(rows) + (1 if has_more else 0)
     else:
         total = store.count_items(collection=collection, status="available")
+    try:
+        tooltip_build_status = GAME_BUILD_GUARD.summary()
+    except Exception:
+        tooltip_build_status = {
+            "matched": False,
+            "code": "build_check_failed",
+            "message": "Game build could not be verified.",
+        }
     return {
-        "items": [_vault_item_payload(row) for row in rows],
+        "items": [_vault_item_payload(row, tooltip_build_status) for row in rows],
         "total": total,
         "offset": offset,
         "limit": limit,
         "hasMore": has_more,
     }
+
+
+def op_vault_resolve_batch(body: dict) -> dict:
+    """Explicitly resolve an ambiguous parent batch toward Vault ownership.
+
+    This operation never changes ``stash.hss``.  A deposit batch is committed
+    so its protected Vault copies become available; a withdrawal batch is
+    cancelled so its reservations become available again.  If Shared Stash
+    already contains some or all members, duplicates can therefore remain and
+    are reported instead of being silently deleted.
+    """
+
+    peer_error = _active_peer_editor_error()
+    if peer_error:
+        return {"err": peer_error, "code": "peer_editor"}
+    if game_running():
+        return {
+            "err": "Hero Siege is running. Close it before resolving Vault ownership.",
+            "code": "game_running",
+        }
+    try:
+        if body.get("action") != "preserve-vault-ownership":
+            raise VaultValidationError(
+                "the explicit preserve-vault-ownership action is required"
+            )
+        request_id = _vault_request_id(body.get("requestId"))
+        with SAVE_WRITE_LOCK:
+            stash_path = SAVES / "stash.hss"
+            with _exclusive_save_file(stash_path):
+                peer_error = _active_peer_editor_error()
+                if peer_error:
+                    return {"err": peer_error, "code": "peer_editor"}
+                if game_running():
+                    return {
+                        "err": "Hero Siege started while ownership resolution was waiting.",
+                        "code": "game_running",
+                    }
+                if not stash_path.exists():
+                    return {
+                        "err": "stash.hss is missing. Vault ownership was left unchanged.",
+                        "code": "stash_missing",
+                    }
+                current_hash = _file_sha256(stash_path)
+                store = vault_store()
+                batch = store.get_transfer_batch(request_id)
+                outcome = "committed" if batch.direction == "deposit" else "cancelled"
+                if batch.status in {"committed", "cancelled"}:
+                    if batch.status != outcome:
+                        return {
+                            "err": "This batch already finished with the opposite ownership result.",
+                            "code": "batch_already_finished",
+                            "batch": batch.as_dict(),
+                        }
+                    resolved = batch
+                    already = True
+                else:
+                    resolved = store.resolve_transfer_batch_by_evidence(
+                        request_id, outcome, current_hash,
+                        "user explicitly selected Vault ownership; Shared Stash may contain duplicate copies",
+                    )
+                    already = False
+                warning = (
+                    f"Vault ownership is preserved for {resolved.item_count} items. "
+                    "Any copies already present in Shared Stash were left untouched, so duplicates may exist."
+                )
+                return {
+                    "ok": (
+                        "Vault ownership was already preserved"
+                        if already else "Vault ownership preserved"
+                    ),
+                    "code": "vault_ownership_preserved_possible_duplicate",
+                    "possibleDuplicate": True,
+                    "warning": warning,
+                    "batch": resolved.as_dict(),
+                }
+    except VaultError as exc:
+        return {"err": str(exc), "code": "vault_error"}
+    except (OSError, TypeError, ValueError) as exc:
+        return {"err": f"Vault ownership resolution failed: {exc}", "code": "resolve_failed"}
 
 
 def op_vault_collections(body: dict) -> dict:
@@ -1426,10 +2972,24 @@ def op_vault_collections(body: dict) -> dict:
 
 def op_vault_item(body: dict) -> dict:
     try:
-        if body.get("action") != "move":
+        action = body.get("action")
+        if action == "move":
+            row = vault_store().move_item(
+                body.get("itemId"), int(body.get("collectionId"))
+            )
+            message = f"Moved to {row.collection_name}"
+        elif action == "setCustomName":
+            row = vault_store().set_item_custom_name(
+                body.get("itemId"), body.get("customName")
+            )
+            message = (
+                f'Custom name set to "{row.custom_name}"'
+                if row.custom_name
+                else "Custom name cleared"
+            )
+        else:
             return {"err": "unknown vault item action"}
-        row = vault_store().move_item(body.get("itemId"), int(body.get("collectionId")))
-        return {"ok": f"Moved to {row.collection_name}", "item": _vault_item_payload(row)}
+        return {"ok": message, "item": _vault_item_payload(row)}
     except (VaultError, TypeError, ValueError) as exc:
         return {"err": str(exc)}
 
@@ -1676,6 +3236,240 @@ def op_vault_withdraw(body: dict) -> dict:
         return {"err": f"Infinite Vault withdrawal failed: {exc}"}
 
 
+def _bulk_operation_result(batch, *, backup_name: str = "", already: bool = False) -> dict:
+    base = {
+        "status": batch.status,
+        "terminal": batch.status in {"committed", "cancelled"},
+        "retryable": batch.status == "prepared",
+        "movedCount": batch.item_count if batch.status == "committed" else 0,
+        "batch": batch.as_dict(),
+    }
+    if batch.status == "committed":
+        base.update({
+            "ok": (
+                f"{batch.item_count} items were already moved safely"
+                if already else f"{batch.item_count} items moved safely in one batch"
+            ),
+            "code": "batch_committed",
+        })
+    elif batch.status == "cancelled":
+        base.update({
+            "err": "The interrupted bulk transfer was safely cancelled; every original item was kept.",
+            "code": "batch_cancelled",
+            "retryable": False,
+        })
+    else:
+        base.update({
+            "err": "Bulk transfer needs recovery: " + (batch.error or "state conflict"),
+            "code": "batch_recovery_required",
+            "requiresOwnershipDecision": batch.status == "conflict",
+            "recommendedAction": (
+                "preserve-vault-ownership" if batch.status == "conflict" else None
+            ),
+        })
+    if backup_name:
+        base["backup"] = backup_name
+    return base
+
+
+def op_vault_bulk(body: dict) -> dict:
+    """Move one previewed stash scope or the complete Vault atomically."""
+
+    peer_error = _active_peer_editor_error()
+    if peer_error:
+        return {"err": peer_error, "code": "peer_editor", "terminal": True}
+    if game_running():
+        return {
+            "err": "Game is running! Close it before a bulk transfer.",
+            "code": "game_running", "terminal": True, "retryable": False,
+        }
+    try:
+        direction = body.get("direction")
+        if direction not in {"stash-to-vault", "vault-to-stash"}:
+            raise VaultValidationError("unknown bulk transfer direction")
+        request_id = _vault_request_id(body.get("requestId"))
+        preview_token = body.get("previewToken")
+        if not isinstance(preview_token, str) or not re.fullmatch(
+            r"[0-9a-fA-F]{64}", preview_token
+        ):
+            raise VaultValidationError("a valid bulk preview token is required")
+        collection_id = None
+        source_tab = None
+        destination_tab = None
+        if direction == "stash-to-vault":
+            collection_id = int(body.get("collectionId"))
+            source_tab = _bulk_deposit_source_tab(body.get("sourceTab"))
+            if body.get("destinationTab") is not None:
+                raise VaultValidationError(
+                    "destinationTab can only be used when returning Vault items to Shared Stash"
+                )
+        else:
+            if body.get("sourceTab") not in (None, BULK_DEPOSIT_ALL_TABS):
+                raise VaultValidationError(
+                    "sourceTab can only be used when moving Shared Stash items into the Vault"
+                )
+            destination_tab = _bulk_withdrawal_destination_tab(
+                body.get("destinationTab")
+            )
+        expected_direction = "deposit" if direction == "stash-to-vault" else "withdrawal"
+
+        with SAVE_WRITE_LOCK:
+            store = vault_store()
+            try:
+                prior = store.get_transfer_batch(request_id)
+            except VaultNotFoundError:
+                prior = None
+            if prior is not None:
+                if prior.direction != expected_direction:
+                    raise VaultConflictError(
+                        "requestId was already used for the opposite bulk direction"
+                    )
+                if (
+                    direction == "stash-to-vault"
+                    and prior.collection_id != collection_id
+                ):
+                    raise VaultConflictError(
+                        "requestId was already used for a different Vault collection"
+                    )
+                prior_preview_token = _bulk_preview_token(
+                    direction, prior.stash_before_sha256, prior.request_hash,
+                    prior.item_count,
+                    prior.collection_id if direction == "stash-to-vault" else None,
+                )
+                if preview_token.lower() != prior_preview_token:
+                    return {
+                        "err": "This requestId belongs to a different bulk preview; nothing was changed.",
+                        "code": "preview_stale", "terminal": True,
+                        "retryable": False,
+                    }
+                stash_path = SAVES / "stash.hss"
+                with _exclusive_save_file(stash_path):
+                    peer_error = _active_peer_editor_error()
+                    if peer_error:
+                        return {"err": peer_error, "code": "peer_editor"}
+                    if game_running():
+                        return {
+                            "err": "Game started while the bulk retry was waiting. Close it and retry.",
+                            "code": "game_running", "retryable": True,
+                        }
+                    if prior.status in {"prepared", "conflict"}:
+                        _reconcile_vault_transfers_locked(stash_path)
+                        prior = store.get_transfer_batch(request_id)
+                return _bulk_operation_result(
+                    prior, already=prior.status == "committed"
+                )
+
+            recovery = reconcile_vault_transfers()
+            if recovery.get("deferred"):
+                return {"err": "Game started while preparing the bulk transfer.", "code": "game_running"}
+            if recovery.get("err"):
+                return {"err": recovery["err"], "code": "recovery_failed"}
+            if recovery.get("pending") or recovery.get("conflicts"):
+                return {
+                    "err": "A previous Infinite Vault transfer needs recovery first.",
+                    "code": "recovery_required",
+                }
+
+            stash_path = SAVES / "stash.hss"
+            with _exclusive_save_file(stash_path):
+                peer_error = _active_peer_editor_error()
+                if peer_error:
+                    return {"err": peer_error, "code": "peer_editor"}
+                if game_running():
+                    return {"err": "Game started while the bulk transfer was waiting.", "code": "game_running"}
+                plan = _bulk_plan_locked(
+                    direction, collection_id, source_tab, destination_tab
+                )
+                if plan["previewToken"] != preview_token.lower():
+                    return {
+                        "err": "The stash or Vault changed after preview. Review the new plan; nothing was moved.",
+                        "code": "preview_stale", "terminal": True,
+                        "retryable": False,
+                    }
+                if not plan["itemCount"]:
+                    return {
+                        "ok": "There are no items to move.", "code": "empty",
+                        "status": "noop", "terminal": True, "retryable": False,
+                        "movedCount": 0,
+                    }
+                before_hash = plan["stashSha256"]
+                after_hash = hashlib.sha256(
+                    plan["encodedAfter"].encode("ascii")
+                ).hexdigest()
+                if direction == "stash-to-vault":
+                    batch = store.prepare_bulk_deposit(
+                        collection_id, plan["entries"], request_id=request_id,
+                        request_hash=plan["intentHash"],
+                        stash_before_sha256=before_hash,
+                        stash_after_sha256=after_hash,
+                    )
+                else:
+                    batch = store.prepare_bulk_withdrawal(
+                        plan["targets"], request_id=request_id,
+                        request_hash=plan["intentHash"],
+                        stash_before_sha256=before_hash,
+                        stash_after_sha256=after_hash,
+                        destination_tab=(
+                            None
+                            if plan.get("destinationTab") == BULK_WITHDRAWAL_AUTO
+                            else plan.get("destinationTab")
+                        ),
+                    )
+                if batch.status != "prepared":
+                    return _bulk_operation_result(batch)
+
+                def safely_cancel_or_commit():
+                    try:
+                        return store.reconcile_transfer_batch(
+                            request_id, _file_sha256(stash_path)
+                        )
+                    except VaultError:
+                        return store.get_transfer_batch(request_id)
+
+                peer_error = _active_peer_editor_error()
+                if peer_error:
+                    return _bulk_operation_result(safely_cancel_or_commit())
+                if game_running():
+                    return _bulk_operation_result(safely_cancel_or_commit())
+                if _file_sha256(stash_path) != before_hash:
+                    return _bulk_operation_result(safely_cancel_or_commit())
+                try:
+                    backup_name = backup(stash_path)
+                    if game_running():
+                        return _bulk_operation_result(
+                            safely_cancel_or_commit(), backup_name=backup_name
+                        )
+                    peer_error = _active_peer_editor_error()
+                    if peer_error:
+                        return _bulk_operation_result(
+                            safely_cancel_or_commit(), backup_name=backup_name
+                        )
+                    if _file_sha256(stash_path) != before_hash:
+                        return _bulk_operation_result(
+                            safely_cancel_or_commit(), backup_name=backup_name
+                        )
+                    atomic_write_text(stash_path, plan["encodedAfter"], "ascii")
+                except Exception:
+                    safely_cancel_or_commit()
+                    raise
+                committed = store.commit_transfer_batch(
+                    request_id, _file_sha256(stash_path)
+                )
+                result = _bulk_operation_result(
+                    committed, backup_name=backup_name
+                )
+                result["tabCounts"] = plan["tabCounts"]
+                result["customNamedCount"] = plan.get("customNamedCount", 0)
+                return result
+    except VaultError as exc:
+        return {"err": str(exc), "code": "vault_error", "terminal": True}
+    except (KeyError, TypeError, ValueError, OSError, json.JSONDecodeError) as exc:
+        return {
+            "err": f"Infinite Vault bulk transfer failed: {exc}",
+            "code": "bulk_failed", "terminal": True,
+        }
+
+
 def file_key(ref: dict):
     t = ref["type"]
     if t == "stash":
@@ -1813,24 +3607,37 @@ def op_add(body: dict) -> dict:
         return {"err": "Runewords can't be added directly - use the Runeword Builder."}
     if not r.get("available", True):
         return {"err": "This catalog address is not verified for Season 10."}
-    try:
-        generation_roll_profile(r)
-    except ValueError as exc:
-        return {"err": f"{exc}; item unchanged"}
-    skill_id = body.get("skillId")
-    if catalog_dice_profile_id(r) is not None and skill_id is None:
-        return {"err": f"{r['name']}: choose a verified skill target before adding; item unchanged"}
-    selected_skill = None
-    if skill_id is not None:
-        try:
-            selected_skill = dice_target_for_row(r, skill_id)
-        except DiceSkillValidationError as exc:
-            return {"err": f"{r['name']}: {exc}; item unchanged"}
-    skill_suffix = (
-        f" · {selected_skill['className']}: {selected_skill['name']} "
-        f"(ID {selected_skill['id']})"
-        if selected_skill else ""
+    skill_id = body.get("targetId", body.get("skillId"))
+    profile_id = catalog_skill_profile_id(r)
+    target_database = (
+        skill_target_database(profile_id) if profile_id is not None else None
     )
+    selector = (
+        target_database.selector(profile_id)
+        if target_database is not None else None
+    )
+    if profile_id is not None and skill_id is None:
+        noun = "class" if selector and selector.get("targetKind") == "class" else "skill"
+        return {"err": f"{r['name']}: choose a verified {noun} target before adding; item unchanged"}
+    selected_skill = None
+    try:
+        generation_roll_profile_for_request(r, skill_id)
+        if skill_id is not None:
+            selected_skill = skill_target_for_row(r, skill_id)
+    except (DiceSkillValidationError, TorchClassValidationError, ValueError) as exc:
+        return {"err": f"{r['name']}: {exc}; item unchanged"}
+    if selected_skill and selector and selector.get("targetKind") == "class":
+        skill_suffix = (
+            f" · All Skills class: {selected_skill['name']} "
+            f"(Class ID {selected_skill['id']})"
+        )
+    elif selected_skill:
+        skill_suffix = (
+            f" · {selected_skill['className']}: {selected_skill['name']} "
+            f"(ID {selected_skill['id']})"
+        )
+    else:
+        skill_suffix = ""
     if tgt["type"] == "stash_unique":
         if r["kind"] != "unique":
             return {"err": "Only unique items can go to the Unique tab."}
@@ -1929,10 +3736,14 @@ def op_addmany(body: dict) -> dict:
             generation_roll_profile(r)
         except ValueError as exc:
             return {"err": f"{exc}; no items added"}
-        if catalog_dice_profile_id(r) is not None:
+        profile_id = catalog_skill_profile_id(r)
+        if profile_id is not None:
+            database = skill_target_database(profile_id)
+            selector = database.selector(profile_id) if database is not None else None
+            noun = "class" if selector and selector.get("targetKind") == "class" else "skill"
             return {
                 "err": (
-                    f"{r['name']}: bulk add has no explicit skill target; "
+                    f"{r['name']}: bulk add has no explicit {noun} target; "
                     "no items added"
                 )
             }
@@ -1966,30 +3777,57 @@ def op_modify(body: dict) -> dict:
     if action == "selectskill":
         selector = it.get("skillSelector")
         if not isinstance(selector, dict) or not selector.get("profileId"):
-            return {"err": f"{it['name']}: this item has no selectable random skill; item unchanged"}
+            return {"err": f"{it['name']}: this item has no selectable skill or class; item unchanged"}
+        profile_id = str(selector["profileId"])
+        target_database = skill_target_database(profile_id)
+        if target_database is None:
+            return {"err": f"{it['name']}: unknown selector profile; item unchanged"}
         try:
-            target = DICE_SKILL_DB.target(
-                str(selector["profileId"]), body.get("skillId")
+            target = target_database.target(
+                profile_id, body.get("targetId", body.get("skillId"))
             )
-        except DiceSkillValidationError as exc:
+        except (DiceSkillValidationError, TorchClassValidationError) as exc:
             return {"err": f"{it['name']}: {exc}; item unchanged"}
         data = entry.setdefault("data", {})
-        current = DICE_SKILL_DB.selector(str(selector["profileId"]), data.get("a"))
+        current = target_database.selector(profile_id, data.get("a"))
         current_skill = current.get("current") if isinstance(current, dict) else None
-        if isinstance(current_skill, dict) and current_skill.get("id") == target["id"]:
+        same_target = (
+            isinstance(current_skill, dict)
+            and current_skill.get("id") == target["id"]
+        )
+        if selector.get("targetKind") == "class":
+            try:
+                same_target = same_target and float(data.get("a")) == float(target["seed"])
+            except (TypeError, ValueError):
+                same_target = False
+        if same_target:
+            if selector.get("targetKind") == "class":
+                current_label = f"All Skills class {target['name']} (Class ID {target['id']})"
+            else:
+                current_label = (
+                    f"{target['className']}: {target['name']} (ID {target['id']})"
+                )
             return {
-                "ok": (f"{it['name']}: already targets {target['className']}: "
-                       f"{target['name']} (ID {target['id']})"),
+                "ok": f"{it['name']}: already targets {current_label}",
                 "backup": "",
             }
         # The runtime recreates the selected identity from ``a``.  Never inject
         # stat 202/203/419/420 or touch i/s/zz/socket payloads.
         data["a"] = float(target["seed"])
         baks = ctx.save_all()
-        noun = "subskill" if selector.get("targetKind") == "subskill" else "skill"
+        if selector.get("targetKind") == "class":
+            changed_label = (
+                f"All Skills class -> {target['name']} "
+                f"(Class ID {target['id']}; a={target['seed']}; 4/4 stats MAX)"
+            )
+        else:
+            noun = "subskill" if selector.get("targetKind") == "subskill" else "skill"
+            changed_label = (
+                f"{noun} -> {target['className']}: {target['name']} "
+                f"(ID {target['id']}; a={target['seed']})"
+            )
         return {
-            "ok": (f"{it['name']}: {noun} -> {target['className']}: "
-                   f"{target['name']} (ID {target['id']}; a={target['seed']})"),
+            "ok": f"{it['name']}: {changed_label}",
             "backup": ", ".join(baks),
         }
     if action == "reroll":
@@ -2001,8 +3839,10 @@ def op_modify(body: dict) -> dict:
         return {"ok": f"{it['name']}: stats rerolled (new seeds)", "backup": ", ".join(baks)}
     if action == "perfect":
         if it.get("skillSelector"):
-            return {"err": (f"{it['name']}: its variable range selects a skill identity, "
-                            "not a quality value; use Choose skill instead")}
+            selector_kind = it["skillSelector"].get("targetKind")
+            noun = "class" if selector_kind == "class" else "skill"
+            return {"err": (f"{it['name']}: its variable range selects a {noun} identity; "
+                            f"use Choose {noun} instead")}
         if not ROLL_DB.available:
             return {
                 "err": (
@@ -2019,8 +3859,11 @@ def op_modify(body: dict) -> dict:
         field_seeds = roll_profile_field_seeds(profile)
         if not field_seeds:
             return {"err": f"{it['name']}: verified profile has no actionable seed fields; item unchanged"}
-        # Each listed field owns an independently proven CPR chain. Unlisted
-        # fields and socket payloads are deliberately preserved byte-for-byte.
+        # Each listed field owns an independently proven CPR chain. Filled
+        # socket payloads and unrelated metadata are preserved byte-for-byte.
+        # When the authenticated profile declares a native maximum capacity,
+        # Perfect also repairs the explicit ``zz.sockets`` override: the game
+        # gives that saved value precedence over the seed-derived stat.
         # Save field ``s`` is also an enable flag: when it is absent the game's
         # LoadCommonItems path skips socket-count generation.  Never create it
         # on an existing item merely because a profile can optimize that chain.
@@ -2032,8 +3875,37 @@ def op_modify(body: dict) -> dict:
         if not applicable_field_seeds:
             return {"err": (f"{it['name']}: verified socket seed is not active "
                             "because this item has no s field; item unchanged")}
+        max_sockets = roll_profile_max_sockets(profile)
+        if max_sockets is not None:
+            excess_socket_fields = [
+                f"s{index}"
+                for index in range(max_sockets + 1, 7)
+                if f"s{index}" in data
+            ]
+            if excess_socket_fields:
+                labels = ", ".join(excess_socket_fields)
+                return {
+                    "err": (
+                        f"{it['name']}: socket payload {labels} exceeds the "
+                        f"verified maximum of {max_sockets}; run Save Health "
+                        "Check and repair the socket layout first; item unchanged"
+                    )
+                }
+        existing_zz = data.get("zz")
+        if max_sockets is not None and existing_zz is not None and not isinstance(existing_zz, dict):
+            return {"err": (f"{it['name']}: socket metadata is malformed; "
+                            "item unchanged")}
+        socket_capacity_applied = (
+            max_sockets is None
+            or (
+                isinstance(existing_zz, dict)
+                and isinstance(existing_zz.get("sockets"), (int, float))
+                and not isinstance(existing_zz.get("sockets"), bool)
+                and float(existing_zz["sockets"]) == float(max_sockets)
+            )
+        )
         mode = "EXACT MAX" if profile["mode"] == "exact" else "BEST POSSIBLE"
-        already_applied = all(
+        already_applied = socket_capacity_applied and all(
             isinstance(data.get(field), (int, float))
             and not isinstance(data.get(field), bool)
             and float(data[field]) == seed
@@ -2042,10 +3914,15 @@ def op_modify(body: dict) -> dict:
         seed_detail = ", ".join(
             f"{field}={int(seed)}" for field, seed in applicable_field_seeds.items()
         )
+        if max_sockets is not None:
+            seed_detail += f", zz.sockets={max_sockets}"
         if already_applied:
             return {"ok": f"{it['name']}: already {mode} ({profile['detail']})",
                     "backup": ""}
         data.update(applicable_field_seeds)
+        if max_sockets is not None:
+            zz = data.setdefault("zz", {})
+            zz["sockets"] = float(max_sockets)
         baks = ctx.save_all()
         return {"ok": (f"{it['name']}: {mode} applied ({profile['detail']}; "
                        f"{seed_detail})"),
@@ -2403,55 +4280,180 @@ def op_sockets(body: dict) -> dict:
 
     Each socket entry is one of these forms:
       - None / ""              -> empty socket (skipped)
-      - {"keep": {a,b,n}}      -> UNCHANGED socket; its contents (seed/variant) are
-                                  preserved EXACTLY
+      - {"keepEncoded": <str>} -> an existing socket payload, moved or unchanged;
+                                  the server verifies it belongs to this item
+      - {"keep": {a,b,n}}      -> legacy unchanged-socket marker
       - {"b": <int>}           -> the user changed/added it -> new seed, n=0
       - <int> (legacy format)  -> new gem/rune; new seed, n=0
     This keeps the a (seed) and n (variant) values of untouched gems/jewels intact.
     """
     if game_running():
         return {"err": "Game is running! Close it first."}
-    tgt = body["target"]
-    key = body["key"]
-    sockets = body.get("sockets") or []
-    if len(sockets) > 6:
-        return {"err": "max 6 sockets"}
+    if not isinstance(body, dict):
+        return {"err": "invalid socket request; item unchanged"}
+    tgt = body.get("target")
+    key = body.get("key")
+    if "sockets" not in body or body.get("sockets") is None:
+        return {
+            "err": (
+                "sockets must be an explicit list; use [] only to clear all "
+                "sockets; item unchanged"
+            )
+        }
+    sockets = body.get("sockets")
+    if not isinstance(tgt, dict) or not isinstance(key, str) or not isinstance(sockets, list):
+        return {"err": "invalid socket request; item unchanged"}
     ctx = FileCtx()
-    items = ctx.items(tgt)
+    try:
+        items = ctx.items(tgt)
+    except (KeyError, TypeError, ValueError):
+        return {"err": "invalid socket target; item unchanged"}
     if key not in items:
         return {"err": "item not found"}
     entry = items[key]
     d0 = entry.setdefault("data", {})
+    if not isinstance(d0, dict):
+        return {"err": "item data is malformed; item unchanged"}
     it = resolve(key, d0)
-    for n in range(1, 7):
-        d0.pop(f"s{n}", None)
-    d0.pop("unset", None)  # editing resets the forged state
-    filled = 0
+    malformed_sockets = []
+    for index in range(1, 7):
+        field = f"s{index}"
+        if field not in d0:
+            continue
+        try:
+            decode_existing_socket_payload(d0[field])
+        except Exception:
+            malformed_sockets.append(index)
+    if malformed_sockets:
+        labels = ", ".join(f"s{index}" for index in malformed_sockets)
+        return {
+            "err": (
+                f"{it['name']}: existing socket payload {labels} is malformed; "
+                "run Save Health Check; item unchanged"
+            )
+        }
+    max_sockets = item_socket_limit(it)
+    if len(sockets) > max_sockets:
+        return {
+            "err": (
+                f"{it['name']}: maximum {max_sockets} sockets; item unchanged"
+            )
+        }
+
+    original_payloads = {
+        index: d0.get(f"s{index}")
+        for index in range(1, 7)
+        if f"s{index}" in d0
+    }
+    remaining_payload_counts: dict[str, int] = {}
+    for value in original_payloads.values():
+        if isinstance(value, str):
+            remaining_payload_counts[value] = remaining_payload_counts.get(value, 0) + 1
+
+    def legacy_keep_payload(marker: object, target_index: int) -> str | None:
+        if not isinstance(marker, dict):
+            return None
+        current = original_payloads.get(target_index)
+        candidates = ([current] if isinstance(current, str) else []) + [
+            original_payloads[index]
+            for index in sorted(original_payloads)
+            if isinstance(original_payloads[index], str)
+            and original_payloads[index] != current
+        ]
+        for encoded in candidates:
+            if remaining_payload_counts.get(encoded, 0) <= 0:
+                continue
+            try:
+                decoded = json.loads(base64.b64decode(encoded, validate=True))
+            except (ValueError, TypeError, json.JSONDecodeError):
+                continue
+            if not isinstance(decoded, dict):
+                continue
+            if all(decoded.get(field) == marker.get(field) for field in ("a", "b", "n")):
+                return encoded
+        return None
+
+    socketable_ids = {
+        int(row["b"])
+        for row in CAT
+        if row.get("kind") == "normal"
+        and row.get("available", True)
+        and int(row.get("cls", -1)) == 15
+    }
+    prepared: list[str | None] = []
     for n, e in enumerate(sockets, 1):
         if e is None or e == "":
+            prepared.append(None)
             continue
-        if isinstance(e, dict) and isinstance(e.get("keep"), dict):
-            o = e["keep"]                       # untouched -> keep exactly
-            sj = {"a": o.get("a", 0), "b": int(o.get("b", 0)), "n": o.get("n", 0)}
-        elif isinstance(e, dict) and "b" in e:
-            sj = {"a": int(random_item_seed()), "b": int(e["b"]), "n": 0}
-        elif isinstance(e, (int, float)):
-            sj = {"a": int(random_item_seed()), "b": int(e), "n": 0}
-        else:
+        encoded = None
+        if isinstance(e, dict) and "keepEncoded" in e:
+            candidate = e.get("keepEncoded")
+            if isinstance(candidate, str) and remaining_payload_counts.get(candidate, 0) > 0:
+                encoded = candidate
+        elif isinstance(e, dict) and e.get("keep") is True:
+            candidate = original_payloads.get(n)
+            if (
+                isinstance(candidate, str)
+                and remaining_payload_counts.get(candidate, 0) > 0
+            ):
+                encoded = candidate
+        elif isinstance(e, dict) and isinstance(e.get("keep"), dict):
+            encoded = legacy_keep_payload(e.get("keep"), n)
+        if encoded is not None:
+            remaining_payload_counts[encoded] -= 1
+            prepared.append(encoded)
             continue
-        d0[f"s{n}"] = base64.b64encode(
-            json.dumps(sj, separators=(",", ":")).encode()).decode()
-        filled += 1
+
+        raw_base = e.get("b") if isinstance(e, dict) and "b" in e else e
+        if isinstance(raw_base, bool) or not isinstance(raw_base, (int, float)):
+            return {"err": f"Socket {n} is invalid; item unchanged"}
+        try:
+            base_id = int(raw_base)
+            integral = float(raw_base) == float(base_id)
+        except (OverflowError, TypeError, ValueError):
+            integral = False
+            base_id = -1
+        if not integral or base_id not in socketable_ids:
+            return {"err": f"Socket {n} is not a known rune or gem; item unchanged"}
+        payload = {"a": int(random_item_seed()), "b": base_id, "n": 0}
+        prepared.append(base64.b64encode(
+            json.dumps(payload, separators=(",", ":")).encode()
+        ).decode())
+
+    import copy
+    updated = copy.deepcopy(d0)
+    for n in range(1, 7):
+        updated.pop(f"s{n}", None)
+    updated.pop("unset", None)  # editing resets the forged state
+    for n, encoded in enumerate(prepared, 1):
+        if encoded is not None:
+            updated[f"s{n}"] = encoded
+
     # zz.sockets is where the game reads the socket COUNT, so always write it;
     # without it the game does NOT SEE sockets added from the editor (regression:
     # this had been removed once).
-    if "zz" in d0 or len(sockets) > 0:
-        zz = d0.setdefault("zz", {})
-        if isinstance(zz, dict):
-            zz["sockets"] = float(len(sockets))
+    if "zz" in updated or len(sockets) > 0:
+        if "zz" in updated and not isinstance(updated.get("zz"), dict):
+            return {"err": f"{it['name']}: socket metadata is malformed; item unchanged"}
+        zz = updated.setdefault("zz", {})
+        zz["sockets"] = float(len(sockets))
+    if updated == d0:
+        return {
+            "ok": f"{it['name']}: sockets already unchanged",
+            "backup": "",
+            "socketCount": len(sockets),
+            "maxSockets": max_sockets,
+        }
+    d0.clear()
+    d0.update(updated)
     baks = ctx.save_all()
-    return {"ok": f"{it['name']}: sockets updated ({filled}/{len(sockets)} filled)",
-            "backup": ", ".join(baks)}
+    filled = sum(encoded is not None for encoded in prepared)
+    return {
+        "ok": f"{it['name']}: sockets updated ({filled}/{len(sockets)} filled)",
+        "backup": ", ".join(baks),
+        "socketCount": len(sockets),
+        "maxSockets": max_sockets,
+    }
 
 
 def op_delete(body: dict) -> dict:
@@ -2582,6 +4584,21 @@ STACKABLE_CLS = {
     15: "Rune / Gem / Orb",
 }
 
+# The native Season 10 stash produced by the game/editor uses 999 as a full
+# stack.  The generic right-click editor intentionally accepts larger manual
+# values, but the one-click fill operation stays on this conservative native
+# amount instead of treating a numeric save-field limit as a game stack limit.
+FULL_STACK_AMOUNT = 999
+
+# These addresses are stored as individual records in native Season 10 stash
+# data.  Adding an ``o`` quantity turns them into an unproven shape, so the fill
+# operation ensures one record exists but never invents a stack for them.
+MATERIAL_SINGLETON_ADDRESSES = frozenset({
+    *((13, base) for base in range(58, 65)),
+    (14, 59),  # Reflection of Tarethiel
+    (14, 67),  # Blessed Dice
+})
+
 
 def stackable_list() -> list:
     out = []
@@ -2615,8 +4632,16 @@ def s10_access_list() -> list:
     return groups
 
 
-def _make_one_stackable(items: dict, tab: str, cls: int, base: int, amount: int):
-    pos = find_free_pos(items, tab, 1, 1)
+def _make_one_stackable(
+    items: dict,
+    tab: str,
+    cls: int,
+    base: int,
+    amount: int,
+    width: int = 1,
+    height: int = 1,
+):
+    pos = find_free_pos(items, tab, width, height)
     if pos is None:
         return None
     key = fresh_key(cls, items)
@@ -2624,6 +4649,328 @@ def _make_one_stackable(items: dict, tab: str, cls: int, base: int, amount: int)
          "j": 0.0, "b": float(int(base)), "c": 0.0}
     items[key] = {"pos": pos, "data": d}
     return key
+
+
+def _native_catalog_address(row: dict) -> tuple[str, int, int, int]:
+    cls = int(row["cls"])
+    return (
+        str(row["kind"]),
+        cls,
+        int(row.get("sub", 0)) if cls == 3 else 0,
+        int(row["b"]),
+    )
+
+
+def _native_entry_address(key: object, entry: object) -> tuple[str, int, int, int] | None:
+    """Read an item's native identity without trusting its display name."""
+
+    if not isinstance(key, str) or not isinstance(entry, dict):
+        return None
+    data = entry.get("data")
+    if not isinstance(data, dict):
+        return None
+    try:
+        cls = int(key.rsplit("-", 1)[1])
+        kind_bit = int(data.get("c", 0))
+        if kind_bit not in (0, 1):
+            return None
+        sub = int(data.get("j", 0)) if cls == 3 else 0
+        base = int(data["b"])
+    except (KeyError, TypeError, ValueError, OverflowError):
+        return None
+    return ("unique" if kind_bit == 1 else "normal", cls, sub, base)
+
+
+def stash_fill_catalog(tab: object) -> tuple[str, list[dict]]:
+    """Return the exact allowlisted catalog scope for one shared-stash tab."""
+
+    if tab == "unique_items":
+        label = "Unique tab"
+        rows = [
+            row for row in CAT
+            if isinstance(row, dict)
+            and row.get("kind") == "unique"
+            and row.get("available", True)
+        ]
+    elif isinstance(tab, str) and re.fullmatch(r"material_tab(?:_[1-9]\d*)?", tab):
+        label = _vault_shared_grid_label(tab)
+        rows = [
+            row for row in CAT
+            if isinstance(row, dict)
+            and row.get("kind") == "normal"
+            and int(row.get("cls", -1)) in (13, 14)
+            and row.get("available", True)
+        ]
+    elif isinstance(tab, str) and re.fullmatch(r"socket_tab(?:_[1-9]\d*)?", tab):
+        label = _vault_shared_grid_label(tab)
+        rows = [
+            row for row in CAT
+            if isinstance(row, dict)
+            and row.get("kind") == "normal"
+            and int(row.get("cls", -1)) == 15
+            and row.get("available", True)
+        ]
+    else:
+        raise ValueError("Only the Unique, Material, or Socket stash tab can be filled.")
+
+    # Fail closed if a future catalog accidentally repeats one native address.
+    by_address = {}
+    for row in rows:
+        address = _native_catalog_address(row)
+        if address in by_address:
+            raise ValueError(f"duplicate catalog address detected: {address}")
+        by_address[address] = row
+    return label, sorted(rows, key=_native_catalog_address)
+
+
+def _stack_is_full(value: object) -> bool:
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return False
+    try:
+        return math.isfinite(float(value)) and float(value) == FULL_STACK_AMOUNT
+    except (TypeError, ValueError, OverflowError):
+        return False
+
+
+def _new_stash_fill_entry(row: dict, tab: str, items: dict, *, stack: bool) -> str | None:
+    width = max(1, int(row.get("w", 1)))
+    height = max(1, int(row.get("h", 1)))
+    pos = find_free_pos(items, tab, width, height)
+    if pos is None:
+        return None
+    cls = int(row["cls"])
+    key = fresh_key(cls, items)
+    data = {
+        "a": random_item_seed(),
+        "j": 0.0,
+        "b": float(int(row["b"])),
+        "c": 0.0,
+    }
+    if stack:
+        data["o"] = float(FULL_STACK_AMOUNT)
+    items[key] = {"pos": pos, "data": data}
+    return key
+
+
+def _stash_fill_grid_error(items: dict, tab: str) -> str | None:
+    """Reject a damaged target grid instead of treating hidden items as owned."""
+
+    cols, rows = grid_dims(tab)
+    occupied: dict[tuple[int, int], str] = {}
+    for key, entry in items.items():
+        if not isinstance(entry, dict) or not isinstance(entry.get("data"), dict):
+            return f"record {key!r} has no valid item data"
+        pos = entry.get("pos")
+        if not isinstance(pos, (list, tuple)) or len(pos) != 2:
+            return f"record {key!r} has no valid grid position"
+        if any(
+            isinstance(value, bool)
+            or not isinstance(value, (int, float))
+            or not math.isfinite(float(value))
+            or not float(value).is_integer()
+            for value in pos
+        ):
+            return f"record {key!r} has a malformed grid position"
+        try:
+            item = resolve(str(key), entry["data"])
+            width = max(1, int(item["w"]))
+            height = max(1, int(item["h"]))
+        except (KeyError, TypeError, ValueError, OverflowError):
+            return f"record {key!r} has an invalid native item address"
+        x, y = int(pos[0]), int(pos[1])
+        if x < 0 or y < 0 or x + width > cols or y + height > rows:
+            return f"record {key!r} is outside the {cols}x{rows} grid"
+        for dy in range(height):
+            for dx in range(width):
+                cell = (x + dx, y + dy)
+                if cell in occupied:
+                    return (
+                        f"records {occupied[cell]!r} and {key!r} overlap at "
+                        f"cell {cell[0]},{cell[1]}"
+                    )
+                occupied[cell] = str(key)
+    return None
+
+
+def op_fill_stash(body: dict) -> dict:
+    """Idempotently complete one native Shared Stash repository tab.
+
+    The full plan is built in memory first.  Unknown records, duplicate native
+    records, positions and future fields are preserved.  A single backup/write
+    happens only after every missing entry has passed validation and placement.
+    """
+
+    if game_running():
+        return {"err": "Game is running! Close it first."}
+    try:
+        tab = body.get("tab")
+        label, rows = stash_fill_catalog(tab)
+    except (AttributeError, TypeError, ValueError) as exc:
+        return {"err": str(exc)}
+
+    stash_path = SAVES / "stash.hss"
+    try:
+        document = json.loads(decode_hss(stash_path))
+    except (OSError, ValueError, json.JSONDecodeError) as exc:
+        return {"err": f"Shared Stash could not be read: {exc}"}
+    if tab not in document or not isinstance(document.get(tab), dict):
+        return {"err": f"{label} does not exist in this Shared Stash; nothing changed."}
+
+    work = copy.deepcopy(document[tab])
+    if tab != "unique_items":
+        grid_error = _stash_fill_grid_error(work, str(tab))
+        if grid_error:
+            return {
+                "err": (
+                    f"{label} has an invalid grid ({grid_error}). Run Save Health "
+                    "Check first; nothing changed."
+                )
+            }
+    existing: dict[tuple[str, int, int, int], list[str]] = {}
+    for key, entry in work.items():
+        address = _native_entry_address(key, entry)
+        if address is not None:
+            existing.setdefault(address, []).append(key)
+
+    added = 0
+    updated = 0
+    already_present = 0
+    singleton_count = 0
+    dice_targets = []
+    missing_rows = [row for row in rows if _native_catalog_address(row) not in existing]
+
+    if tab == "unique_items":
+        # Every equipment profile and explicit selectable identity is validated before
+        # the first in-memory insertion, keeping failure strictly all-or-nothing.
+        prepared = []
+        requested_targets = body.get("identityTargetIds", body.get("diceSkillIds"))
+        if not isinstance(requested_targets, dict):
+            requested_targets = {}
+        for row in missing_rows:
+            try:
+                profile_id = catalog_skill_profile_id(row)
+                skill_id = None
+                selected = None
+                if profile_id is not None:
+                    database = skill_target_database(profile_id)
+                    is_class_target = profile_id == TORCH_PROFILE_ID
+                    noun = "class" if is_class_target else "skill"
+                    if profile_id not in requested_targets:
+                        return {
+                            "err": (
+                                f"{row['name']} needs an explicit verified {noun} target; "
+                                "no items were added."
+                            )
+                        }
+                    if database is None:
+                        raise ValueError("unknown selectable identity profile")
+                    selected = database.target(profile_id, requested_targets[profile_id])
+                    skill_id = int(selected["id"])
+                generation_roll_profile_for_request(row, skill_id)
+                data = make_data(row, skill_id=skill_id)
+            except (
+                DiceSkillValidationError,
+                TorchClassValidationError,
+                KeyError,
+                TypeError,
+                ValueError,
+            ) as exc:
+                return {"err": f"{row.get('name', 'Unique item')}: {exc}; nothing changed"}
+            prepared.append((row, data))
+            if selected is not None:
+                is_class = profile_id == TORCH_PROFILE_ID
+                dice_targets.append({
+                    "item": row["name"],
+                    "profileId": profile_id,
+                    "targetId": int(selected["id"]),
+                    "targetKind": "class" if is_class else "skill",
+                    "target": (
+                        selected["name"] if is_class
+                        else f"{selected['className']}: {selected['name']}"
+                    ),
+                })
+        already_present = len(rows) - len(prepared)
+        for row, data in prepared:
+            key = fresh_key(int(row["cls"]), work)
+            work[key] = {"data": data}
+            added += 1
+    else:
+        row_by_address = {_native_catalog_address(row): row for row in rows}
+        already_present = len(rows) - len(missing_rows)
+        # Preserve every duplicate record, while honoring the user's request
+        # that every recognized stack in this repository be full.
+        for address, keys in existing.items():
+            row = row_by_address.get(address)
+            if row is None:
+                continue
+            is_singleton = (
+                int(row["cls"]), int(row["b"])
+            ) in MATERIAL_SINGLETON_ADDRESSES
+            if is_singleton:
+                singleton_count += 1
+                continue
+            for key in sorted(keys):
+                data = work[key].get("data")
+                if isinstance(data, dict) and not _stack_is_full(data.get("o")):
+                    data["o"] = float(FULL_STACK_AMOUNT)
+                    updated += 1
+
+        # Place tall Tarot cards before 1x1 entries so a valid packing is not
+        # lost merely because catalog order fragmented an otherwise empty grid.
+        missing_rows.sort(key=lambda row: (
+            -int(row.get("w", 1)) * int(row.get("h", 1)),
+            _native_catalog_address(row),
+        ))
+        for row in missing_rows:
+            is_singleton = (
+                int(row["cls"]), int(row["b"])
+            ) in MATERIAL_SINGLETON_ADDRESSES
+            if _new_stash_fill_entry(row, str(tab), work, stack=not is_singleton) is None:
+                return {
+                    "err": (
+                        f"{label} does not have enough valid grid space for all "
+                        f"{len(rows)} catalog items; nothing changed."
+                    )
+                }
+            added += 1
+            if is_singleton:
+                singleton_count += 1
+
+    if added == 0 and updated == 0:
+        return {
+            "ok": f"{label} is already complete.",
+            "backup": "",
+            "tab": tab,
+            "total": len(rows),
+            "added": 0,
+            "updated": 0,
+            "existing": already_present,
+            "fullStack": FULL_STACK_AMOUNT if tab != "unique_items" else None,
+            "singletons": singleton_count,
+            "diceTargets": dice_targets,
+        }
+
+    document[tab] = work
+    backup_name = write_stash(document)
+    if tab == "unique_items":
+        summary = f"{label}: {added} added, {already_present} already present"
+    else:
+        summary = (
+            f"{label}: {added} added, {updated} set to x{FULL_STACK_AMOUNT}, "
+            f"{already_present} already present"
+        )
+    return {
+        "ok": summary,
+        "backup": backup_name,
+        "tab": tab,
+        "total": len(rows),
+        "added": added,
+        "updated": updated,
+        "existing": already_present,
+        "fullStack": FULL_STACK_AMOUNT if tab != "unique_items" else None,
+        "singletons": singleton_count,
+        "diceTargets": dice_targets,
+    }
 
 
 def op_make_stackable(body: dict) -> dict:
@@ -2645,7 +4992,15 @@ def op_make_stackable(body: dict) -> dict:
     tab = tgt.get("tab") or tgt["type"]
     made = 0
     for _ in range(count):
-        if _make_one_stackable(items, tab, cls, int(r["b"]), amount) is None:
+        if _make_one_stackable(
+            items,
+            tab,
+            cls,
+            int(r["b"]),
+            amount,
+            max(1, int(r.get("w", 1))),
+            max(1, int(r.get("h", 1))),
+        ) is None:
             break
         made += 1
     if made == 0:
@@ -2834,13 +5189,11 @@ def _scan_item_container(items, tab: str, file_name: str, location: str,
                           item=item_label)
 
         for socket_index in range(1, 7):
-            socket_value = data.get(f"s{socket_index}")
-            if socket_value in (None, ""):
+            socket_field = f"s{socket_index}"
+            if socket_field not in data:
                 continue
             try:
-                socket_data = json.loads(base64.b64decode(socket_value, validate=True))
-                if not isinstance(socket_data, dict) or not _valid_number(socket_data.get("b")):
-                    raise ValueError("invalid socket object")
+                decode_existing_socket_payload(data[socket_field])
             except Exception:
                 _health_issue(issues, "error", "socket_payload", file_name, location,
                               f"Socket {socket_index} payload is malformed; it was not changed.",
@@ -2986,10 +5339,12 @@ def _hss_recovery_mutation_gate() -> dict | None:
     if not vault_path.exists():
         return None
     try:
-        pending = vault_store().list_pending_transfers()
+        store = vault_store()
+        pending = store.list_pending_transfers()
+        pending_batches = store.list_pending_transfer_batches()
     except Exception as exc:
         return {"err": f"Infinite Vault state could not be verified: {exc}"}
-    if pending:
+    if pending or pending_batches:
         return {
             "err": "An Infinite Vault transfer is pending. HSS recovery was blocked to protect item ownership. Nothing was changed."
         }
@@ -3323,11 +5678,34 @@ def scan_save_health(apply: bool = False) -> dict:
     errors = sum(1 for issue in issues if issue["severity"] == "error")
     warnings = sum(1 for issue in issues if issue["severity"] == "warning")
     fixable = sum(1 for issue in issues if issue["fixable"])
+    vault_recovery_batches = []
+    if Path(VAULT_DB_FILE).expanduser().resolve().exists():
+        try:
+            vault_recovery_batches = [
+                {
+                    "requestId": row.request_id,
+                    "direction": row.direction,
+                    "status": row.status,
+                    "itemCount": row.item_count,
+                    "error": row.error,
+                    "recommendedAction": "preserve-vault-ownership",
+                    "possibleDuplicate": True,
+                }
+                for row in vault_store().list_pending_transfer_batches()
+            ]
+        except Exception as exc:
+            _health_issue(
+                issues, "error", "vault_journal_unreadable",
+                Path(VAULT_DB_FILE).name, "Infinite Vault",
+                f"Vault transfer journal could not be inspected: {exc}",
+            )
+            errors += 1
     return {
         "summary": {"files": state["files"], "items": state["items"],
                     "errors": errors, "warnings": warnings, "fixable": fixable},
         "issues": issues, "fixed": state["fixed"], "backups": backups,
         "recoveries": recoveries, "gameRunning": running,
+        "vaultRecoveryBatches": vault_recovery_batches,
     }
 
 
@@ -3560,6 +5938,16 @@ class H(BaseHTTPRequestHandler):
                 "gameBuild": GAME_BUILD_GUARD.summary(),
                 "rollProfiles": ROLL_DB.summary(),
                 "diceSkillTargets": DICE_SKILL_DB.summary(),
+                "torchClassTargets": TORCH_CLASS_DB.summary(),
+                "exactTooltips": (
+                    TOOLTIP_MODEL_DB.summary()
+                    if TOOLTIP_MODEL_DB is not None
+                    else {
+                        "available": False,
+                        "code": "missing",
+                        "message": "Exact-tooltip module is unavailable.",
+                    }
+                ),
             })
         elif u.path == "/api/catalog":
             self._json(CAT)
@@ -3574,6 +5962,19 @@ class H(BaseHTTPRequestHandler):
                 self._json({
                     "selector": selector,
                     "targets": DICE_SKILL_DB.targets(profile_id),
+                })
+        elif u.path == "/api/skill-targets":
+            profile_id = parse_qs(u.query).get("profile", [""])[0]
+            database = skill_target_database(profile_id)
+            selector = database.selector(profile_id) if database is not None else None
+            if selector is None:
+                self._json({"err": "unknown skill/class target profile"}, 404)
+            elif not database.available:
+                self._json({"err": selector["message"], "selector": selector})
+            else:
+                self._json({
+                    "selector": selector,
+                    "targets": database.targets(profile_id),
                 })
         elif u.path.startswith("/api/char/"):
             self._json(read_char(int(u.path.rsplit("/", 1)[1])))
@@ -3595,6 +5996,8 @@ class H(BaseHTTPRequestHandler):
                     "code": "stash_hss_unreadable",
                     "recoveryAvailable": _stash_recovery_available(),
                 }, 500)
+        elif u.path == "/api/vault/bulk-preview":
+            self._json(vault_bulk_preview(parse_qs(u.query, keep_blank_values=True)))
         elif u.path == "/api/vault/items":
             try:
                 self._json(vault_items(parse_qs(u.query, keep_blank_values=True)))
@@ -3643,6 +6046,8 @@ class H(BaseHTTPRequestHandler):
             self._json(op_move(body))
         elif path == "/api/addmany":
             self._json(op_addmany(body))
+        elif path == "/api/stash/fill":
+            self._json(op_fill_stash(body))
         elif path == "/api/forge":
             self._json(op_forge(body))
         elif path == "/api/loadout":
@@ -3669,6 +6074,10 @@ class H(BaseHTTPRequestHandler):
             self._json(op_vault_deposit(body))
         elif path == "/api/vault/withdraw":
             self._json(op_vault_withdraw(body))
+        elif path == "/api/vault/bulk":
+            self._json(op_vault_bulk(body))
+        elif path == "/api/vault/batch/resolve":
+            self._json(op_vault_resolve_batch(body))
         elif path == "/api/vault/collections":
             self._json(op_vault_collections(body))
         elif path == "/api/vault/item":
@@ -3684,7 +6093,7 @@ class H(BaseHTTPRequestHandler):
             return
         path = urlparse(self.path).path
         ordinary_save_routes = {
-            "/api/add", "/api/move", "/api/addmany", "/api/forge",
+            "/api/add", "/api/move", "/api/addmany", "/api/stash/fill", "/api/forge",
             "/api/restorebak", "/api/sockets",
             "/api/makerelic", "/api/makestackable", "/api/makes10access",
             "/api/modify", "/api/delete", "/api/health/fix",
@@ -3837,6 +6246,20 @@ button.act:hover{background:#6f421a}
 #tip .tstat{font-size:12px;color:#8fb7ff;line-height:1.5}
 #tip .tstat b{color:#fff;font-weight:600}
 #tip .tset{font-size:11px;color:#54e87a;margin-top:5px}
+.game-tooltip{min-width:270px;max-width:380px;color:#dce6f2}
+.gtt-alias{margin:0 0 3px;color:#f4c86c;font-size:10px;font-weight:800;letter-spacing:.7px;text-transform:uppercase}
+.gtt-title{font-size:15px;font-weight:850;line-height:1.2;text-align:center;text-shadow:0 2px 8px rgba(0,0,0,.75)}
+.gtt-type,.gtt-requirement{text-align:center;color:#91a0b4;font-size:10px;line-height:1.4}.gtt-requirement{color:#c4ccd7;margin-top:2px}
+.gtt-rule{height:1px;margin:8px 0;background:linear-gradient(90deg,transparent,#526177,transparent)}
+.gtt-stat{display:grid;grid-template-columns:minmax(44px,auto) minmax(0,1fr);gap:6px;padding:2px 5px;border-radius:4px;color:#9fc0ff;font-size:11px;line-height:1.35}
+.gtt-stat b{color:#f2f6fb;font-weight:750;text-align:right}.gtt-stat.unresolved b{color:#8896a9}.gtt-stat.missing{color:#708096;font-style:italic}.gtt-stat.missing b{color:#ffab72}.gtt-stat.gtt-diff{background:rgba(255,174,76,.13);box-shadow:inset 2px 0 #ffa64f}
+.gtt-identity,.gtt-socket{padding:2px 5px;color:#c7a4ff;font-size:10px}.gtt-identity b{color:#e0d0ff}.gtt-empty{padding:7px;color:#7f8da0;text-align:center;font-size:10px}
+.gtt-editor-meta{margin-top:8px;padding-top:7px;border-top:1px solid #344156;color:#8291a5;font-size:9px;line-height:1.5}
+.gtt-editor-meta b{color:#b8c7d8}.gtt-exact{color:#69e0ad!important}.gtt-partial{color:#ffb36f!important}.gtt-fingerprint{font-family:Consolas,monospace;letter-spacing:.6px}
+.vault-compare-modal{position:fixed;z-index:110;inset:0;display:grid;place-items:center;padding:24px;background:rgba(3,7,12,.84);backdrop-filter:blur(7px)}
+.vault-compare-dialog{width:min(920px,calc(100vw - 48px));max-height:calc(100vh - 48px);overflow:auto;padding:17px;border:1px solid #3a4d67;border-radius:14px;background:#0d141f;box-shadow:0 28px 75px rgba(0,0,0,.72)}
+.vault-compare-head{display:flex;align-items:center;justify-content:space-between;gap:14px;margin-bottom:13px}.vault-compare-head h3{margin:0;font-size:16px}.vault-compare-grid{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:14px}
+.vault-compare-column{min-width:0;padding:13px;border:1px solid #2d3d52;border-radius:11px;background:linear-gradient(145deg,#131d2a,#090f18)}.vault-compare-column .game-tooltip{max-width:none}.vault-compare-close{min-width:74px}
 
 /* ========================================================================
    S10 MODERN VAULT UI — visual layer only; inventory/save logic is unchanged
@@ -3911,8 +6334,10 @@ input,select{background:#0b111a;color:#dfe7f0;border-color:#2d3b50;border-radius
 .recovery-card{max-width:920px;margin:0 0 15px;padding:15px;border:1px solid rgba(255,161,79,.5);border-left:4px solid #ff9f4d;border-radius:11px;background:linear-gradient(145deg,rgba(84,43,17,.35),rgba(25,22,24,.8))}.recovery-card h3{margin:0 0 6px;color:#ffb36f;font-size:15px}.recovery-card p{margin:5px 0;color:#d9c7ba;font-size:12px}.recovery-facts{display:flex;flex-wrap:wrap;gap:7px;margin:10px 0}.recovery-facts span{padding:5px 8px;border:1px solid #59412e;border-radius:7px;background:#191416;color:#e8d9c0;font-size:10px}.recovery-repairs{margin:8px 0 12px;padding-left:18px;color:#bfae9f;font-size:11px}.recovery-button{background:#6c351b!important;border-color:#c66c35!important;color:#fff1e7!important}.recovery-button:disabled{opacity:.45;cursor:not-allowed}
 .finder-bar{display:grid;grid-template-columns:minmax(190px,1fr) minmax(105px,135px) minmax(105px,135px) auto;gap:8px;max-width:980px;margin-bottom:14px}.finder-bar input,.finder-bar select{height:39px;min-width:0}.finder-count{margin:4px 0 11px;color:#77869a;font-size:11px}.finder-list{display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:8px;max-width:980px}.found-card{display:grid;grid-template-columns:38px minmax(0,1fr) auto;gap:10px;align-items:center;min-height:61px;padding:9px 10px;border:1px solid #2b394d;border-radius:10px;background:linear-gradient(145deg,#141d29,#0d141e)}.found-card img{width:34px;height:34px;object-fit:contain;image-rendering:pixelated;filter:drop-shadow(0 4px 7px rgba(0,0,0,.5))}.found-icon{width:34px;height:34px;display:grid;place-items:center;border:1px solid #34445a;border-radius:7px;color:#66768b}.found-name{font-weight:750;font-size:12px}.found-loc{margin-top:2px;color:#718096;font-size:10px}.locate-btn{padding:6px 9px;border:1px solid #3b526c;border-radius:7px;background:#162436;color:#a8ddec;cursor:pointer;font-size:10px;font-weight:800}.locate-btn:hover{border-color:#55bad0;background:#1d3348;color:#e2f9ff}.found-empty{max-width:920px;padding:28px;border:1px dashed #334258;border-radius:12px;text-align:center;color:#718096}
 .found-pulse{position:relative!important;z-index:15!important;animation:foundPulse 1.2s ease-in-out 3;box-shadow:0 0 0 2px #53d7ef,0 0 24px rgba(83,215,239,.65)!important}@keyframes foundPulse{50%{filter:brightness(1.65);transform:scale(1.04)}}
-.vault-toolbar{display:grid;grid-template-columns:minmax(180px,1fr) minmax(150px,220px) minmax(130px,180px) auto;gap:9px;align-items:center;max-width:1120px;margin:0 0 13px}.vault-toolbar input,.vault-toolbar select{height:39px;min-width:0}.vault-manage{display:flex;gap:7px;flex-wrap:wrap;max-width:1120px;margin-bottom:13px}.vault-mini{min-height:33px;padding:6px 10px;border:1px solid #33465e;border-radius:7px;background:#142033;color:#b9d8e4;cursor:pointer;font-size:10px;font-weight:800}.vault-mini:hover{border-color:#55bad0;color:#effcff}.vault-mini.danger{color:#ff999d;border-color:#643b45}.vault-summary{display:flex;align-items:center;justify-content:space-between;gap:12px;max-width:1120px;margin:8px 0 12px;color:#8190a5;font-size:11px}.vault-list{display:grid;grid-template-columns:repeat(auto-fill,minmax(245px,1fr));gap:10px;max-width:1120px}.vault-card{position:relative;display:grid;grid-template-columns:54px minmax(0,1fr);gap:11px;min-height:92px;padding:12px;border:1px solid #2e3f55;border-radius:11px;background:radial-gradient(circle at 0 0,rgba(54,200,232,.055),transparent 38%),linear-gradient(145deg,#151f2d,#0d151f);box-shadow:0 8px 22px rgba(0,0,0,.16);transition:border-color .14s,transform .14s}.vault-card:hover{border-color:#536f8d;transform:translateY(-1px)}.vault-card img,.vault-card-icon{width:52px;height:52px;object-fit:contain;image-rendering:pixelated;filter:drop-shadow(0 5px 8px rgba(0,0,0,.55))}.vault-card-icon{display:grid;place-items:center;border:1px solid #354860;border-radius:9px;color:#6c7f96;font-size:20px}.vault-name{font-weight:800;font-size:13px;line-height:1.2}.vault-meta{margin-top:4px;color:#718198;font-size:10px;line-height:1.45}.vault-actions{grid-column:1/-1;display:flex;gap:6px;justify-content:flex-end;margin-top:2px}.vault-return{padding:6px 9px;border:1px solid rgba(82,221,169,.38);border-radius:7px;background:rgba(37,172,125,.09);color:#85e7bf;cursor:pointer;font-size:10px;font-weight:800}.vault-return:hover{background:rgba(37,172,125,.16);border-color:#52dda9}.vault-return:disabled{opacity:.4;cursor:not-allowed}.vault-pager{display:flex;justify-content:center;gap:8px;max-width:1120px;margin:16px 0}.vault-empty{max-width:1120px;padding:38px 24px;border:1px dashed #34465d;border-radius:13px;text-align:center;color:#75869c}.vault-warning{max-width:1120px;margin-bottom:13px;padding:10px 13px;border:1px solid rgba(255,153,76,.35);border-radius:9px;background:rgba(255,132,45,.07);color:#ffb47d;font-size:11px}.unique-list{display:grid;grid-template-columns:repeat(auto-fill,minmax(190px,1fr));gap:7px;max-width:1120px;margin-bottom:16px}.unique-card{display:grid;grid-template-columns:34px minmax(0,1fr);gap:8px;align-items:center;min-height:54px;padding:8px;border:1px solid #2b3b50;border-radius:8px;background:#101923;cursor:pointer}.unique-card:hover{border-color:#526b88}.unique-card img{width:32px;height:32px;object-fit:contain;image-rendering:pixelated}.unique-card .muted{font-size:9px}
-@media(max-width:1260px){body{grid-template-columns:232px minmax(500px,1fr) 350px}.top-actions{min-width:280px}.brand{min-width:195px}.version{max-width:175px}#mid{padding-left:17px;padding-right:17px}.finder-bar{grid-template-columns:1fr 1fr}.finder-bar #ofq,.finder-bar #ofgo{grid-column:1/-1}.access-grid{grid-template-columns:1fr}}
+.vault-toolbar{display:grid;grid-template-columns:minmax(180px,1fr) minmax(150px,220px) minmax(130px,180px) auto;gap:9px;align-items:center;max-width:1120px;margin:0 0 13px}.vault-toolbar input,.vault-toolbar select{height:39px;min-width:0}.vault-manage{display:flex;gap:7px;flex-wrap:wrap;max-width:1120px;margin-bottom:13px}.vault-mini{min-height:33px;padding:6px 10px;border:1px solid #33465e;border-radius:7px;background:#142033;color:#b9d8e4;cursor:pointer;font-size:10px;font-weight:800}.vault-mini:hover{border-color:#55bad0;color:#effcff}.vault-mini.danger{color:#ff999d;border-color:#643b45}.vault-summary{display:flex;align-items:center;justify-content:space-between;gap:12px;max-width:1120px;margin:8px 0 12px;color:#8190a5;font-size:11px}.vault-compare-bar{position:sticky;top:-12px;z-index:12;display:flex;align-items:center;gap:8px;max-width:1120px;margin:0 0 12px;padding:9px 10px;border:1px solid rgba(241,184,75,.32);border-radius:9px;background:rgba(15,23,34,.96);box-shadow:0 8px 22px rgba(0,0,0,.28)}.vault-compare-bar[hidden]{display:none}.vault-compare-slots{flex:1;min-width:0;overflow:hidden;color:#9caabd;font-size:10px;white-space:nowrap;text-overflow:ellipsis}.vault-compare-slots b{color:#f1c86f}.vault-list{display:grid;grid-template-columns:repeat(auto-fill,minmax(265px,1fr));gap:10px;max-width:1120px}.vault-card{position:relative;display:grid;grid-template-columns:54px minmax(0,1fr);gap:11px;min-height:92px;padding:12px;border:1px solid #2e3f55;border-radius:11px;background:radial-gradient(circle at 0 0,rgba(54,200,232,.055),transparent 38%),linear-gradient(145deg,#151f2d,#0d151f);box-shadow:0 8px 22px rgba(0,0,0,.16);transition:border-color .14s,transform .14s}.vault-card:hover{border-color:#536f8d;transform:translateY(-1px)}.vault-card.compare-selected{border-color:#e0ad52;box-shadow:0 0 0 1px rgba(241,184,75,.32),0 9px 25px rgba(0,0,0,.3)}.vault-card img,.vault-card-icon{width:52px;height:52px;object-fit:contain;image-rendering:pixelated;filter:drop-shadow(0 5px 8px rgba(0,0,0,.55))}.vault-card-icon{display:grid;place-items:center;border:1px solid #354860;border-radius:9px;color:#6c7f96;font-size:20px}.vault-card-copy{min-width:0;padding-right:52px}.vault-alias{margin-bottom:2px;color:#f2c76b;font-size:12px;font-weight:850;line-height:1.2}.vault-name{font-weight:800;font-size:13px;line-height:1.2}.vault-alias+.vault-name{font-size:10px;font-weight:700}.vault-fingerprint{font-family:Consolas,monospace;color:#617086}.vault-card-tool{position:absolute;top:7px;width:25px;height:25px;padding:0;border:1px solid #3a4d65;border-radius:6px;background:#111b28;color:#90a5bb;cursor:pointer;font-size:11px;font-weight:850}.vault-card-tool:hover{border-color:#efbd60;color:#ffe1a0}.vault-card-tool.name{right:38px}.vault-card-tool.compare{right:7px}.vault-card-tool.compare.on{border-color:#efbd60;background:#503a18;color:#ffe3a5}.vault-meta{margin-top:4px;color:#718198;font-size:10px;line-height:1.45}.vault-actions{grid-column:1/-1;display:flex;gap:6px;justify-content:flex-end;margin-top:2px}.vault-return{padding:6px 9px;border:1px solid rgba(82,221,169,.38);border-radius:7px;background:rgba(37,172,125,.09);color:#85e7bf;cursor:pointer;font-size:10px;font-weight:800}.vault-return:hover{background:rgba(37,172,125,.16);border-color:#52dda9}.vault-return:disabled{opacity:.4;cursor:not-allowed}.vault-pager{display:flex;justify-content:center;gap:8px;max-width:1120px;margin:16px 0}.vault-empty{max-width:1120px;padding:38px 24px;border:1px dashed #34465d;border-radius:13px;text-align:center;color:#75869c}.vault-warning{max-width:1120px;margin-bottom:13px;padding:10px 13px;border:1px solid rgba(255,153,76,.35);border-radius:9px;background:rgba(255,132,45,.07);color:#ffb47d;font-size:11px}.unique-list{display:grid;grid-template-columns:repeat(auto-fill,minmax(190px,1fr));gap:7px;max-width:1120px;margin-bottom:16px}.unique-card{display:grid;grid-template-columns:34px minmax(0,1fr);gap:8px;align-items:center;min-height:54px;padding:8px;border:1px solid #2b3b50;border-radius:8px;background:#101923;cursor:pointer}.unique-card:hover{border-color:#526b88}.unique-card img{width:32px;height:32px;object-fit:contain;image-rendering:pixelated}.unique-card .muted{font-size:9px}
+.vault-bulk-panel{display:grid;grid-template-columns:minmax(0,1fr) auto auto;gap:12px;align-items:center;max-width:1120px;margin:0 0 13px;padding:12px 13px;border:1px solid rgba(54,200,232,.28);border-radius:11px;background:linear-gradient(145deg,rgba(24,55,75,.32),rgba(16,24,36,.88))}.vault-bulk-copy b{display:block;color:#dff8ff;font-size:12px}.vault-bulk-copy span{display:block;margin-top:2px;color:#7f91a7;font-size:10px}.vault-bulk-button{min-height:37px;padding:7px 11px;border:1px solid rgba(82,221,169,.45);border-radius:8px;background:rgba(37,172,125,.1);color:#8ce6bf;cursor:pointer;font-size:9px;font-weight:900;letter-spacing:.25px}.vault-bulk-button.out{border-color:rgba(241,184,75,.5);background:rgba(163,111,30,.1);color:#f3ce83}.vault-bulk-button:hover{filter:brightness(1.18)}.vault-bulk-button:disabled{opacity:.36;cursor:not-allowed;filter:none}.vault-bulk-preview{margin:12px 0;padding:11px;border:1px solid #33465c;border-radius:9px;background:#0c141f}.vault-bulk-preview strong{display:block;color:#f0f5fb;font-size:14px}.vault-bulk-tabs{display:flex;flex-wrap:wrap;gap:5px;margin-top:9px}.vault-bulk-tabs span{padding:4px 7px;border:1px solid #32445a;border-radius:999px;color:#9eb0c5;font-size:9px}.vault-bulk-note{margin-top:9px;color:#8c9caf;font-size:10px;line-height:1.5}.vault-bulk-note.warn{color:#ffb47d}.vault-bulk-actions{display:flex;gap:7px;margin-top:14px}.vault-bulk-confirm{background:#24543e!important;border-color:#4aa77c!important;color:#c7ffe8!important}.vault-bulk-confirm.out{background:#62461e!important;border-color:#b88337!important;color:#ffe2a5!important}.vault-bulk-confirm:disabled{opacity:.4;cursor:not-allowed}
+.stash-tab-head{display:flex;align-items:end;justify-content:space-between;gap:12px;max-width:1120px;margin-top:14px}.stash-tab-head h2{margin:0 0 6px}.stash-fill{min-height:31px;margin:0 0 6px;padding:6px 11px;border:1px solid rgba(82,221,169,.44);border-radius:8px;background:linear-gradient(180deg,rgba(38,126,91,.28),rgba(23,73,55,.3));color:#91ebc4;cursor:pointer;font-size:10px;font-weight:850;letter-spacing:.35px}.stash-fill:hover{border-color:#62e3b3;background:rgba(38,126,91,.38)}.stash-fill:disabled{opacity:.38;cursor:not-allowed}
+@media(max-width:1260px){body{grid-template-columns:232px minmax(500px,1fr) 350px}.top-actions{min-width:280px}.brand{min-width:195px}.version{max-width:175px}#mid{padding-left:17px;padding-right:17px}.finder-bar{grid-template-columns:1fr 1fr}.finder-bar #ofq,.finder-bar #ofgo{grid-column:1/-1}.access-grid{grid-template-columns:1fr}.vault-compare-grid{grid-template-columns:1fr}}
 </style></head><body>
 <header id="topbar">
   <div class="brand">
@@ -3962,16 +6387,29 @@ input,select{background:#0b111a;color:#dfe7f0;border-color:#2d3b50;border-radius
   </div>
 </aside>
 <script>
-let CAT=[], SETS_DB=[], RW_DB=[], chars=[], view=null, sel=null, curChar=null, charData=null, stashData=null;
+let CAT=[], SETS_DB=[], RW_DB=[], chars=[], view=null, sel=null, curChar=null, charData=null, stashData=null, GAME_RUNNING=false;
 let vaultState={collectionId:'all',q:'',offset:0,limit:120,withdrawTab:'stash_tab_1',queryToken:0,highlightItem:null};
+let vaultBulkBusy=false;
+let previewModels=new Map(),previewSequence=0;
+const vaultCompareItems=new Map();
+function resetPreviewModels(){previewModels.clear();previewSequence=0}
+function registerPreviewModel(model){
+  if(!model||typeof model!=='object')return '';
+  const id='preview_'+(++previewSequence);previewModels.set(id,model);return id;
+}
 const DICE_TARGET_CACHE={};
 const DICE_ADD_SELECTION={};
+const STASH_FILL_IDENTITY_TARGETS={"unique:10:0:23":1,"unique:10:0:31":2,"unique:10:0:89":7};
+function isOrdinarySmallCharm(row){
+  const base=Number(row&&row.b);
+  return Boolean(row)&&row.kind==='normal'&&Number(row.cls)===10&&Number(row.sub||0)===0&&row.key==='charms_normal_small_charm'&&Number.isInteger(base)&&base>=0&&base<=19;
+}
 const CLS={0:"Helmet",1:"Body Armor",2:"Boots",3:"Weapon",4:"Gloves",5:"Amulet",6:"Shield",7:"Ring",8:"Belt",10:"Charm",11:"Potion / Codex",12:"Key",13:"Boss Part / Tarot",14:"Material",15:"Rune / Gem / Orb",16:"Relic",18:"Flask",19:"Essence Vault","-2":"Runeword"};
 const SLOTS={0:"Helmet",1:"Body Armor",2:"Boots",3:"Weapon I",4:"Gloves",5:"Amulet",6:"Offhand I",7:"Ring I",8:"Belt",9:"Ring II",10:"Relic 1",11:"Relic 2",12:"Relic 3",13:"Relic 4",14:"Relic 5",16:"Weapon II",17:"Offhand II"};
 const DIMS={inventory_tab:[15,6],inventory_charms:[3,11],inventory_key_tab:[15,6],inventory_material_tab:[15,6],inventory_socket_tab:[15,6],inventory_relic_tab:[15,6],inventory_tarot_tab:[15,6],inventory_vault_tab:[15,6],inventory_vault_active:[15,6],stash_tab:[17,18],material_tab:[17,18],socket_tab:[17,18],potions:[5,2],personal_stash:[17,18]};
 const BAG_LABELS={inventory_tab_0:"Main",inventory_tab_1:"Extra 1",inventory_tab_2:"Extra 2",inventory_tab_3:"Extra 3",inventory_tab_4:"Extra 4",inventory_socket_tab:"Runes & Gems",inventory_material_tab:"Materials",inventory_key_tab:"Keys",inventory_relic_tab:"Relics",inventory_tarot_tab:"Tarot",inventory_vault_tab:"Essence Vaults",inventory_vault_active_0:"Active Vault",inventory_charms:"Charms",personal_stash:"Personal Stash"};
 const CELL=26;
-const TIPBAR=`<div class="tipbar">&#128161; <b>Right-click any item</b> for: Store in Infinite Vault, Verified MAX / Best Roll, Dice skill target, Edit sockets, Random reroll, Duplicate, Edit stack, Delete &nbsp;&middot;&nbsp; <b>Verified item profiles are applied automatically when available</b> &nbsp;&middot;&nbsp; <b>Drag</b> items to move them or drop onto an equipment slot</div>`;
+const TIPBAR=`<div class="tipbar">&#128161; <b>Right-click any item</b> for: Store in Infinite Vault, Verified MAX / Best Roll, Dice skill target, compatible-item sockets, Random reroll, Duplicate, Edit stack, Delete &nbsp;&middot;&nbsp; <b>Verified item profiles are applied automatically when available</b> &nbsp;&middot;&nbsp; <b>Drag</b> items to move them or drop onto an equipment slot</div>`;
 const STASH_DRAG_TIP=`<div class="tipbar">&#8597; <b>Moving between stash tabs:</b> while holding an item, use the mouse wheel or keep the pointer near the top/bottom edge to auto-scroll. The item is saved only when dropped on a valid cell.</div>`;
 async function j(u,opt={}){
   const cfg={...opt};
@@ -3989,13 +6427,28 @@ async function boot(){
   const dl=document.getElementById('statlist');
   [...labels].sort().forEach(l=>{const o=document.createElement('option');o.value=l;dl.appendChild(o)});
   const ov=await j('/api/overview'); chars=ov.chars;
+  GAME_RUNNING=!!ov.gameRunning;
   document.getElementById('version').textContent=`${ov.profile||'Season 10'} · v${ov.version||''} · ${ov.catalogItems||0} items`;
   const rollStatus=document.getElementById('rollstatus'), rpdb=ov.rollProfiles||{};
-  rollStatus.innerHTML=rpdb.available
-    ?`&#10003; ${rpdb.profileCount||0} VERIFIED PROFILES · ${rpdb.actionableCount||0} MAX/BEST`
-    :`&#9888; ROLL PROFILES DISABLED · ${esc(rpdb.message||'database unavailable')}`;
-  rollStatus.style.borderColor=rpdb.available?'#3da55e':'#b45a43';
-  rollStatus.style.color=rpdb.available?'#74ee98':'#ff9b83';
+  const diceDb=ov.diceSkillTargets||{}, torchDb=ov.torchClassTargets||{};
+  const capabilityBits=[
+    rpdb.available
+      ?`&#10003; MAX/BEST READY · ${rpdb.profileCount||0} VERIFIED PROFILES`
+      :'&#9888; MAX/BEST UNAVAILABLE',
+    torchDb.available?'TORCH TARGETS READY':'TORCH TARGETS UNAVAILABLE',
+    diceDb.available?'DICE TARGETS READY':'DICE TARGETS UNAVAILABLE',
+  ];
+  rollStatus.innerHTML=capabilityBits.join(' · ');
+  rollStatus.title=[
+    rpdb.available?'':`MAX/BEST: ${rpdb.message||'database unavailable'}`,
+    torchDb.available?'':`Torch targets: ${torchDb.message||'database unavailable'}`,
+    diceDb.available?'':`Dice targets: ${diceDb.message||'database unavailable'}`,
+  ].filter(Boolean).join('\n');
+  const capabilityReady=[!!rpdb.available,!!torchDb.available,!!diceDb.available];
+  const allCapabilitiesReady=capabilityReady.every(Boolean);
+  const anyCapabilityReady=capabilityReady.some(Boolean);
+  rollStatus.style.borderColor=allCapabilitiesReady?'#3da55e':(anyCapabilityReady?'#a87329':'#b45a43');
+  rollStatus.style.color=allCapabilitiesReady?'#74ee98':(anyCapabilityReady?'#ffd080':'#ff9b83');
   document.getElementById('status').textContent=ov.gameRunning?'GAME RUNNING - VIEW ONLY, WRITING LOCKED':'GAME CLOSED - EDITING ENABLED';
   document.getElementById('status').className=ov.gameRunning?'warn':'';
   const cd=document.getElementById('chars'); cd.innerHTML='';
@@ -4006,9 +6459,12 @@ async function boot(){
   const fc=document.getElementById('fcls');
   Object.entries(CLS).forEach(([k,v])=>{const o=document.createElement('option');o.value=k;o.textContent=v;fc.appendChild(o)});
   search();
-  setInterval(async()=>{const o=await j('/api/overview');
+  setInterval(async()=>{const o=await j('/api/overview');GAME_RUNNING=!!o.gameRunning;
     document.getElementById('status').textContent=o.gameRunning?'GAME RUNNING - VIEW ONLY, WRITING LOCKED':'GAME CLOSED - EDITING ENABLED';
-    document.getElementById('status').className=o.gameRunning?'warn':'';},5000);
+    document.getElementById('status').className=o.gameRunning?'warn':'';
+    document.querySelectorAll('.stash-fill').forEach(button=>button.disabled=GAME_RUNNING);
+    document.querySelectorAll('.vault-bulk-button').forEach(button=>button.disabled=GAME_RUNNING||button.dataset.staticDisabled==='1'||vaultBulkBusy);
+    document.querySelectorAll('.vault-bulk-confirm').forEach(button=>button.disabled=GAME_RUNNING||vaultBulkBusy||button.dataset.ready==='0');},5000);
   document.querySelector('[data-view=stash]').onclick=openStash;
   document.querySelector('[data-view=vault]').onclick=()=>openVault(true);
   document.querySelector('[data-view=finder]').onclick=openFinder;
@@ -4040,15 +6496,16 @@ function gridHTML(tab,items,delTarget){
   items.forEach((it,i)=>{
     const p=it.pos||[0,0];
     const rr=it.rar&&it.rar!=='?'?it.rar:'_';
-    const inner=it.spr?`<img src="/icons/${it.spr}.png?v=2" loading="lazy">`:esc(short(it.name));
-    h+=`<div class="item b-${rr}" draggable="true" title="" data-i="${i}" data-del='${JSON.stringify(delTarget)}' data-key="${it.key}" data-w="${it.w||1}" data-h="${it.h||1}" data-cid="${it.cid??''}" data-rwcid="${it.rwcid??''}" data-roll="${esc(JSON.stringify(it.rollProfile||null))}" data-skill="${esc(JSON.stringify(it.skillSelector||null))}" data-raw='${esc(JSON.stringify(it.raw||{}))}'
+    const previewId=registerPreviewModel(it.gameTooltip);
+    const inner=it.spr?`<img src="/icons/${attr(it.spr)}.png?v=2" loading="lazy">`:esc(short(it.name));
+    h+=`<div class="item b-${attr(rr)}" draggable="true" title="" data-i="${i}" data-preview-id="${attr(previewId)}" data-del='${attr(JSON.stringify(delTarget))}' data-key="${attr(it.key)}" data-w="${it.w||1}" data-h="${it.h||1}" data-cid="${it.cid??''}" data-rwcid="${it.rwcid??''}" data-socket-limit="${it.socketLimit??0}" data-roll="${attr(JSON.stringify(it.rollProfile||null))}" data-skill="${attr(JSON.stringify(it.skillSelector||null))}" data-raw='${attr(JSON.stringify(it.raw||{}))}'
       style="left:${p[0]*CELL}px;top:${p[1]*CELL}px;width:${(it.w||1)*CELL-2}px;height:${(it.h||1)*CELL-2}px">${inner}${it.stack?`<span class="stk">x${it.stack}</span>`:''}</div>`;
   });
   return h+'</div>';
 }
 function uniqueListHTML(items,delTarget){
   if(!items.length)return '<div class="muted">This auto-sorted tab is empty.</div>';
-  return `<div class="unique-list">${items.map(it=>`<div class="unique-card" data-item-preview data-del='${attr(JSON.stringify(delTarget))}' data-key="${attr(it.key)}" data-cid="${it.cid??''}" data-rwcid="${it.rwcid??''}" data-roll="${attr(JSON.stringify(it.rollProfile||null))}" data-skill="${attr(JSON.stringify(it.skillSelector||null))}" data-raw='${attr(JSON.stringify(it.raw||{}))}'>${it.spr?`<img src="/icons/${attr(it.spr)}.png?v=2" loading="lazy">`:'<div class="found-icon">&#9671;</div>'}<div><div class="r-${attr(it.rar||'_')}">${esc(it.name)}</div><div class="muted">right-click for actions</div></div></div>`).join('')}</div>`;
+  return `<div class="unique-list">${items.map(it=>`<div class="unique-card" data-item-preview data-preview-id="${attr(registerPreviewModel(it.gameTooltip))}" data-del='${attr(JSON.stringify(delTarget))}' data-key="${attr(it.key)}" data-cid="${it.cid??''}" data-rwcid="${it.rwcid??''}" data-socket-limit="${it.socketLimit??0}" data-roll="${attr(JSON.stringify(it.rollProfile||null))}" data-skill="${attr(JSON.stringify(it.skillSelector||null))}" data-raw='${attr(JSON.stringify(it.raw||{}))}'>${it.spr?`<img src="/icons/${attr(it.spr)}.png?v=2" loading="lazy">`:'<div class="found-icon">&#9671;</div>'}<div><div class="r-${attr(it.rar||'_')}">${esc(it.name)}</div><div class="muted">right-click for actions</div></div></div>`).join('')}</div>`;
 }
 function occFree(g,x,y,w,h,skipKey){
   if(x<0||y<0||x+w>g.cols||y+h>g.rows)return false;
@@ -4153,7 +6610,7 @@ function setupDnD(){
       if(!slotAccepts(g)){flash({err:dollEq[g]?'slot occupied - unequip first':'this item does not fit that slot'});finishDrag();return}
       let r;
       if(dragInfo.mode==='add'){
-        r=await j('/api/add',{method:'POST',body:JSON.stringify({cid:dragInfo.cid,target:{type:'equip',slot:curChar,g},skillId:dragInfo.skillId})});
+        r=await j('/api/add',{method:'POST',body:JSON.stringify({cid:dragInfo.cid,target:{type:'equip',slot:curChar,g},targetId:dragInfo.targetId})});
       }else{
         r=await j('/api/move',{method:'POST',body:JSON.stringify({from:dragInfo.from,to:{type:'equip',slot:curChar,g},key:dragInfo.key})});
       }
@@ -4171,7 +6628,7 @@ function setupDnD(){
     if(dragInfo.mode==='move'){
       r=await j('/api/move',{method:'POST',body:JSON.stringify({from:dragInfo.from,to:g.target,key:dragInfo.key,pos})});
     }else{
-      r=await j('/api/add',{method:'POST',body:JSON.stringify({cid:dragInfo.cid,target:{...g.target,pos},skillId:dragInfo.skillId})});
+      r=await j('/api/add',{method:'POST',body:JSON.stringify({cid:dragInfo.cid,target:{...g.target,pos},targetId:dragInfo.targetId})});
     }
     flash(r); finishDrag(); refresh();
   });
@@ -4183,73 +6640,97 @@ function clearGhost(){
 // ---- socket editor ----
 function openSocketEditor(target,key,el){
   const old=document.getElementById('sockmodal'); if(old)old.remove();
-  // read the current sockets from raw -- each socket: {orig:{a,b,n}|null, b:<selected>|null}
-  // orig = the exact contents from the save; written back UNCHANGED when untouched
-  // (seed/variant preserved)
   let raw={};
   try{raw=JSON.parse(el.dataset.raw||'{}')}catch(e){}
-  const cur=[];
+  const parsedSocketLimit=Number.parseInt(el.dataset.socketLimit||'0',10);
+  const socketLimit=Number.isFinite(parsedSocketLimit)?Math.max(0,Math.min(6,parsedSocketLimit)):0;
+  if(socketLimit<=0){flash({err:'This item has no verified socket capacity. Run Save Health Check if it already contains socket data.'});return}
+  const cur=new Array(6).fill(null);
+  let highestPayload=0;
   for(let n=1;n<=6;n++){
     const s=raw['s'+n];
     if(s===undefined)continue;
+    highestPayload=n;
     let o=null; try{o=JSON.parse(atob(s))}catch(e){}
-    cur.push({orig:o, b:(o&&o.b!==undefined)?o.b:null});
+    const originalB=(o&&o.b!==undefined)?Number(o.b):null;
+    cur[n-1]={originalEncoded:typeof s==='string'?s:null,originalB,b:originalB,inputValue:null,invalid:false};
   }
+  const declared=Number(raw&&raw.zz&&raw.zz.sockets);
+  const declaredCount=Number.isFinite(declared)?Math.max(0,Math.min(6,Math.trunc(declared))):0;
+  const currentCount=Math.max(declaredCount,highestPayload);
   const RUNES=CAT.filter(r=>r.available!==false&&r.kind==='normal'&&r.cls===15);
-  const byName={}; RUNES.forEach(r=>byName[r.name.toLowerCase()]=r.b);
+  const choiceLabel=r=>String(r.socketChoiceLabel||r.name||'').trim();
+  const byLabel=new Map();RUNES.forEach(r=>byLabel.set(choiceLabel(r).toLowerCase(),Number(r.b)));
   const modal=document.createElement('div'); modal.id='sockmodal';
-  const rows=cur.length?[...cur]:[{orig:null,b:null}];
+  const rows=cur.slice(0,currentCount).map(row=>row||{originalEncoded:null,originalB:null,b:null,inputValue:null,invalid:false});
+  function socketRowPayload(row){
+    if(row.originalEncoded&&row.originalB===row.b)return {keepEncoded:row.originalEncoded};
+    return row.b==null?null:{b:row.b};
+  }
   function render(){
     let h=`<div id="sockbox"><h3>Edit Sockets</h3>
-    <div class="muted" style="margin-bottom:8px">Pick a rune/gem for each socket (type to search). Empty = empty socket.<br>Sockets you don't change keep their exact gem (seed &amp; variant preserved). Editing resets a codex's forged state.</div>
-    <datalist id="runedl">${RUNES.map(r=>`<option value="${esc(r.name)}">`).join('')}</datalist>`;
+    <div class="muted" style="margin-bottom:8px">Add or remove empty socket slots, then optionally choose a rune/gem. Press <b>Save</b> to write the displayed count.<br>Existing payloads stay byte-for-byte unchanged unless you replace or remove them. Maximum for this item: <b>${socketLimit}</b>.</div>
+    <datalist id="runedl">${RUNES.map(r=>`<option value="${esc(choiceLabel(r))}">`).join('')}</datalist>`;
+    if(!rows.length)h+=`<div class="muted" style="margin:10px 0">No sockets. Use Add socket to create the first empty slot.</div>`;
     rows.forEach((row,i)=>{
       const r=RUNES.find(x=>x.b===row.b);
+      const inputValue=row.inputValue!=null?row.inputValue:(r?choiceLabel(r):'');
       h+=`<div class="sockrow"><b style="width:18px">${i+1}</b>
         ${r&&r.spr?`<img src="/icons/${r.spr}.png?v=2">`:'<span style="width:24px"></span>'}
-        <input list="runedl" data-i="${i}" value="${r?esc(r.name):''}" placeholder="empty socket">
-        <button data-rm="${i}" title="remove socket">&#10006;</button></div>`;
+        <input list="runedl" data-i="${i}" value="${esc(inputValue)}" placeholder="${row.originalEncoded&&!r?'existing unknown payload':'empty socket'}">
+        <button type="button" data-rm="${i}" title="remove socket">&#10006;</button></div>`;
     });
     h+=`<div class="flex" style="margin-top:10px">
-      <button class="act" style="margin:0" id="sockadd" ${rows.length>=6?'disabled':''}>+ Add socket</button>
-      <button class="act" style="margin:0;background:#234a2a;border-color:#3da55e" id="socksave">Save</button>
-      <button class="act" style="margin:0" id="sockcancel">Cancel</button></div></div>`;
+      <button type="button" class="act" style="margin:0" id="sockadd" ${rows.length>=socketLimit?'disabled':''}>+ Add socket (${rows.length}/${socketLimit})</button>
+      <button type="button" class="act" style="margin:0;background:#234a2a;border-color:#3da55e" id="socksave">Save</button>
+      <button type="button" class="act" style="margin:0" id="sockcancel">Cancel</button></div></div>`;
     modal.innerHTML=h;
     modal.querySelectorAll('input[data-i]').forEach(inp=>{
-      inp.onchange=()=>{
+      // Do not rebuild the modal from a change/blur event. Replacing the DOM
+      // before the following click event used to swallow Add/Save clicks.
+      inp.oninput=()=>{
         const i=+inp.dataset.i;
-        const b=byName[inp.value.toLowerCase()];
+        const value=inp.value.trim();
+        const b=byLabel.get(value.toLowerCase());
         const nb=(b===undefined?null:b);
-        // if the same gem is picked again keep the original (seed/variant); otherwise new
-        if(rows[i].orig&&rows[i].orig.b===nb)rows[i]={orig:rows[i].orig,b:nb};
-        else rows[i]={orig:null,b:nb};
-        render();
+        rows[i].b=nb;
+        rows[i].inputValue=value;
+        rows[i].invalid=value!==''&&b===undefined;
       };
     });
     modal.querySelectorAll('button[data-rm]').forEach(btn=>{
       btn.onclick=()=>{rows.splice(+btn.dataset.rm,1);render()};
     });
-    modal.querySelector('#sockadd').onclick=()=>{if(rows.length<6){rows.push({orig:null,b:null});render()}};
+    modal.querySelector('#sockadd').onclick=()=>{if(rows.length<socketLimit){rows.push({originalEncoded:null,originalB:null,b:null,inputValue:null,invalid:false});render()}};
     modal.querySelector('#sockcancel').onclick=()=>modal.remove();
     modal.querySelector('#socksave').onclick=async()=>{
-      // untouched socket -> {keep:orig}; changed/new -> {b}; empty -> null
-      const payload=rows.map(row=>row.b==null?null:(row.orig&&row.orig.b===row.b?{keep:row.orig}:{b:row.b}));
-      const r=await j('/api/sockets',{method:'POST',body:JSON.stringify({target,key,sockets:payload})});
-      modal.remove(); flash(r); refresh();
+      const save=modal.querySelector('#socksave');save.disabled=true;save.textContent='Saving...';
+      if(rows.some(row=>row.invalid)){
+        flash({err:'Choose an exact rune/gem option. Duplicate names include a required [ID ...] suffix.'});
+        save.disabled=false;save.textContent='Save';return;
+      }
+      const payload=rows.map(socketRowPayload);
+      try{
+        const r=await j('/api/sockets',{method:'POST',body:JSON.stringify({target,key,sockets:payload})});
+        flash(r);
+        if(!r.err){modal.remove();refresh();return}
+      }catch(e){flash({err:'Socket update was interrupted; the item was not confirmed as changed.'})}
+      save.disabled=false;save.textContent='Save';
     };
   }
   render();
   modal.onclick=(e)=>{if(e.target===modal)modal.remove()};
   document.body.appendChild(modal);
 }
-// ---- Loaded Dice / Overloaded Dice target-skill editor ----
-async function openDiceSkillEditor(target,key,selector){
+// ---- Exact skill/class target editor ----
+async function openSkillTargetEditor(target,key,selector){
   const old=document.getElementById('sockmodal'); if(old)old.remove();
-  if(!selector||!selector.profileId){flash({err:'This item has no selectable skill profile.'});return}
-  if(selector.available===false){flash({err:selector.message||'Dice skill targets are unavailable.'});return}
+  if(!selector||!selector.profileId){flash({err:'This item has no selectable skill or class profile.'});return}
+  const isClass=selector.targetKind==='class';
+  if(selector.available===false){flash({err:selector.message||(isClass?'Class targets are unavailable.':'Skill targets are unavailable.')});return}
   let payload=DICE_TARGET_CACHE[selector.profileId];
   if(!payload){
-    payload=await j('/api/dice-skills?profile='+encodeURIComponent(selector.profileId));
+    payload=await j('/api/skill-targets?profile='+encodeURIComponent(selector.profileId));
     if(payload.err){flash(payload);return}
     DICE_TARGET_CACHE[selector.profileId]=payload;
   }
@@ -4258,16 +6739,19 @@ async function openDiceSkillEditor(target,key,selector){
   const modal=document.createElement('div'); modal.id='sockmodal';
   let chosenId=selector.current&&selector.current.id!=null?Number(selector.current.id):Number(targets[0].id);
   const currentText=selector.current
-    ?`${selector.current.className}: ${selector.current.name} (ID ${selector.current.id})`
+    ?(isClass?`${selector.current.name} (Class ID ${selector.current.id})`:`${selector.current.className}: ${selector.current.name} (ID ${selector.current.id})`)
     :'Current target could not be decoded from the saved seed.';
-  const noun=selector.targetKind==='subskill'?'subskill-capable skill':'skill';
+  const noun=isClass?'class':selector.targetKind==='subskill'?'subskill-capable skill':'skill';
+  const proof=isClass
+    ?'Every class option below keeps all four variable Torch stats at MAX. Saving replaces only the item\'s <b>a</b> seed; metadata, sockets, position, and every other field stay untouched.'
+    :'Every option below has a clean-build replay proof. Saving changes only the item\'s <b>a</b> seed; +12/+1 fixed values, sockets, and every other field stay untouched.';
   modal.innerHTML=`<div id="sockbox" style="width:min(620px,90vw)"><h3>${esc(selector.name||'Dice')} · Choose ${esc(noun)}</h3>
     <div class="skill-current"><b>Current:</b> ${esc(currentText)}</div>
-    <div class="skill-proof">Every option below has a clean-build replay proof. Saving changes only the item's <b>a</b> seed; +12/+1 fixed values, sockets, and every other field stay untouched.</div>
-    <input class="skill-search" id="skillsearch" placeholder="Search by skill, class, key, or ID..." autocomplete="off">
+    <div class="skill-proof">${proof}</div>
+    <input class="skill-search" id="skillsearch" placeholder="${isClass?'Search by class or Class ID...':'Search by skill, class, key, or ID...'}" autocomplete="off">
     <select class="skill-select" id="skillchoice" size="14"></select>
     <div class="flex" style="margin-top:12px">
-      <button class="act" style="margin:0;background:#234a2a;border-color:#3da55e" id="skillsave">Apply chosen skill</button>
+      <button class="act" style="margin:0;background:#234a2a;border-color:#3da55e" id="skillsave">Apply chosen ${isClass?'class':'skill'}</button>
       <button class="act" style="margin:0" id="skillcancel">Cancel</button>
     </div></div>`;
   const search=modal.querySelector('#skillsearch');
@@ -4276,12 +6760,16 @@ async function openDiceSkillEditor(target,key,selector){
     const q=search.value.trim().toLowerCase();
     const matches=targets.filter(row=>!q||String(row.id)===q||row.name.toLowerCase().includes(q)||row.className.toLowerCase().includes(q)||(row.key||'').toLowerCase().includes(q));
     if(matches.length&&!matches.some(row=>Number(row.id)===chosenId))chosenId=Number(matches[0].id);
-    const groups=new Map();
-    [...matches].sort((a,b)=>Number(a.classId)-Number(b.classId)||a.name.localeCompare(b.name)).forEach(row=>{
-      if(!groups.has(row.className))groups.set(row.className,[]);
-      groups.get(row.className).push(row);
-    });
-    choice.innerHTML=[...groups.entries()].map(([className,rows])=>`<optgroup label="${esc(className)}">${rows.map(row=>`<option value="${row.id}" ${Number(row.id)===chosenId?'selected':''}>${esc(row.name)} · ID ${row.id}</option>`).join('')}</optgroup>`).join('');
+    if(isClass){
+      choice.innerHTML=[...matches].sort((a,b)=>Number(a.id)-Number(b.id)).map(row=>`<option value="${row.id}" ${Number(row.id)===chosenId?'selected':''}>${esc(row.name)} · Class ID ${row.id}</option>`).join('');
+    }else{
+      const groups=new Map();
+      [...matches].sort((a,b)=>Number(a.classId)-Number(b.classId)||a.name.localeCompare(b.name)).forEach(row=>{
+        if(!groups.has(row.className))groups.set(row.className,[]);
+        groups.get(row.className).push(row);
+      });
+      choice.innerHTML=[...groups.entries()].map(([className,rows])=>`<optgroup label="${esc(className)}">${rows.map(row=>`<option value="${row.id}" ${Number(row.id)===chosenId?'selected':''}>${esc(row.name)} · ID ${row.id}</option>`).join('')}</optgroup>`).join('');
+    }
     choice.disabled=matches.length===0;
     modal.querySelector('#skillsave').disabled=matches.length===0;
   }
@@ -4295,7 +6783,7 @@ async function openDiceSkillEditor(target,key,selector){
     const selectedSkillId=Number(choice.value);
     skillSave.disabled=true; skillCancel.disabled=true; choice.disabled=true; search.disabled=true;
     try{
-      const result=await j('/api/modify',{method:'POST',body:JSON.stringify({action:'selectskill',target,key,skillId:selectedSkillId})});
+      const result=await j('/api/modify',{method:'POST',body:JSON.stringify({action:'selectskill',target,key,targetId:selectedSkillId})});
       modal.remove(); flash(result); refresh();
     }finally{
       if(modal.isConnected){skillSave.disabled=false;skillCancel.disabled=false;choice.disabled=false;search.disabled=false}
@@ -4307,26 +6795,112 @@ async function openDiceSkillEditor(target,key,selector){
   search.focus();
 }
 // ---- item tooltip ----
-function setupTip(){
-  const tip=document.createElement('div'); tip.id='tip'; document.body.appendChild(tip);
-  function show(cid,extra,x,y,raw,profileOverride,skillSelector){
-    const r=CAT[cid]; if(!r){tip.style.display='none';return}
+const TOOLTIP_RARITIES=new Set(['Satanic','Heroic','Angelic','Unholy','Runeword','Normal']);
+function tooltipRarityClass(value){return TOOLTIP_RARITIES.has(value)?value:'_'}
+function tooltipLineKey(line,index){
+  if(line&&line._comparisonKey)return String(line._comparisonKey);
+  if(line&&Number.isInteger(line.statKey))return 'stat:'+line.statKey;
+  return line&&line.id?String(line.id):`line:${index}:${String(line&&line.label||'')}`;
+}
+function tooltipDifferenceKeys(left,right){
+  const keyed=model=>new Map((model&&Array.isArray(model.stats)?model.stats:[]).map((line,index)=>[
+    tooltipLineKey(line,index),JSON.stringify([line&&line.value,line&&line.formattedValue,line&&line.label])
+  ]));
+  const a=keyed(left),b=keyed(right),different=new Set();
+  new Set([...a.keys(),...b.keys()]).forEach(key=>{if(a.get(key)!==b.get(key))different.add(key)});
+  return different;
+}
+function tooltipComparisonLayout(left,right){
+  const leftStats=left&&Array.isArray(left.stats)?left.stats:[],rightStats=right&&Array.isArray(right.stats)?right.stats:[];
+  const keys=[],labels=new Map();
+  [...leftStats,...rightStats].forEach((line,index)=>{
+    const key=tooltipLineKey(line,index);if(!keys.includes(key))keys.push(key);
+    if(!labels.has(key))labels.set(key,String(line&&line.label||'Unknown stat'));
+  });
+  return {keys,labels,differences:tooltipDifferenceKeys(left,right)};
+}
+function renderGameTooltip(model,options={}){
+  if(!model||typeof model!=='object')return '';
+  const item=model.item&&typeof model.item==='object'?model.item:{};
+  const calc=model.calculation&&typeof model.calculation==='object'?model.calculation:{};
+  const rarity=String(item.rarity||'?'),canonical=item.canonicalName||item.name||'Unknown item';
+  const custom=item.customName&&String(item.customName).trim()?String(item.customName).trim():'';
+  let h='<div class="game-tooltip">';
+  if(custom)h+=`<div class="gtt-alias">${esc(custom)}</div>`;
+  h+=`<div class="gtt-title r-${tooltipRarityClass(rarity)}">${esc(canonical)}</div>`;
+  const meta=[rarity,item.tier?`Tier ${item.tier}`:'',options.extra||''].filter(Boolean).map(esc).join(' &middot; ');
+  if(meta)h+=`<div class="gtt-type">${meta}</div>`;
+  if(item.requiredLevel)h+=`<div class="gtt-requirement">Requires Level ${esc(item.requiredLevel)}</div>`;
+  h+='<div class="gtt-rule"></div>';
+  const nativeStats=Array.isArray(model.stats)?model.stats:[];
+  let stats=nativeStats;
+  if(options.comparison&&Array.isArray(options.comparison.keys)){
+    const own=new Map(nativeStats.map((line,index)=>[tooltipLineKey(line,index),line]));
+    stats=options.comparison.keys.map(key=>own.get(key)||{
+      id:key,_comparisonKey:key,label:options.comparison.labels.get(key)||'Unknown stat',
+      formattedValue:'—',value:null,confidence:'missing',missing:true,
+    });
+  }
+  const differences=options.differences instanceof Set?options.differences:new Set();
+  if(stats.length){
+    stats.forEach((line,index)=>{
+      if(!line||typeof line!=='object')return;
+      const key=tooltipLineKey(line,index),value=line.formattedValue??line.sourceRange??'?';
+      const classes=['gtt-stat'];
+      if(line.confidence==='unresolved'||value==='?')classes.push('unresolved');
+      if(line.missing||line.confidence==='missing')classes.push('missing');
+      if(differences.has(key))classes.push('gtt-diff');
+      h+=`<div class="${classes.join(' ')}"><b>${esc(value)}</b><span>${esc(line.label||'Unknown stat')}</span></div>`;
+    });
+  }else h+='<div class="gtt-empty">No displayed stat lines were resolved.</div>';
+  const identities=Array.isArray(model.identities)?model.identities:[];
+  identities.forEach(identity=>{
+    if(!identity||typeof identity!=='object')return;
+    const source=String(identity.source||''),label=source.includes('subskill')?'Subskill target':source.includes('damage_type')?'Damage type':source.includes('random_stat')?'Random stat identity':`Identity stat #${identity.statKey??'?'}`;
+    const selected=identity.selectedName?String(identity.selectedName):(identity.selectedIdentity!=null?`#${identity.selectedIdentity}`:null);
+    const details=[selected||'unresolved',identity.fixedValue!=null?`value ${identity.fixedValue}`:'',identity.attempts>1?`${identity.attempts} attempts`:''].filter(Boolean);
+    h+=`<div class="gtt-identity"><b>${esc(label)}</b> &middot; ${details.map(esc).join(' &middot; ')}</div>`;
+  });
+  const sockets=Array.isArray(model.sockets)?model.sockets:[];
+  sockets.forEach(socket=>{
+    if(!socket||typeof socket!=='object')return;
+    const details=socket.status==='decoded'?[`ID ${socket.baseId??'?'}`,socket.quantity!=null?`n=${socket.quantity}`:''].filter(Boolean):['unreadable payload'];
+    h+=`<div class="gtt-socket">Socket ${esc(socket.index??'?')} &middot; ${details.map(esc).join(' &middot; ')}</div>`;
+  });
+  const exact=calc.numbersExact===true,quality=model.rollQuality&&typeof model.rollQuality==='object'?model.rollQuality:null;
+  const seeds=model.seeds&&typeof model.seeds==='object'?Object.entries(model.seeds).map(([k,v])=>`${k}=${v}`).join(', '):'';
+  h+=`<div class="gtt-editor-meta ${exact?'gtt-exact':'gtt-partial'}"><b>${exact?'EXACT NUMBERS':'SAFE PREVIEW'}</b>`;
+  if(quality&&Number(quality.total)>0)h+=` &middot; Max endpoints ${esc(quality.maxed)}/${esc(quality.total)}`;
+  if(model.fingerprint)h+=` &middot; <span class="gtt-fingerprint">#${esc(model.fingerprint)}</span>`;
+  if(seeds)h+=`<br>${esc(seeds)}`;
+  const warnings=Array.isArray(calc.warnings)?calc.warnings.filter(Boolean):[];
+  if(warnings.length)h+=`<br>${esc(warnings[0])}`;
+  h+='</div></div>';
+  return h;
+}
+function renderCatalogTooltip(cid,extra,raw,profileOverride,skillSelector){
+    const r=CAT[cid]; if(!r)return '';
     let h=`<div class="tname r-${r.rar}">${esc(r.name)}</div>`;
     const meta=r.kind==='runeword'?'Runeword':`${CLS[r.cls]||''}${r.cls===3?' / '+(SUBN[r.sub]||r.sub):''} &middot; ${r.rar} &middot; ${r.kind}`;
-    h+=`<div class="ttype">${meta}${r.tier?` &middot; Tier ${r.tier}`:''}${extra||''}</div>`;
+    h+=`<div class="ttype">${meta}${r.tier?` &middot; Tier ${esc(r.tier)}`:''}${extra||''}</div>`;
     if(r.lvl)h+=`<div class="ttype">Requires Level ${r.lvl}</div>`;
     const profile=profileOverride||r.rollProfile||null;
     const fieldSeeds=profile&&profile.fieldSeeds&&typeof profile.fieldSeeds==='object'?profile.fieldSeeds:{};
     const seedFields=['a','i','s'].filter(field=>Object.prototype.hasOwnProperty.call(fieldSeeds,field));
     const hasSeed=raw&&raw.a!==undefined&&Number.isFinite(Number(raw.a));
-    if(skillSelector){
+    if(isOrdinarySmallCharm(r)){
+      h+=`<div class="ttype" style="color:#ffb46e">ROLLED RARITY &amp; AFFIXES: NATIVE RANDOM &middot; generated in-game from seed a</div>`;
+    }else if(skillSelector){
       if(skillSelector.current){
-        const kind=skillSelector.targetKind==='subskill'?'SUBSKILL TARGET':'SKILL TARGET';
-        h+=`<div class="ttype" style="color:#72dfdf">&#10003; ${kind} &middot; ${esc(skillSelector.current.className)}: ${esc(skillSelector.current.name)} &middot; ID ${skillSelector.current.id} &middot; a=${hasSeed?Number(raw.a):'missing'}</div>`;
+        const isClass=skillSelector.targetKind==='class';
+        const kind=isClass?'CLASS TARGET':skillSelector.targetKind==='subskill'?'SUBSKILL TARGET':'SKILL TARGET';
+        const target=isClass?`${esc(skillSelector.current.name)} &middot; Class ID ${skillSelector.current.id}`:`${esc(skillSelector.current.className)}: ${esc(skillSelector.current.name)} &middot; ID ${skillSelector.current.id}`;
+        h+=`<div class="ttype" style="color:#72dfdf">&#10003; ${kind} &middot; ${target} &middot; a=${hasSeed?Number(raw.a):'missing'}${isClass?' &middot; chosen targets use 4/4 MAX stats':''}</div>`;
       }else if(!raw&&skillSelector.available){
-        h+=`<div class="ttype" style="color:#72dfdf">&#10003; VERIFIED ${skillSelector.targetKind==='subskill'?'SUBSKILL':'SKILL'} SELECTOR &middot; choose a target before adding</div>`;
+        const kind=skillSelector.targetKind==='class'?'CLASS':skillSelector.targetKind==='subskill'?'SUBSKILL':'SKILL';
+        h+=`<div class="ttype" style="color:#72dfdf">&#10003; VERIFIED ${kind} SELECTOR &middot; choose a target before adding${kind==='CLASS'?' &middot; 4/4 stats MAX':''}</div>`;
       }else{
-        h+=`<div class="ttype" style="color:#ffb46e">Skill target unavailable &middot; ${esc(skillSelector.message||'saved seed could not be decoded')}</div>`;
+        h+=`<div class="ttype" style="color:#ffb46e">${skillSelector.targetKind==='class'?'Class':'Skill'} target unavailable &middot; ${esc(skillSelector.message||'saved seed could not be decoded')}</div>`;
       }
     }else if(profile&&profile.mode==='fixed'){
       h+=`<div class="ttype" style="color:#74ee98">&#10003; FIXED DEFINITION STATS &middot; no variable roll</div>`;
@@ -4347,26 +6921,37 @@ function setupTip(){
       h+=`<div class="tset">${esc(r.setName||(s&&s.name)||('Set #'+r.set))}</div>`;
       if(s)for(const pc of s.pieces)h+=`<div class="tset" style="color:#3da55e">&nbsp;&nbsp;${esc(pc.name)}</div>`;
       h+=`<div class="tset" style="color:#937f6a">(full-set bonus values not extracted yet)</div>`;}
-    tip.innerHTML=h; tip.style.display='block';
-    const tw=tip.offsetWidth, th=tip.offsetHeight;
-    tip.style.left=Math.min(x+18,innerWidth-tw-8)+'px';
-    tip.style.top=Math.min(y+12,innerHeight-th-8)+'px';
+    return h;
+}
+function setupTip(){
+  const tip=document.createElement('div'); tip.id='tip'; document.body.appendChild(tip);
+  let active=null;
+  function hide(){tip.style.display='none';active=null}
+  function position(x,y){
+    const tw=tip.offsetWidth,th=tip.offsetHeight;
+    tip.style.left=Math.max(8,Math.min(x+18,innerWidth-tw-8))+'px';
+    tip.style.top=Math.max(8,Math.min(y+12,innerHeight-th-8))+'px';
   }
   document.addEventListener('mousemove',e=>{
-    if(dragInfo){tip.style.display='none';return}
+    if(dragInfo||document.querySelector('.vault-compare-modal')||e.target.closest('button,input,select,textarea')){hide();return}
     const el=e.target.closest('.item,.dslot[draggable],.res,.rwname,[data-item-preview]');
-    if(!el){tip.style.display='none';return}
-    const rwcid=el.dataset.rwcid;
-    let cid=(rwcid!==''&&rwcid!=null)?rwcid:el.dataset.cid;
-    if(cid===''||cid==null){
-      if(el.classList.contains('res'))return;
-      tip.style.display='none';return;
+    if(!el){hide();return}
+    if(active!==el){
+      const stk=el.querySelector('.stk'),preview=previewModels.get(el.dataset.previewId||'');
+      if(preview)tip.innerHTML=renderGameTooltip(preview,{extra:stk?stk.textContent:''});
+      else{
+        const rwcid=el.dataset.rwcid;
+        const cid=(rwcid!==''&&rwcid!=null)?rwcid:el.dataset.cid;
+        if(cid===''||cid==null){hide();return}
+        let raw=null;try{raw=JSON.parse(el.dataset.raw||'null')}catch(err){}
+        let rollProfile=null;try{rollProfile=JSON.parse(el.dataset.roll||'null')}catch(err){}
+        let skillSelector=null;try{skillSelector=JSON.parse(el.dataset.skill||'null')}catch(err){}
+        tip.innerHTML=renderCatalogTooltip(+cid,stk?` &middot; ${stk.textContent}`:'',raw,rollProfile,skillSelector);
+      }
+      if(!tip.innerHTML){hide();return}
+      active=el;tip.style.display='block';
     }
-    const stk=el.querySelector('.stk');
-    let raw=null; try{raw=JSON.parse(el.dataset.raw||'null')}catch(e){}
-    let rollProfile=null; try{rollProfile=JSON.parse(el.dataset.roll||'null')}catch(e){}
-    let skillSelector=null; try{skillSelector=JSON.parse(el.dataset.skill||'null')}catch(e){}
-    show(+cid,stk?` &middot; ${stk.textContent}`:'',e.clientX,e.clientY,raw,rollProfile,skillSelector);
+    position(e.clientX,e.clientY);
   });
 }
 const SUBN={1:"Sword",2:"Dagger",3:"Mace",4:"Axe",5:"Claw",6:"Polearm",7:"Chainsaw",8:"Staff",9:"Cane",10:"Wand",11:"Book",12:"Spellblade",13:"Bow",14:"Gun",15:"Flask",16:"Throwing",17:"Universal"}
@@ -4387,8 +6972,18 @@ let vaultMeta=null;
 function vaultCollectionOptions(collections,selected){
   return (collections||[]).map(c=>`<option value="${c.id}" ${String(c.id)===String(selected)?'selected':''}>${esc(c.name)} (${c.itemCount||0})</option>`).join('');
 }
+async function preserveVaultBatchOwnership(requestId,itemCount,direction,returnView){
+  const source=direction==='deposit'?'the protected deposit copies':'the reserved withdrawal items';
+  if(!confirm(`Preserve Vault ownership for all ${itemCount} items?\n\nThis makes ${source} available in Infinite Vault. Shared Stash is not changed or cleaned. If some copies are already there, duplicates may remain.\n\nHero Siege must remain closed.`))return;
+  const result=await j('/api/vault/batch/resolve',{method:'POST',body:JSON.stringify({action:'preserve-vault-ownership',requestId})});
+  flash(result);
+  if(result.err){alert(result.err);return}
+  alert(`${result.ok}\n\n${result.warning||'Shared Stash was left untouched; check for possible duplicates.'}`);
+  if(returnView==='health')await openHealth();else await openVault(false);
+}
 async function openVault(reset=true){
   view='vault';curChar=null;gridReg={};gridSeq=0;
+  resetPreviewModels();
   document.querySelectorAll('.charbtn').forEach(b=>b.classList.remove('sel'));
   if(reset)vaultState.offset=0;
   try{vaultState.withdrawTab=localStorage.getItem('hsVaultWithdrawTab')||vaultState.withdrawTab}catch(e){}
@@ -4403,10 +6998,22 @@ async function openVault(reset=true){
   const transferTabs=vaultMeta.transferTabs||[];
   if(!transferTabs.some(row=>row.tab===vaultState.withdrawTab))vaultState.withdrawTab=transferTabs.length?transferTabs[0].tab:'';
   const returnOptions=transferTabs.map(row=>`<option value="${attr(row.tab)}" ${vaultState.withdrawTab===row.tab?'selected':''}>Return to ${esc(row.label)}</option>`).join('');
+  const bulkStaticLocked=!!(vaultMeta.pending||vaultMeta.conflicts);
+  const bulkLocked=!!(vaultMeta.gameRunning||bulkStaticLocked);
+  const vaultRecoveryBatches=vaultMeta.recoveryBatches||[];
+  const vaultRecoveryWarnings=vaultMeta.recoveryWarnings||[];
+  const vaultRecoveryMarkup=vaultRecoveryBatches.map(row=>`<div class="recovery-card"><h3>&#9888; Ambiguous ${row.direction==='deposit'?'stash-to-Vault deposit':'Vault-to-stash return'} (${row.itemCount} items)</h3><p>${esc(row.error||'The journal could not prove which side completed.')}</p><p><b>Ownership-safe choice:</b> keep every protected record available in Infinite Vault. Shared Stash will not be changed; duplicates may remain.</p><button class="act recovery-button" data-vault-batch-resolve="${attr(row.requestId)}" data-count="${row.itemCount}" data-direction="${attr(row.direction)}" ${vaultMeta.gameRunning?'disabled':''}>PRESERVE VAULT OWNERSHIP</button></div>`).join('');
+  const vaultWarningMarkup=vaultRecoveryWarnings.map(row=>`<div class="vault-warning"><b>Vault ownership preserved for ${row.itemCount} items.</b> ${esc(row.message||'Shared Stash may contain duplicate copies.')}</div>`).join('');
   let h=`<h2>Infinite Vault <span class="muted">(${vaultMeta.total||0} items)</span></h2>
-    <div class="tool-intro"><b>Unlimited named collections, connected to every grid-backed Shared Stash tab.</b> Right-click an item in a normal, Material, or Socket tab to store it here. Returning an item automatically finds the first free space in the selected tab.</div>
+    <div class="tool-intro"><b>Unlimited named collections, connected to Shared Stash.</b> Individual actions use normal, Material and Socket grids. Bulk Transfer additionally preserves the complete Unique tab and all 19 numbered tabs.</div>
     ${vaultMeta.gameRunning?'<div class="vault-warning">Hero Siege is running. Your vault is viewable, but transfers are locked until the game is closed.</div>':''}
-    ${(vaultMeta.conflicts||0)?`<div class="vault-warning"><b>${vaultMeta.conflicts} transfer needs attention.</b> No item was discarded; close the game and reopen this page to retry recovery.</div>`:''}
+    ${vaultWarningMarkup}
+    ${(vaultMeta.pending||vaultMeta.conflicts)?`<div class="vault-warning"><b>${vaultMeta.pending||vaultMeta.conflicts} transfer operation needs attention.</b> No item was discarded. Review the ownership-safe recovery below.</div>${vaultRecoveryMarkup}`:''}
+    <div class="vault-bulk-panel">
+      <div class="vault-bulk-copy"><b>Complete Stash Transfer</b><span>Choose every item tab or one exact Shared Stash tab. One preview, one backup, one atomic journal.</span></div>
+      <button type="button" class="vault-bulk-button" id="vaultbulkin" data-static-disabled="${bulkStaticLocked?'1':'0'}" ${bulkLocked?'disabled':''}>MOVE SHARED STASH → VAULT</button>
+      <button type="button" class="vault-bulk-button out" id="vaultbulkout" data-static-disabled="${bulkStaticLocked||!(vaultMeta.total||0)?'1':'0'}" ${bulkLocked||!(vaultMeta.total||0)?'disabled':''}>RETURN ALL VAULT → SHARED STASH</button>
+    </div>
     <div class="vault-toolbar">
       <input id="vaultq" value="${attr(vaultState.q)}" placeholder="Search this vault..." aria-label="Search Infinite Vault">
       <select id="vaultcollection"><option value="all">All collections (${vaultMeta.total||0})</option>${vaultCollectionOptions(vaultMeta.collections,vaultState.collectionId)}</select>
@@ -4415,18 +7022,98 @@ async function openVault(reset=true){
     </div>
     <div class="vault-manage"><button class="vault-mini" id="vaultnew">+ NEW COLLECTION</button><button class="vault-mini" id="vaultrename" ${vaultState.collectionId==='all'?'disabled':''}>RENAME</button><button class="vault-mini danger" id="vaultdelete" ${vaultState.collectionId==='all'?'disabled':''}>DELETE EMPTY</button></div>
     <div class="vault-summary"><span id="vaultcount">Loading items...</span><span>Database: ${esc(vaultMeta.databaseName||'hs_infinite_vault.sqlite3')}</span></div>
+    <div class="vault-compare-bar" id="vaultcomparebar" hidden><div class="vault-compare-slots" id="vaultcompareslots"></div><button class="vault-mini" id="vaultcompareopen" disabled>COMPARE</button><button class="vault-mini" id="vaultcompareclear">CLEAR</button></div>
     <div id="vaultitems"><div class="vault-empty">Loading...</div></div>`;
   md.innerHTML=h;
+  md.querySelectorAll('[data-vault-batch-resolve]').forEach(button=>button.onclick=()=>preserveVaultBatchOwnership(button.dataset.vaultBatchResolve,+button.dataset.count,button.dataset.direction,'vault'));
   document.getElementById('vaultcollection').value=String(vaultState.collectionId);
   let timer=null;
   document.getElementById('vaultq').oninput=e=>{vaultState.q=e.target.value;vaultState.offset=0;clearTimeout(timer);timer=setTimeout(loadVaultItems,220)};
   document.getElementById('vaultcollection').onchange=e=>{vaultState.collectionId=e.target.value==='all'?'all':+e.target.value;vaultState.offset=0;openVault(false)};
   document.getElementById('vaultreturn').onchange=e=>{vaultState.withdrawTab=e.target.value;try{localStorage.setItem('hsVaultWithdrawTab',vaultState.withdrawTab)}catch(err){}};
   document.getElementById('vaultrefresh').onclick=()=>openVault(false);
+  document.getElementById('vaultbulkin').onclick=()=>openVaultBulk('stash-to-vault');
+  document.getElementById('vaultbulkout').onclick=()=>openVaultBulk('vault-to-stash');
   document.getElementById('vaultnew').onclick=()=>manageVaultCollection('create');
   document.getElementById('vaultrename').onclick=()=>manageVaultCollection('rename');
   document.getElementById('vaultdelete').onclick=()=>manageVaultCollection('delete');
+  document.getElementById('vaultcompareopen').onclick=openVaultCompare;
+  document.getElementById('vaultcompareclear').onclick=()=>{vaultCompareItems.clear();renderVaultCompareBar();document.querySelectorAll('.vault-card.compare-selected').forEach(card=>card.classList.remove('compare-selected'))};
+  renderVaultCompareBar();
   await loadVaultItems();
+}
+function vaultBulkSessionKey(direction,sourceTab='all',collectionId='all',destinationTab='auto'){return `hsVaultBulk:${direction}:${sourceTab}:${collectionId}:${destinationTab}`}
+async function openVaultBulk(direction){
+  if(vaultBulkBusy)return;
+  if(GAME_RUNNING){flash({err:'Hero Siege is running. Close it before a bulk transfer.'});return}
+  const previous=document.getElementById('sockmodal');if(previous)previous.remove();
+  const returnFocus=document.activeElement;
+  const intoVault=direction==='stash-to-vault';
+  const selectedCollection=vaultState.collectionId!=='all'?vaultState.collectionId:vaultMeta.defaultCollectionId;
+  const bulkSourceTabs=(vaultMeta.bulkDepositTabs||[]).length?vaultMeta.bulkDepositTabs:[{tab:'all',label:'All item tabs'}];
+  const bulkDestinationTabs=(vaultMeta.bulkWithdrawalTabs||[]).length?vaultMeta.bulkWithdrawalTabs:[{tab:'auto',label:'Automatic (original tabs + safe routing)'}];
+  let selectedSource='all';try{const savedSource=localStorage.getItem('hsVaultBulkSourceTab');if(bulkSourceTabs.some(row=>row.tab===savedSource))selectedSource=savedSource}catch(e){}
+  let selectedDestination='auto';try{const savedDestination=localStorage.getItem('hsVaultBulkDestinationTab');if(bulkDestinationTabs.some(row=>row.tab===savedDestination))selectedDestination=savedDestination}catch(e){}
+  const sourceOptions=bulkSourceTabs.map(row=>`<option value="${attr(row.tab)}" ${row.tab===selectedSource?'selected':''}>${esc(row.label)}</option>`).join('');
+  const destinationOptions=bulkDestinationTabs.map(row=>`<option value="${attr(row.tab)}" ${row.tab===selectedDestination?'selected':''}>${esc(row.label)}</option>`).join('');
+  const modal=document.createElement('div');modal.id='sockmodal';
+  modal.innerHTML=`<div id="sockbox" role="dialog" aria-modal="true" aria-labelledby="vaultbulktitle">
+    <h3 id="vaultbulktitle">${intoVault?'Move Shared Stash items to Infinite Vault':'Return complete Infinite Vault to Shared Stash'}</h3>
+    <div class="muted" style="margin:6px 0 12px">${intoVault?'Choose all item tabs or one exact numbered, Material, Socket, or Unique tab.':'Includes every available item in every collection. Choose automatic routing or one exact compatible Shared Stash tab.'}</div>
+    ${intoVault?`<div class="jlrow"><label for="vaultbulksource">Source</label><select id="vaultbulksource">${sourceOptions}</select></div>`:''}
+    ${!intoVault?`<div class="jlrow"><label for="vaultbulkdestination">Destination</label><select id="vaultbulkdestination">${destinationOptions}</select></div>`:''}
+    ${intoVault?`<div class="jlrow"><label for="vaultbulkcollection">Collection</label><select id="vaultbulkcollection">${vaultCollectionOptions(vaultMeta.collections,selectedCollection)}</select></div>`:''}
+    <div id="vaultbulkpreview" class="vault-bulk-preview" role="status" aria-live="polite"><strong>Building exact preview…</strong><div class="vault-bulk-note">No data is being changed.</div></div>
+    <div class="vault-bulk-actions"><button class="act vault-bulk-confirm${intoVault?'':' out'}" id="vaultbulkgo" type="button" data-ready="0" disabled>CONTINUE</button><button class="act" id="vaultbulkcancel" type="button">CANCEL</button></div>
+  </div>`;
+  document.body.appendChild(modal);
+  const inertRoots=['topbar','left','mid','right'].map(id=>document.getElementById(id)).filter(Boolean);inertRoots.forEach(node=>node.inert=true);
+  const previewHost=document.getElementById('vaultbulkpreview'),go=document.getElementById('vaultbulkgo'),cancel=document.getElementById('vaultbulkcancel'),collection=document.getElementById('vaultbulkcollection'),source=document.getElementById('vaultbulksource'),destinationTab=document.getElementById('vaultbulkdestination');
+  let preview=null,loading=false;
+  const dismiss=()=>{modal.remove();inertRoots.forEach(node=>node.inert=false);if(returnFocus&&returnFocus.focus)returnFocus.focus()};
+  const close=()=>{if(!vaultBulkBusy)dismiss()};
+  cancel.onclick=close;modal.onclick=e=>{if(e.target===modal)close()};
+  modal.onkeydown=e=>{if(e.key==='Escape'){e.preventDefault();close();return}if(e.key==='Tab'){const focusable=[...modal.querySelectorAll('button:not([disabled]),select:not([disabled])')];if(!focusable.length)return;const first=focusable[0],last=focusable[focusable.length-1];if(e.shiftKey&&document.activeElement===first){e.preventDefault();last.focus()}else if(!e.shiftKey&&document.activeElement===last){e.preventDefault();first.focus()}}};
+  const loadPreview=async()=>{
+    if(loading||vaultBulkBusy)return;loading=true;preview=null;go.dataset.ready='0';go.disabled=true;go.textContent='CHECKING…';if(collection)collection.disabled=true;if(source)source.disabled=true;if(destinationTab)destinationTab.disabled=true;previewHost.setAttribute('aria-busy','true');
+    previewHost.innerHTML='<strong>Building exact preview…</strong><div class="vault-bulk-note">Checking every item, destination and grid cell. No data is being changed.</div>';
+    const params=new URLSearchParams({direction});if(intoVault){params.set('collectionId',String(collection.value));params.set('sourceTab',source.value)}else{params.set('destinationTab',destinationTab.value)}
+    try{
+      const result=await j('/api/vault/bulk-preview?'+params.toString());
+      if(result.err){previewHost.innerHTML=`<strong>Transfer unavailable</strong><div class="vault-bulk-note warn">${esc(result.err)}</div>`;go.textContent='RETRY PREVIEW';go.dataset.ready='preview';go.disabled=false;return}
+      preview=result;
+      const tabs=(result.tabCounts||[]).map(row=>`<span>${esc(row.label)} · ${row.count}</span>`).join('');
+      const destination=intoVault?` from <b>${esc(result.sourceLabel)}</b> into collection <b>${esc(result.collectionName)}</b>`:` from <b>all Vault collections</b> to <b>${esc(result.destinationLabel)}</b>`;
+      const aliasWarning=(!intoVault&&result.customNamedCount)?`<div class="vault-bulk-note warn">${result.customNamedCount} Vault-only custom name${result.customNamedCount===1?'':'s'} will be removed with the returned Vault record; Hero Siege stash data has no field for these aliases.</div>`:'';
+      const scopeNote=intoVault&&result.sourceTab!=='all'?'<div class="vault-bulk-note">Only this selected tab will be emptied. Every other item tab and all Shared Stash tab-name metadata remain untouched.</div>':'';
+      previewHost.innerHTML=`<strong>${result.itemCount} exact item record${result.itemCount===1?'':'s'}${destination}</strong><div class="vault-bulk-tabs">${tabs||'<span>No item records</span>'}</div><div class="vault-bulk-note">All records are preflighted first. If one item cannot fit, nothing moves. Success creates one stash backup and one atomic batch.</div>${scopeNote}${aliasWarning}${result.gameRunning?'<div class="vault-bulk-note warn">Hero Siege is running; close it before continuing.</div>':''}`;
+      go.dataset.ready=result.canRun?'1':'0';go.disabled=!result.canRun;go.textContent=result.empty?'NOTHING TO MOVE':(intoVault?`MOVE ${result.itemCount} ITEM${result.itemCount===1?'':'S'}`:`RETURN ALL ${result.itemCount} ITEMS`);
+    }catch(error){previewHost.innerHTML='<strong>Preview interrupted</strong><div class="vault-bulk-note warn">Could not verify the complete transfer plan. Try again.</div>';go.textContent='RETRY PREVIEW';go.disabled=false;go.dataset.ready='preview'}
+    finally{loading=false;previewHost.setAttribute('aria-busy','false');if(collection)collection.disabled=false;if(source)source.disabled=false;if(destinationTab)destinationTab.disabled=false}
+  };
+  if(collection)collection.onchange=loadPreview;
+  if(source)source.onchange=()=>{try{localStorage.setItem('hsVaultBulkSourceTab',source.value)}catch(e){}loadPreview()};
+  if(destinationTab)destinationTab.onchange=()=>{try{localStorage.setItem('hsVaultBulkDestinationTab',destinationTab.value)}catch(e){}loadPreview()};
+  go.onclick=async()=>{
+    if(go.dataset.ready==='preview'){loadPreview();return}
+    if(!preview||go.dataset.ready!=='1'||vaultBulkBusy)return;
+    vaultBulkBusy=true;go.disabled=true;cancel.disabled=true;if(collection)collection.disabled=true;if(source)source.disabled=true;if(destinationTab)destinationTab.disabled=true;
+    go.textContent=`MOVING ${preview.itemCount} ITEMS ATOMICALLY…`;
+    previewHost.setAttribute('aria-busy','true');previewHost.innerHTML=`<strong>Moving ${preview.itemCount} items atomically…</strong><div class="vault-bulk-note warn">Do not start Hero Siege or close the Item Editor. The batch journal is protecting every item.</div>`;
+    const stableKey=vaultBulkSessionKey(direction,intoVault?(preview.sourceTab||'all'):'all',intoVault?String(preview.collectionId):'all',intoVault?'auto':(preview.destinationTab||'auto'));
+    let stableId='';try{stableId=sessionStorage.getItem(stableKey)||requestId();sessionStorage.setItem(stableKey,stableId)}catch(e){stableId=requestId()}
+    const body={direction,requestId:stableId,previewToken:preview.previewToken};if(intoVault){body.collectionId=+preview.collectionId;body.sourceTab=preview.sourceTab||'all'}else{body.destinationTab=preview.destinationTab||'auto'}
+    try{
+      const result=await j('/api/vault/bulk',{method:'POST',body:JSON.stringify(body)});flash(result);
+      if(result.terminal){try{sessionStorage.removeItem(stableKey)}catch(e){}}
+      if(!result.err){dismiss();vaultCompareItems.clear();vaultState.offset=0;await openVault(true);return}
+      if(result.code==='preview_stale'){previewHost.innerHTML=`<strong>Preview expired safely</strong><div class="vault-bulk-note warn">${esc(result.err)}</div>`;preview=null;go.dataset.ready='preview';go.textContent='BUILD NEW PREVIEW'}
+      else{go.textContent=result.retryable?'RETRY SAME TRANSFER':'REVIEW AGAIN';go.dataset.ready=result.retryable?'1':'preview'}
+    }catch(error){flash({err:'Connection interrupted. The batch journal protects every item; retry with the same transfer ID.'});go.textContent='RETRY SAME TRANSFER';go.dataset.ready='1'}
+    finally{vaultBulkBusy=false;previewHost.setAttribute('aria-busy','false');cancel.disabled=false;if(collection)collection.disabled=false;if(source)source.disabled=false;if(destinationTab)destinationTab.disabled=false;go.disabled=GAME_RUNNING||go.dataset.ready==='0'}
+  };
+  cancel.focus();
+  loadPreview();
 }
 async function loadVaultItems(){
   const token=++vaultState.queryToken;
@@ -4438,22 +7125,86 @@ async function loadVaultItems(){
 }
 function renderVaultItems(payload){
   const host=document.getElementById('vaultitems'),count=document.getElementById('vaultcount');if(!host||!count)return;
-  if(payload.err){count.textContent='Vault query failed';host.innerHTML=`<div class="vault-warning">${esc(payload.err)}</div>`;return}
+  resetPreviewModels();
+  if(payload.err){count.textContent='Vault query failed';host.innerHTML=`<div class="vault-warning">${esc(payload.err)}</div>`;renderVaultCompareBar();return}
   const rows=payload.items||[],total=payload.total||0;
   const start=total?payload.offset+1:0,end=Math.min(total,payload.offset+rows.length);
   count.textContent=`Showing ${start}-${end} of ${total}`;
-  if(!rows.length){host.innerHTML='<div class="vault-empty">No items match this collection or search.</div>';return}
-  host.innerHTML=`<div class="vault-list">${rows.map(row=>`<article class="vault-card" data-item-preview data-vault-id="${attr(row.id)}" data-cid="${row.cid??''}" data-rwcid="${row.rwcid??''}" data-roll="${attr(JSON.stringify(row.rollProfile||null))}" data-skill="${attr(JSON.stringify(row.skillSelector||null))}" data-raw='${attr(JSON.stringify(row.raw||{}))}'>
+  if(!rows.length){host.innerHTML='<div class="vault-empty">No items match this collection or search.</div>';renderVaultCompareBar();return}
+  const cards=rows.map(row=>{
+    const selected=vaultCompareItems.has(String(row.id)),previewId=registerPreviewModel(row.gameTooltip);
+    return `<article class="vault-card${selected?' compare-selected':''}" data-item-preview data-preview-id="${attr(previewId)}" data-vault-id="${attr(row.id)}" data-cid="${row.cid??''}" data-rwcid="${row.rwcid??''}">
       ${row.spr?`<img src="/icons/${attr(row.spr)}.png?v=2" loading="lazy">`:'<div class="vault-card-icon">&#9671;</div>'}
-      <div><div class="vault-name r-${attr(row.rar||'_')}">${esc(row.name)}</div><div class="vault-meta">${esc(row.collectionName)} &middot; ${esc(row.clsName||'Unknown type')}<br>${esc(row.sourceLabel||'Shared Stash')}</div></div>
+      <div class="vault-card-copy">${row.customName?`<div class="vault-alias">${esc(row.customName)}</div>`:''}<div class="vault-name r-${attr(row.rar||'_')}">${esc(row.name)}</div><div class="vault-meta">${esc(row.collectionName)} &middot; ${esc(row.clsName||'Unknown type')}<br>${esc(row.sourceLabel||'Shared Stash')}${row.fingerprint?` &middot; <span class="vault-fingerprint">#${esc(row.fingerprint)}</span>`:''}</div></div>
+      <button type="button" class="vault-card-tool name" data-vault-name="${attr(row.id)}" title="Set or clear custom name" aria-label="Set custom name">&#9998;</button>
+      <button type="button" class="vault-card-tool compare${selected?' on':''}" data-vault-compare="${attr(row.id)}" title="${selected?'Remove from comparison':'Select for comparison'}" aria-label="${selected?'Remove from comparison':'Select for comparison'}">${selected?'&#10003;':'&#8644;'}</button>
       <div class="vault-actions"><button class="vault-mini" data-vault-move="${attr(row.id)}" data-current-collection="${row.collectionId}">MOVE</button><button class="vault-return" data-vault-return="${attr(row.id)}" ${vaultMeta&&vaultMeta.gameRunning?'disabled':''}>RETURN TO STASH</button></div>
-    </article>`).join('')}</div>
+    </article>`;
+  }).join('');
+  host.innerHTML=`<div class="vault-list">${cards}</div>
     <div class="vault-pager"><button class="vault-mini" id="vaultprev" ${payload.offset<=0?'disabled':''}>PREVIOUS</button><button class="vault-mini" id="vaultnext" ${payload.offset+rows.length>=total?'disabled':''}>NEXT</button></div>`;
+  const byId=new Map(rows.map(row=>[String(row.id),row]));
   host.querySelectorAll('[data-vault-return]').forEach(btn=>btn.onclick=()=>withdrawVaultItem(btn.dataset.vaultReturn,btn));
   host.querySelectorAll('[data-vault-move]').forEach(btn=>btn.onclick=()=>moveVaultItem(btn.dataset.vaultMove,+btn.dataset.currentCollection));
+  host.querySelectorAll('[data-vault-name]').forEach(btn=>btn.onclick=()=>editVaultCustomName(byId.get(btn.dataset.vaultName)));
+  host.querySelectorAll('[data-vault-compare]').forEach(btn=>btn.onclick=()=>toggleVaultCompare(byId.get(btn.dataset.vaultCompare),btn));
   document.getElementById('vaultprev').onclick=()=>{vaultState.offset=Math.max(0,vaultState.offset-vaultState.limit);loadVaultItems()};
   document.getElementById('vaultnext').onclick=()=>{vaultState.offset+=vaultState.limit;loadVaultItems()};
+  renderVaultCompareBar();
   if(vaultState.highlightItem){const card=[...host.querySelectorAll('[data-vault-id]')].find(el=>el.dataset.vaultId===vaultState.highlightItem);if(card){card.scrollIntoView({behavior:'smooth',block:'center'});card.classList.add('found-pulse');setTimeout(()=>card.classList.remove('found-pulse'),3800);vaultState.highlightItem=null}}
+}
+function vaultCompareLabel(row){return row&&String(row.customName||row.name||'Unknown item')}
+function renderVaultCompareBar(){
+  const bar=document.getElementById('vaultcomparebar'),slots=document.getElementById('vaultcompareslots'),open=document.getElementById('vaultcompareopen');
+  if(!bar||!slots||!open)return;
+  const rows=[...vaultCompareItems.values()];bar.hidden=!rows.length;open.disabled=rows.length!==2;
+  slots.innerHTML=rows.length?`<b>${rows.length}/2 selected:</b> ${rows.map(vaultCompareLabel).map(esc).join(' &middot; ')}`:'';
+}
+function toggleVaultCompare(row,btn){
+  if(!row)return;
+  const id=String(row.id),selected=vaultCompareItems.has(id);
+  if(selected)vaultCompareItems.delete(id);
+  else{
+    if(vaultCompareItems.size>=2){flash({err:'Two items are already selected. Remove one before adding another.'});return}
+    vaultCompareItems.set(id,row);
+  }
+  const on=vaultCompareItems.has(id),card=btn&&btn.closest('.vault-card');
+  if(card)card.classList.toggle('compare-selected',on);
+  if(btn){btn.classList.toggle('on',on);btn.innerHTML=on?'&#10003;':'&#8644;';btn.title=on?'Remove from comparison':'Select for comparison';btn.setAttribute('aria-label',btn.title)}
+  renderVaultCompareBar();
+}
+function openVaultCompare(){
+  const rows=[...vaultCompareItems.values()];if(rows.length!==2){flash({err:'Select exactly two Vault items first.'});return}
+  const previous=document.querySelector('.vault-compare-modal .vault-compare-close');if(previous)previous.click();
+  const comparison=tooltipComparisonLayout(rows[0].gameTooltip,rows[1].gameTooltip),differences=comparison.differences,modal=document.createElement('div');
+  modal.className='vault-compare-modal';modal.setAttribute('role','dialog');modal.setAttribute('aria-modal','true');modal.setAttribute('aria-label','Compare Vault items');
+  modal.innerHTML=`<div class="vault-compare-dialog"><div class="vault-compare-head"><div><h3>Item Comparison</h3><div class="muted">Highlighted rows differ; — means that stat is absent on that item. Max endpoints counts rolled stat lines currently at their upper endpoint.</div></div><button class="vault-mini vault-compare-close" type="button">CLOSE</button></div><div class="vault-compare-grid"><section class="vault-compare-column">${renderGameTooltip(rows[0].gameTooltip,{differences,comparison})}</section><section class="vault-compare-column">${renderGameTooltip(rows[1].gameTooltip,{differences,comparison})}</section></div></div>`;
+  const close=()=>{document.removeEventListener('keydown',onKey);modal.remove()},onKey=e=>{if(e.key==='Escape')close()};
+  modal.querySelector('.vault-compare-close').onclick=close;modal.onclick=e=>{if(e.target===modal)close()};document.addEventListener('keydown',onKey);document.body.appendChild(modal);modal.querySelector('.vault-compare-close').focus();
+}
+async function editVaultCustomName(row){
+  if(!row)return;
+  const previous=document.getElementById('sockmodal');if(previous)previous.remove();
+  const modal=document.createElement('div');modal.id='sockmodal';
+  modal.innerHTML=`<div id="sockbox" role="dialog" aria-modal="true" aria-labelledby="vaultnametitle"><h3 id="vaultnametitle">Vault Custom Name</h3><div class="muted" style="margin:6px 0 12px">Shown only inside Infinite Vault. The native ${esc(row.name)} item data is never changed.</div><div class="jlrow"><label for="vaultnameinput">Name</label><input id="vaultnameinput" maxlength="128" autocomplete="off" aria-describedby="vaultnamehelp" style="flex:1;min-width:0"></div><div class="muted" id="vaultnamehelp" style="margin-top:7px">Up to 128 characters. Clear removes the Vault-only name.</div><div class="flex" style="margin-top:14px"><button class="act" id="vaultnamesave" type="button" style="margin:0;background:#234a2a;border-color:#3da55e">SAVE</button><button class="act" id="vaultnameclear" type="button" style="margin:0">CLEAR</button><button class="act" id="vaultnamecancel" type="button" style="margin:0">CANCEL</button></div></div>`;
+  document.body.appendChild(modal);
+  const input=document.getElementById('vaultnameinput'),save=document.getElementById('vaultnamesave'),clear=document.getElementById('vaultnameclear'),cancel=document.getElementById('vaultnamecancel');
+  input.value=row.customName||'';
+  const close=()=>modal.remove();
+  const submit=async value=>{
+    save.disabled=true;clear.disabled=true;cancel.disabled=true;input.disabled=true;
+    try{
+      const r=await j('/api/vault/item',{method:'POST',body:JSON.stringify({action:'setCustomName',itemId:row.id,customName:value})});flash(r);
+      if(r.err){save.disabled=false;clear.disabled=false;cancel.disabled=false;input.disabled=false;input.focus();return}
+      if(r.item&&vaultCompareItems.has(String(row.id)))vaultCompareItems.set(String(row.id),r.item);
+      close();await openVault(false);
+    }catch(error){flash({err:'Custom name could not be saved.'});save.disabled=false;clear.disabled=false;cancel.disabled=false;input.disabled=false;input.focus()}
+  };
+  save.onclick=()=>submit(input.value);clear.onclick=()=>submit('');cancel.onclick=close;
+  input.onkeydown=e=>{if(e.key==='Enter'){e.preventDefault();save.click()}};
+  modal.onkeydown=e=>{if(e.key==='Escape'){e.preventDefault();close()}};
+  modal.onclick=e=>{if(e.target===modal)close()};
+  input.focus();input.select();
 }
 async function withdrawVaultItem(itemId,btn){
   if(!vaultState.withdrawTab){flash({err:'No compatible Shared Stash grid was found.'});return}
@@ -4462,7 +7213,7 @@ async function withdrawVaultItem(itemId,btn){
   btn.dataset.requestId=btn.dataset.requestId||requestId();
   try{
     const r=await j('/api/vault/withdraw',{method:'POST',body:JSON.stringify({itemId,target:{type:'stash',tab:vaultState.withdrawTab},requestId:btn.dataset.requestId})});
-    flash(r);if(!r.err){delete btn.dataset.requestId;await openVault(false);return}
+    flash(r);if(!r.err){delete btn.dataset.requestId;vaultCompareItems.delete(String(itemId));await openVault(false);return}
   }catch(e){flash({err:'Transfer interrupted. The item is still protected; press Return again to resume.'})}
   btn.disabled=false;btn.textContent='RETURN TO STASH';
 }
@@ -4471,7 +7222,7 @@ async function moveVaultItem(itemId,currentId){
   if(!choices.length){flash({err:'Create another collection first.'});return}
   const name=prompt('Move to collection:\n'+choices.map(c=>c.name).join('\n'),choices[0].name);if(name==null)return;
   const target=choices.find(c=>c.name.toLocaleLowerCase()===name.trim().toLocaleLowerCase());if(!target){flash({err:'Collection not found.'});return}
-  const r=await j('/api/vault/item',{method:'POST',body:JSON.stringify({action:'move',itemId,collectionId:target.id})});flash(r);if(!r.err)openVault(false);
+  const r=await j('/api/vault/item',{method:'POST',body:JSON.stringify({action:'move',itemId,collectionId:target.id})});flash(r);if(!r.err){if(r.item&&vaultCompareItems.has(String(itemId)))vaultCompareItems.set(String(itemId),r.item);await openVault(false)}
 }
 async function manageVaultCollection(action){
   let body={action};
@@ -4495,7 +7246,39 @@ async function openVaultDepositDialog(target,key,el){
     catch(e){flash({err:'Transfer interrupted. Your item remains protected; press Store Item again to resume.'})}
     go.disabled=false;go.textContent='STORE ITEM';};
 }
+function stashFillSpec(tab){
+  let rows=[],button='',detail='';
+  if(tab==='unique_items'){
+    rows=CAT.filter(row=>row.kind==='unique'&&row.available!==false);
+    button=`FILL ALL UNIQUES (${rows.length})`;
+    detail=`Ensure all ${rows.length} available Unique items are present. Existing records remain unchanged. Torch of Shadows uses All Skills: Viking with 4/4 variable stats MAX; Loaded Dice targets Viking: Weapon Master; Overloaded Dice targets Viking: Odin's Fury. All three can be retargeted later.`;
+  }else if(/^material_tab(?:_[1-9]\d*)?$/.test(tab)){
+    rows=CAT.filter(row=>row.kind==='normal'&&(row.cls===13||row.cls===14)&&row.available!==false);
+    button=`FILL MATERIALS (${rows.length}) · FULL x999`;
+    detail=`Ensure all ${rows.length} Boss Part, Tarot and Material entries are present. Native stackables become x999; nine native singleton items remain single records.`;
+  }else if(/^socket_tab(?:_[1-9]\d*)?$/.test(tab)){
+    rows=CAT.filter(row=>row.kind==='normal'&&row.cls===15&&row.available!==false);
+    button=`FILL SOCKETS (${rows.length}) · FULL x999`;
+    detail=`Ensure all ${rows.length} verified Rune, Gem and Orb entries are present at a full x999 stack.`;
+  }else return null;
+  return {count:rows.length,button,detail};
+}
+async function fillStashTab(tab,button,spec){
+  if(GAME_RUNNING){flash({err:'Hero Siege is running. Close it before filling a stash tab.'});return}
+  const warning=`${spec.detail}\n\nNothing is deleted or rebuilt. A backup is created only if the stash changes. Continue?`;
+  if(!confirm(warning))return;
+  const oldText=button.textContent,mid=document.getElementById('mid'),scrollTop=mid.scrollTop;
+  button.disabled=true;button.textContent='FILLING...';
+  const body={tab};if(tab==='unique_items')body.identityTargetIds=STASH_FILL_IDENTITY_TARGETS;
+  try{
+    const result=await j('/api/stash/fill',{method:'POST',body:JSON.stringify(body)});
+    flash(result);
+    if(!result.err){await openStash();document.getElementById('mid').scrollTop=scrollTop;return}
+  }catch(error){flash({err:'The fill request was interrupted; the original stash remains protected.'})}
+  button.disabled=GAME_RUNNING;button.textContent=oldText;
+}
 async function openStash(){
+  resetPreviewModels();
   view='stash'; curChar=null; stashData=await j('/api/stash');
   gridReg={}; gridSeq=0;
   document.querySelectorAll('.charbtn').forEach(b=>b.classList.remove('sel'));
@@ -4508,7 +7291,8 @@ async function openStash(){
   let h='<h2>Stash (shared)</h2>'+TIPBAR+STASH_DRAG_TIP;
   for(const tab of order){
     const items=stashData[tab];
-    h+=`<h2 data-find-tab="${esc(tab)}">${tab} <span class="muted">(${items.length})</span></h2>`;
+    const fill=stashFillSpec(tab);
+    h+=`<div class="stash-tab-head"><h2 data-find-tab="${attr(tab)}">${esc(tab)} <span class="muted">(${items.length})</span></h2>${fill?`<button class="stash-fill" data-fill-stash="${attr(tab)}" title="${attr(fill.detail)}" ${GAME_RUNNING?'disabled':''}>${esc(fill.button)}</button>`:''}</div>`;
     if(tab==='unique_items'){
       h+=`<div class="muted" style="margin-bottom:7px">auto-sorted tab &middot; ${items.length} records (no grid positions)</div>`;
       h+=uniqueListHTML(items,{type:'stash',tab});
@@ -4516,7 +7300,12 @@ async function openStash(){
     }
     h+=gridHTML(tab,items,{type:'stash',tab});
   }
-  md.innerHTML=h; bindDelete(); renderTargets();
+  md.innerHTML=h;
+  md.querySelectorAll('.stash-fill').forEach(button=>{
+    const tab=button.dataset.fillStash,spec=stashFillSpec(tab);
+    button.onclick=()=>fillStashTab(tab,button,spec);
+  });
+  bindDelete(); renderTargets();
 }
 // slot -> kabul edilen sinif idleri
 const ACCEPT={0:[0],1:[1],2:[2],3:[3],16:[3],6:[3,6],17:[3,6],4:[4],5:[5],7:[7],9:[7],8:[8],10:[16],11:[16],12:[16],13:[16],14:[16]};
@@ -4525,10 +7314,11 @@ const DC=32;
 function dslot(g,w,h,label){
   const e=dollEq[g];
   const rr=e&&e.rar&&e.rar!=='?'?e.rar:null;
-  const del=JSON.stringify({type:"equipped",slot:curChar,tab:"equipped_items"});
+  const del=attr(JSON.stringify({type:"equipped",slot:curChar,tab:"equipped_items"}));
+  const previewId=e?registerPreviewModel(e.gameTooltip):'';
   return `<div class="dslot${rr?' b-'+rr:''}" data-g="${g}" style="width:${w*DC}px;height:${h*DC}px"
-    ${e?`draggable="true" data-del='${del}' data-key="${e.key}" data-w="${e.w||1}" data-h="${e.h||1}" data-cid="${e.cid??''}" data-rwcid="${e.rwcid??''}" data-roll="${esc(JSON.stringify(e.rollProfile||null))}" data-skill="${esc(JSON.stringify(e.skillSelector||null))}" data-raw='${esc(JSON.stringify(e.raw||{}))}'`:`title="${label} (empty)"`}>
-    <span class="lbl">${label}</span>${e&&e.spr?`<img src="/icons/${e.spr}.png?v=2">`:(e?esc(short(e.name)):'')}</div>`;
+    ${e?`draggable="true" data-preview-id="${attr(previewId)}" data-del='${del}' data-key="${attr(e.key)}" data-w="${e.w||1}" data-h="${e.h||1}" data-cid="${e.cid??''}" data-rwcid="${e.rwcid??''}" data-socket-limit="${e.socketLimit??0}" data-roll="${attr(JSON.stringify(e.rollProfile||null))}" data-skill="${attr(JSON.stringify(e.skillSelector||null))}" data-raw='${attr(JSON.stringify(e.raw||{}))}'`:`title="${attr(label)} (empty)"`}>
+    <span class="lbl">${esc(label)}</span>${e&&e.spr?`<img src="/icons/${attr(e.spr)}.png?v=2">`:(e?esc(short(e.name)):'')}</div>`;
 }
 function wpanel(side){
   const tabs=side==='L'?[3,16]:[6,17];
@@ -4733,6 +7523,7 @@ function renderHealth(report){
   if(report.err){md.innerHTML=`<h2>Save Health Check</h2><div class="health-issue error"><div class="health-sev">ERROR</div><div class="health-msg">${esc(report.err)}</div></div>`;return;}
   const s=report.summary||{files:0,items:0,errors:0,warnings:0,fixable:0};
   const recoveries=report.recoveries||[];
+  const vaultRecoveryBatches=report.vaultRecoveryBatches||[];
   let h=`<h2>Save Health Check</h2>
     <div class="tool-intro"><b>Season 10 preflight validation.</b> Scans save encoding, item addresses, grid placement, equipment slots, sockets and stack values. A normal scan never writes to disk.</div>
     <div class="health-summary">
@@ -4751,6 +7542,13 @@ function renderHealth(report){
       <ul class="recovery-repairs">${repairs}</ul>
       <button class="act recovery-button" id="hssrecover${index}" style="margin:0" ${recovery.canApply?'':'disabled'}>RECOVER ${esc((recovery.file||'stash.hss').toUpperCase())}</button>
       <span class="health-state" style="margin-left:9px">${recovery.canApply?'Creates an exact timestamped backup, then verifies the replacement.':'Close Hero Siege before recovery.'}</span></div>`;
+  });
+  vaultRecoveryBatches.forEach(row=>{
+    h+=`<div class="recovery-card"><h3>&#9888; Infinite Vault ownership needs a decision</h3>
+      <p>The ${row.direction==='deposit'?'stash-to-Vault deposit':'Vault-to-stash return'} journal contains <b>${row.itemCount}</b> protected item records, but the current stash only provides mixed evidence.</p>
+      <p><b>Ownership-safe choice:</b> make every protected record available in Infinite Vault. This never deletes or rewrites Shared Stash; copies already there may remain as duplicates.</p>
+      <button class="act recovery-button" data-health-vault-resolve="${attr(row.requestId)}" data-count="${row.itemCount}" data-direction="${attr(row.direction)}" ${report.gameRunning?'disabled':''}>PRESERVE VAULT OWNERSHIP</button>
+      <span class="health-state" style="margin-left:9px">${report.gameRunning?'Close Hero Siege before resolving ownership.':'Shared Stash remains untouched.'}</span></div>`;
   });
   if(report.fixed)h+=`<div class="tool-intro" style="border-color:rgba(82,221,169,.35);color:#72dfb7"><b>${report.fixed} safe repair(s) applied.</b> Backups: ${esc((report.backups||[]).join(', ')||'none')}</div>`;
   if(!(report.issues||[]).length)h+='<div class="health-clean"><b>&#10003; Save structure looks healthy</b>No structural Season 10 issues were detected.</div>';
@@ -4773,6 +7571,7 @@ function renderHealth(report){
       await openHealth();
     };
   });
+  md.querySelectorAll('[data-health-vault-resolve]').forEach(button=>button.onclick=()=>preserveVaultBatchOwnership(button.dataset.healthVaultResolve,+button.dataset.count,button.dataset.direction,'health'));
 }
 
 async function openBackups(){
@@ -4937,6 +7736,7 @@ async function openRelics(){
   };
 }
 async function openChar(slot,btn){
+  resetPreviewModels();
   view='char'; curChar=slot; charData=await j('/api/char/'+slot);
   document.querySelectorAll('.charbtn').forEach(b=>b.classList.remove('sel'));
   if(btn)btn.classList.add('sel');
@@ -4963,10 +7763,11 @@ function showCtx(x,y,target,key,el){
   try{rollProfile=JSON.parse((el&&el.dataset&&el.dataset.roll)||'null')}catch(e){}
   let skillSelector=null;
   try{skillSelector=JSON.parse((el&&el.dataset&&el.dataset.skill)||'null')}catch(e){}
-  if(skillSelector)acts.push([skillSelector.targetKind==='subskill'?'Choose subskill target...':'Choose skill target...','SKILL','']);
+  if(skillSelector)acts.push([skillSelector.targetKind==='class'?'Choose class...':skillSelector.targetKind==='subskill'?'Choose subskill target...':'Choose skill target...','SKILL','']);
   else if(rollProfile&&['exact','best'].includes(rollProfile.mode))acts.push([rollProfile.mode==='exact'?'Apply EXACT MAX':'Apply BEST POSSIBLE','perfect','']);
   acts.push(['Random reroll','reroll','']);
-  acts.push(['Edit sockets...','SOCKETS','']);
+  const socketLimit=Number.parseInt((el&&el.dataset&&el.dataset.socketLimit)||'0',10);
+  if(Number.isFinite(socketLimit)&&socketLimit>0)acts.push(['Edit sockets...','SOCKETS','']);
   if(!isEq)acts.push(['Edit stack...','setstack','']);
   acts.push(['Delete','DELETE','danger']);
   m.innerHTML=acts.map(([lbl,act,cls])=>`<div class="${cls}" data-act="${act}">${lbl}</div>`).join('');
@@ -4983,7 +7784,7 @@ function showCtx(x,y,target,key,el){
       }else if(act==='SOCKETS'){
         openSocketEditor(target,key,el);return;
       }else if(act==='SKILL'){
-        openDiceSkillEditor(target,key,skillSelector);return;
+        openSkillTargetEditor(target,key,skillSelector);return;
       }else if(act==='setstack'){
         const n=prompt('New stack count:','999');
         if(n==null)return;
@@ -5015,7 +7816,7 @@ function search(){
     d.innerHTML=`${r.spr?`<img src="/icons/${r.spr}.png?v=2" loading="lazy">`:''}<span class="r-${r.rar}">${esc(r.name)}</span>${statHint}`;
     d.onclick=()=>{sel=r;document.querySelectorAll('.res').forEach(x=>x.classList.remove('sel'));d.classList.add('sel');renderTargets()};
     d.addEventListener('dragstart',e=>{
-      dragInfo={mode:'add',cid:r.id,w:r.w||1,h:r.h||1,skillId:DICE_ADD_SELECTION[r.id]};
+      dragInfo={mode:'add',cid:r.id,w:r.w||1,h:r.h||1,targetId:DICE_ADD_SELECTION[r.id]};
       e.dataTransfer.effectAllowed='copy';
     });
     rd.appendChild(d)});
@@ -5027,16 +7828,21 @@ async function renderTargets(){
   tr.innerHTML=''; btn.disabled=true; btn.onclick=null;
   const rp=selectedRow.rollProfile||null;
   const diceSelector=selectedRow.skillSelector||null;
-  const actionable=rp&&['exact','best'].includes(rp.mode);
-  const rollText=diceSelector
-    ?(diceSelector.available?`Choose exact ${diceSelector.targetKind==='subskill'?'subskill':'skill'} target`:`Skill targets disabled · ${diceSelector.message||'database unavailable'}`)
+  const ordinarySmallCharm=isOrdinarySmallCharm(selectedRow);
+  const actionable=!ordinarySmallCharm&&rp&&['exact','best'].includes(rp.mode);
+  const rollText=ordinarySmallCharm
+    ?'Random rarity & affixes · native seed'
+    :diceSelector
+    ?(diceSelector.available
+      ?(diceSelector.targetKind==='class'?'Choose exact class target · 4/4 stats MAX':`Choose exact ${diceSelector.targetKind==='subskill'?'subskill':'skill'} target`)
+      :`${diceSelector.targetKind==='class'?'Class':'Skill'} targets disabled · ${diceSelector.message||'database unavailable'}`)
     :(!rp?'Random roll · no verified profile':rp.mode==='fixed'?'Fixed definition stats · no roll needed':rp.mode==='exact'?`Exact MAX ${rp.maxed}/${rp.total}`:`Best Possible ${rp.maxed}/${rp.total} MAX`);
   si.innerHTML=`Selected: <span class="r-${selectedRow.rar}">${esc(selectedRow.name)}</span> <span class="muted">${selectedRow.w}x${selectedRow.h}</span> <span style="color:${(rp||diceSelector&&diceSelector.available)?'#74ee98':'#e0a05b'}">&middot; ${esc(rollText)}</span>`;
   let dicePayload=null;
   if(diceSelector&&diceSelector.available){
     dicePayload=DICE_TARGET_CACHE[diceSelector.profileId];
     if(!dicePayload){
-      dicePayload=await j('/api/dice-skills?profile='+encodeURIComponent(diceSelector.profileId));
+      dicePayload=await j('/api/skill-targets?profile='+encodeURIComponent(diceSelector.profileId));
       if(dicePayload.err){si.innerHTML+=`<br><span style="color:#ff7060">${esc(dicePayload.err)}</span>`;dicePayload=null}
       else DICE_TARGET_CACHE[diceSelector.profileId]=dicePayload;
     }
@@ -5067,22 +7873,26 @@ async function renderTargets(){
     let chosen=DICE_ADD_SELECTION[selectedId];
     if(!rows.some(row=>Number(row.id)===Number(chosen)))chosen=Number(rows[0].id);
     DICE_ADD_SELECTION[selectedId]=chosen;
-    const groups=new Map();
-    rows.forEach(row=>{if(!groups.has(row.className))groups.set(row.className,[]);groups.get(row.className).push(row)});
-    skillHtml=`<select id="skilladdselect" title="Chosen skill target">${[...groups.entries()].map(([className,classRows])=>`<optgroup label="${esc(className)}">${classRows.map(row=>`<option value="${row.id}" ${Number(row.id)===chosen?'selected':''}>${esc(row.name)} · ID ${row.id}</option>`).join('')}</optgroup>`).join('')}</select>`;
+    if(diceSelector.targetKind==='class'){
+      skillHtml=`<select id="skilladdselect" title="Chosen class target">${rows.sort((a,b)=>Number(a.id)-Number(b.id)).map(row=>`<option value="${row.id}" ${Number(row.id)===chosen?'selected':''}>${esc(row.name)} · Class ID ${row.id}</option>`).join('')}</select>`;
+    }else{
+      const groups=new Map();
+      rows.forEach(row=>{if(!groups.has(row.className))groups.set(row.className,[]);groups.get(row.className).push(row)});
+      skillHtml=`<select id="skilladdselect" title="Chosen skill target">${[...groups.entries()].map(([className,classRows])=>`<optgroup label="${esc(className)}">${classRows.map(row=>`<option value="${row.id}" ${Number(row.id)===chosen?'selected':''}>${esc(row.name)} · ID ${row.id}</option>`).join('')}</optgroup>`).join('')}</select>`;
+    }
   }
   tr.innerHTML=skillHtml+`<select id="tsel">${options.map(o=>`<option value='${esc(o.value)}'>${esc(o.label)}</option>`).join('')}</select>`;
   const skillSelect=document.getElementById('skilladdselect');
   if(skillSelect)skillSelect.onchange=()=>{DICE_ADD_SELECTION[selectedId]=Number(skillSelect.value)};
   btn.disabled=options.length===0||Boolean(diceSelector&&!skillSelect);
-  btn.textContent=diceSelector?'Add · CHOSEN SKILL':(actionable?(rp.mode==='exact'?'Add · EXACT MAX':'Add · BEST POSSIBLE'):(rp&&rp.mode==='fixed'?'Add · FIXED STATS':'Add · RANDOM ROLL'));
+  btn.textContent=ordinarySmallCharm?'Add · RANDOM ROLL':diceSelector?(diceSelector.targetKind==='class'?'Add · CHOSEN CLASS':'Add · CHOSEN SKILL'):(actionable?(rp.mode==='exact'?'Add · EXACT MAX':'Add · BEST POSSIBLE'):(rp&&rp.mode==='fixed'?'Add · FIXED STATS':'Add · RANDOM ROLL'));
   btn.onclick=async()=>{
     if(btn.disabled)return;
     btn.disabled=true;
     const t=JSON.parse(document.getElementById('tsel').value);
     const body={cid:selectedId,target:t};
     const chosen=document.getElementById('skilladdselect');
-    if(chosen)body.skillId=Number(chosen.value);
+    if(chosen)body.targetId=Number(chosen.value);
     try{
       const r=await j('/api/add',{method:'POST',body:JSON.stringify(body)});
       flash(r); refresh();

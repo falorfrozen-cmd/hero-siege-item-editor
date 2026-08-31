@@ -381,6 +381,7 @@ class LaunchReadinessTests(unittest.TestCase):
             "roll_profile_db",
             "generated_pool_model",
             "dice_skill_selector",
+            "torch_class_selector",
             "game_build_identity",
             "webview",
         ):

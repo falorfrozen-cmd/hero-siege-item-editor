@@ -8,7 +8,28 @@ A local/offline save editor for **Hero Siege** (Pixel Prone Games). Manage items
 
 Single file, no install, no Python needed. Just run it.
 
-## What's new in v2.8.2
+## What's new in v2.11.1
+
+- Hero Siege **7.0.6 support** for 5,059 verified Max/Best roll profiles and
+  exact numeric tooltips.
+- **Detailed item tooltips**, side-by-side Vault comparison, and searchable
+  Vault-only custom names.
+- Move all items or one selected Shared Stash tab into Infinite Vault, then
+  return them automatically or to a selected tab.
+- One-click fill buttons for the **Unique, Material, and Socket** stash tabs.
+- Choose the class skill when creating **Torch of Shadows**.
+- **Poison Ivy** now keeps its correct four-socket capacity, and Add Socket
+  works on supported items.
+- Small Charms use native random rolls. The confusing Grade labels were
+  removed.
+
+Loaded Dice and Overloaded Dice skill selection stays disabled on 7.0.6 until
+their separate target tables are verified. Other supported editing features are
+ready.
+
+See [the v2.11.1 release notes](RELEASE_NOTES_v2.11.1.md) for the short summary.
+
+## Previously added in v2.8.2
 
 - **HSS Recovery:** Save Health Check can now recognize the exact Season 10
   `stash.hss` serializer-corruption signatures seen in affected saves: damaged
@@ -97,6 +118,8 @@ Roll and Dice explanation.
 - Socket editor — add, remove, swap runes (207 runes, autocomplete)
 - Season 10 Access Kits — generate all three new Uber tablets (Phantom Leviathan, Captain Grimtide, Blood Maiden) or all five Act IX dungeon keys in one backed-up operation
 - Relic Lab and bulk stackable tools for Season 10 repository classes
+- One-click, idempotent fill controls on the Unique, Material, and Socket
+  Shared Stash tabs, with real-size grid placement and a single atomic write
 - Save Health Check — read-only preflight scan for malformed files, invalid item addresses, grid collisions, equipment-slot mismatches, sockets, and stack values
 - HSS Recovery — a separate, explicitly confirmed repair for narrowly proven
   Season 10 Shared Stash serializer corruption; it previews exact changes and
@@ -104,9 +127,13 @@ Roll and Dice explanation.
 - Safe repair mode only relocates deterministic grid conflicts or resets invalid stack amounts; every changed file is backed up first
 - Global Item Finder — search every character, equipment slot, bag, potion belt, personal stash, and shared stash, then jump to the item
 - Infinite Vault — unlimited named SQLite collections connected to every
-  numbered, Material, and Socket Shared Stash grid, with search, paging, exact item preservation, idempotent
-  transfers, automatic recovery, and a pre-mutation database backup
-- Stat tooltip — hover any item to see all stats and level requirements
+  numbered, Material, and Socket Shared Stash grid, with search, paging, exact
+  item preservation, idempotent transfers, automatic recovery, a pre-mutation
+  database backup, Vault-only custom names, two-item comparison, and an exact
+  source-tab chooser for bulk deposits
+- Build-verified numeric tooltip — hover saved equipment to see replayed native
+  stat values and level requirements; unsupported paths are explicitly shown
+  as a safe catalog preview rather than fabricated values
 - Verified Dice skill targeting — choose any of the 432 skill IDs for **Loaded
   Dice** or any of the 222 game-valid sub-skill IDs for **Overloaded Dice**.
   The editor writes only the item's native RNG seed; it never injects a
@@ -145,11 +172,31 @@ Your characters and stash are detected automatically (standard Windows save fold
 - **Right-click an item in any numbered, Material, or Socket Shared Stash
   grid** → **Store in Infinite Vault**; use the Infinite Vault workspace to
   search, organize, and return it to any compatible grid
+- In **Infinite Vault**, use the pencil button to set or clear a searchable
+  Vault-only custom name. Select two items with the compare buttons, then choose
+  **Compare** for a side-by-side stat view
 - While dragging through **Shared Stash**, use the mouse wheel; if the native
   browser drag suppresses wheel input, hold the pointer near the top or bottom
   edge for continuous auto-scroll. No save occurs until a valid drop
 - **Drag from the Item Catalog** (right panel) onto a tab or slot to add a new item
-- **Hover** an item to see its full stats and rarity
+- An ordinary **Small Charm** uses a native-random seed. Its rolled rarity and
+  affixes are intentionally shown as unresolved; use reroll for a new seed, not
+  the Dice skill selector
+- At the top of the **Unique**, **Material**, or **Socket** Shared Stash tab,
+  choose its green **Fill** button to add every missing catalog identity. Read
+  and accept the confirmation; an automatic backup is created only when the
+  stash actually changes
+- In **Infinite Vault**, choose **Move Shared Stash to Vault**, then select
+  either all item tabs or one exact numbered/Material/Socket/Unique source tab.
+  The preview names the scope before confirmation; unselected tabs are not
+  modified
+- To return everything from **Infinite Vault**, choose **Automatic** routing or
+  one exact numbered/Material/Socket/Unique destination. An exact special tab
+  accepts only its native item type, and the whole transfer is cancelled if any
+  item is incompatible or the selected tab has insufficient space
+- **Hover** a saved item to see its build-verified numeric tooltip. Green
+  **EXACT NUMBERS** means every displayed numeric path was proven for the
+  installed build; **SAFE PREVIEW** means at least one path could not be proven
 - **Runeword Builder** (left) → forge any of the 93 verified equipment
   runewords into a stash tab; unsafe Zone Codex synthesis fails closed
 - **Sets** (left) → see owned/missing pieces, add all missing in one click

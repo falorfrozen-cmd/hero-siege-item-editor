@@ -30,9 +30,10 @@ from pathlib import Path
 from typing import Any, Callable, Iterable, Mapping, TypeVar
 
 
-SCHEMA_VERSION = 2
+SCHEMA_VERSION = 4
 DEFAULT_COLLECTION_NAME = "Vault"
 MAX_COLLECTION_NAME_LENGTH = 128
+MAX_CUSTOM_NAME_LENGTH = 128
 MAX_ITEM_JSON_BYTES = 4 * 1024 * 1024
 MAX_TEXT_FIELD_LENGTH = 512
 MAX_SEARCH_LENGTH = 256
@@ -106,6 +107,7 @@ class VaultItemRecord:
     raw_sha256: str
     source_item_key: str | None
     label: str | None
+    custom_name: str | None
     source: str | None
     deposit_key: str | None
     status: str
@@ -114,12 +116,9 @@ class VaultItemRecord:
     updated_at: str
 
     def decoded_item(self) -> dict[str, Any]:
-        """Return a fresh decoded copy while keeping the stored text untouched."""
+        """Return a validated copy without trusting mutable database metadata."""
 
-        value = json.loads(self.raw_item_json)
-        if not isinstance(value, dict):  # Protected by deposit validation.
-            raise VaultSchemaError("stored item JSON is not an object")
-        return value
+        return validate_item_record_integrity(self)
 
     def as_dict(self) -> dict[str, Any]:
         return {
@@ -130,6 +129,7 @@ class VaultItemRecord:
             "rawSha256": self.raw_sha256,
             "sourceItemKey": self.source_item_key,
             "label": self.label,
+            "customName": self.custom_name,
             "source": self.source,
             "depositKey": self.deposit_key,
             "status": self.status,
@@ -235,6 +235,42 @@ class TransferRecord:
         }
 
 
+@dataclass(frozen=True)
+class TransferBatchRecord:
+    request_id: str
+    request_hash: str
+    direction: str
+    status: str
+    item_count: int
+    collection_id: int | None
+    collection_name: str | None
+    stash_before_sha256: str
+    stash_after_sha256: str
+    observed_stash_sha256: str | None
+    error: str | None
+    created_at: str
+    updated_at: str
+    finished_at: str | None
+
+    def as_dict(self) -> dict[str, Any]:
+        return {
+            "requestId": self.request_id,
+            "requestHash": self.request_hash,
+            "direction": self.direction,
+            "status": self.status,
+            "itemCount": self.item_count,
+            "collectionId": self.collection_id,
+            "collectionName": self.collection_name,
+            "stashBeforeSha256": self.stash_before_sha256,
+            "stashAfterSha256": self.stash_after_sha256,
+            "observedStashSha256": self.observed_stash_sha256,
+            "error": self.error,
+            "createdAt": self.created_at,
+            "updatedAt": self.updated_at,
+            "finishedAt": self.finished_at,
+        }
+
+
 _SCHEMA_SQL = """
 BEGIN IMMEDIATE;
 CREATE TABLE schema_meta (
@@ -258,6 +294,7 @@ CREATE TABLE items (
     search_text TEXT NOT NULL,
     source_item_key TEXT,
     label TEXT,
+    custom_name TEXT,
     source TEXT,
     deposit_key TEXT UNIQUE,
     status TEXT NOT NULL CHECK (status IN ('deposit_pending', 'available', 'reserved')),
@@ -269,6 +306,23 @@ CREATE TABLE items (
         (status = 'available' AND reserved_token IS NULL) OR
         (status = 'reserved' AND reserved_token IS NOT NULL)
     )
+);
+
+CREATE TABLE transfer_batches (
+    request_id TEXT PRIMARY KEY,
+    request_hash TEXT NOT NULL,
+    direction TEXT NOT NULL CHECK (direction IN ('deposit', 'withdrawal')),
+    status TEXT NOT NULL CHECK (status IN ('prepared', 'committed', 'conflict', 'cancelled')),
+    item_count INTEGER NOT NULL CHECK (item_count > 0),
+    collection_id INTEGER REFERENCES collections(id) ON DELETE SET NULL,
+    collection_name TEXT,
+    stash_before_sha256 TEXT NOT NULL,
+    stash_after_sha256 TEXT NOT NULL,
+    observed_stash_sha256 TEXT,
+    error TEXT,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    finished_at TEXT
 );
 
 CREATE TABLE transfers (
@@ -293,7 +347,14 @@ CREATE TABLE transfers (
     error TEXT,
     created_at TEXT NOT NULL,
     updated_at TEXT NOT NULL,
-    finished_at TEXT
+    finished_at TEXT,
+    batch_id TEXT REFERENCES transfer_batches(request_id) ON DELETE RESTRICT,
+    batch_ordinal INTEGER,
+    UNIQUE(batch_id, batch_ordinal),
+    CHECK (
+        (batch_id IS NULL AND batch_ordinal IS NULL) OR
+        (batch_id IS NOT NULL AND batch_ordinal IS NOT NULL AND batch_ordinal >= 0)
+    )
 );
 
 CREATE TABLE events (
@@ -311,18 +372,21 @@ CREATE INDEX items_collection_status_idx
 CREATE INDEX items_search_idx ON items(search_text);
 CREATE INDEX transfers_status_idx ON transfers(status, created_at, request_id);
 CREATE INDEX transfers_item_idx ON transfers(item_id, created_at, request_id);
+CREATE INDEX transfer_batches_status_idx
+    ON transfer_batches(status, created_at, request_id);
+CREATE INDEX transfers_batch_idx ON transfers(batch_id, batch_ordinal);
 CREATE INDEX events_created_idx ON events(created_at, id);
 
-INSERT INTO schema_meta(key, value) VALUES ('schema_version', '2');
+INSERT INTO schema_meta(key, value) VALUES ('schema_version', '4');
 INSERT INTO collections(name, name_key, created_at, updated_at)
 VALUES ('Vault', 'vault', strftime('%Y-%m-%dT%H:%M:%fZ', 'now'),
         strftime('%Y-%m-%dT%H:%M:%fZ', 'now'));
-PRAGMA user_version = 2;
+PRAGMA user_version = 4;
 COMMIT;
 """
 
 _REQUIRED_TABLES = frozenset({
-    "schema_meta", "collections", "items", "transfers", "events"
+    "schema_meta", "collections", "items", "transfer_batches", "transfers", "events"
 })
 
 _REQUIRED_COLUMNS = {
@@ -330,8 +394,14 @@ _REQUIRED_COLUMNS = {
     "collections": frozenset({"id", "name", "name_key", "created_at", "updated_at"}),
     "items": frozenset({
         "id", "collection_id", "raw_json", "raw_sha256", "search_text",
-        "source_item_key", "label", "source", "deposit_key", "status",
+        "source_item_key", "label", "custom_name", "source", "deposit_key", "status",
         "reserved_token", "created_at", "updated_at",
+    }),
+    "transfer_batches": frozenset({
+        "request_id", "request_hash", "direction", "status", "item_count",
+        "collection_id", "collection_name", "stash_before_sha256",
+        "stash_after_sha256", "observed_stash_sha256", "error", "created_at",
+        "updated_at", "finished_at",
     }),
     "transfers": frozenset({
         "request_id", "request_hash", "direction", "status", "item_id",
@@ -339,12 +409,26 @@ _REQUIRED_COLUMNS = {
         "source_tab", "source_key", "target_tab", "target_key",
         "target_pos_json", "stash_before_sha256", "stash_after_sha256",
         "observed_stash_sha256", "error", "created_at", "updated_at",
-        "finished_at",
+        "finished_at", "batch_id", "batch_ordinal",
     }),
     "events": frozenset({
         "id", "event_type", "item_id", "collection_name",
         "withdrawal_token", "created_at", "details_json",
     }),
+}
+
+_REQUIRED_COLUMNS_V3 = {
+    table: (
+        columns - {"batch_id", "batch_ordinal"}
+        if table == "transfers" else columns
+    )
+    for table, columns in _REQUIRED_COLUMNS.items()
+    if table != "transfer_batches"
+}
+
+_REQUIRED_COLUMNS_V2 = {
+    table: (columns - {"custom_name"} if table == "items" else columns)
+    for table, columns in _REQUIRED_COLUMNS_V3.items()
 }
 
 
@@ -447,6 +531,22 @@ def _clean_optional_text(value: Any, label: str) -> str | None:
         raise VaultValidationError(f"{label} is not valid Unicode") from exc
     if any(char in "\x00\r\n" for char in cleaned):
         raise VaultValidationError(f"{label} contains forbidden control characters")
+    return cleaned
+
+
+def _clean_custom_name(value: Any) -> str | None:
+    """Normalize one Vault-only alias; blank text deliberately clears it."""
+
+    cleaned = _clean_optional_text(value, "custom name")
+    if cleaned is None:
+        return None
+    cleaned = unicodedata.normalize("NFC", cleaned)
+    if len(cleaned) > MAX_CUSTOM_NAME_LENGTH:
+        raise VaultValidationError(
+            f"custom name cannot exceed {MAX_CUSTOM_NAME_LENGTH} characters"
+        )
+    if any(unicodedata.category(char).startswith("C") for char in cleaned):
+        raise VaultValidationError("custom name cannot contain control characters")
     return cleaned
 
 
@@ -623,6 +723,44 @@ def validate_raw_item_json(raw_item_json: Any) -> dict[str, Any]:
     return decoded
 
 
+def _validate_stored_raw_item_integrity(
+    raw_item_json: Any, raw_sha256: Any
+) -> dict[str, Any]:
+    """Validate one payload read from SQLite and its persisted digest."""
+
+    if not isinstance(raw_item_json, str):
+        raise VaultSchemaError("stored item JSON is not text")
+    try:
+        actual_sha256 = hashlib.sha256(raw_item_json.encode("utf-8")).hexdigest()
+    except UnicodeError as exc:
+        raise VaultSchemaError("stored item JSON is not valid Unicode") from exc
+    if (
+        not isinstance(raw_sha256, str)
+        or _SHA256_RE.fullmatch(raw_sha256) is None
+        or actual_sha256 != raw_sha256.lower()
+    ):
+        raise VaultSchemaError("stored item JSON hash does not match its metadata")
+    try:
+        return validate_raw_item_json(raw_item_json)
+    except VaultValidationError as exc:
+        raise VaultSchemaError("stored item JSON is malformed") from exc
+
+
+def validate_item_record_integrity(record: VaultItemRecord) -> dict[str, Any]:
+    """Recompute and validate one :class:`VaultItemRecord` payload.
+
+    Callers that plan a batch operation can use this before trusting the
+    decoded item. The database transaction repeats the same check when it
+    reserves the batch, so this public preflight is not a TOCTOU boundary.
+    """
+
+    if not isinstance(record, VaultItemRecord):
+        raise VaultValidationError("Vault item record is required")
+    return _validate_stored_raw_item_integrity(
+        record.raw_item_json, record.raw_sha256
+    )
+
+
 def _search_document(decoded: Any, extras: Iterable[str | None]) -> str:
     values: list[str] = []
 
@@ -666,6 +804,115 @@ class InfiniteVault:
         connection.execute("PRAGMA foreign_keys = ON")
         connection.execute("PRAGMA busy_timeout = 15000")
         return connection
+
+    @staticmethod
+    def _validate_schema_shape(
+        connection: sqlite3.Connection,
+        tables: set[str],
+        required_columns: Mapping[str, frozenset[str]],
+        expected_version: int,
+    ) -> None:
+        missing = set(required_columns).difference(tables)
+        if missing:
+            raise VaultSchemaError(
+                "vault database is missing tables: " + ", ".join(sorted(missing))
+            )
+        for table, columns in required_columns.items():
+            actual_columns = {
+                row[1]
+                for row in connection.execute(
+                    f'PRAGMA table_info("{table}")'
+                ).fetchall()
+            }
+            missing_columns = columns.difference(actual_columns)
+            if missing_columns:
+                raise VaultSchemaError(
+                    f"vault table {table} is missing columns: "
+                    + ", ".join(sorted(missing_columns))
+                )
+        meta = connection.execute(
+            "SELECT value FROM schema_meta WHERE key = 'schema_version'"
+        ).fetchone()
+        if meta is None or meta[0] != str(expected_version):
+            raise VaultSchemaError("vault schema metadata does not match user_version")
+
+    @staticmethod
+    def _migrate_v2_to_v3(connection: sqlite3.Connection) -> None:
+        """Add Vault-only aliases without rewriting any native item payload."""
+
+        try:
+            connection.execute("BEGIN IMMEDIATE")
+            connection.execute("ALTER TABLE items ADD COLUMN custom_name TEXT")
+            connection.execute(
+                "UPDATE schema_meta SET value='3' WHERE key='schema_version'"
+            )
+            connection.execute("PRAGMA user_version = 3")
+            connection.commit()
+        except Exception as exc:
+            connection.rollback()
+            raise VaultSchemaError(
+                f"vault schema migration from 2 to 3 failed: {exc}"
+            ) from exc
+
+    @staticmethod
+    def _migrate_v3_to_v4(connection: sqlite3.Connection) -> None:
+        """Add an atomic parent journal for multi-item stash transfers."""
+
+        try:
+            connection.execute("BEGIN IMMEDIATE")
+            connection.execute(
+                """CREATE TABLE IF NOT EXISTS transfer_batches (
+                       request_id TEXT PRIMARY KEY,
+                       request_hash TEXT NOT NULL,
+                       direction TEXT NOT NULL CHECK (direction IN ('deposit', 'withdrawal')),
+                       status TEXT NOT NULL CHECK (status IN ('prepared', 'committed', 'conflict', 'cancelled')),
+                       item_count INTEGER NOT NULL CHECK (item_count > 0),
+                       collection_id INTEGER REFERENCES collections(id) ON DELETE SET NULL,
+                       collection_name TEXT,
+                       stash_before_sha256 TEXT NOT NULL,
+                       stash_after_sha256 TEXT NOT NULL,
+                       observed_stash_sha256 TEXT,
+                       error TEXT,
+                       created_at TEXT NOT NULL,
+                       updated_at TEXT NOT NULL,
+                       finished_at TEXT
+                   )"""
+            )
+            transfer_columns = {
+                row[1] for row in connection.execute(
+                    "PRAGMA table_info(transfers)"
+                ).fetchall()
+            }
+            if "batch_id" not in transfer_columns:
+                connection.execute(
+                    "ALTER TABLE transfers ADD COLUMN batch_id TEXT REFERENCES transfer_batches(request_id) ON DELETE RESTRICT"
+                )
+            if "batch_ordinal" not in transfer_columns:
+                connection.execute(
+                    "ALTER TABLE transfers ADD COLUMN batch_ordinal INTEGER"
+                )
+            connection.execute(
+                """CREATE UNIQUE INDEX IF NOT EXISTS transfers_batch_ordinal_unique
+                   ON transfers(batch_id, batch_ordinal)
+                   WHERE batch_id IS NOT NULL"""
+            )
+            connection.execute(
+                """CREATE INDEX IF NOT EXISTS transfer_batches_status_idx
+                   ON transfer_batches(status, created_at, request_id)"""
+            )
+            connection.execute(
+                "CREATE INDEX IF NOT EXISTS transfers_batch_idx ON transfers(batch_id, batch_ordinal)"
+            )
+            connection.execute(
+                "UPDATE schema_meta SET value='4' WHERE key='schema_version'"
+            )
+            connection.execute("PRAGMA user_version = 4")
+            connection.commit()
+        except Exception as exc:
+            connection.rollback()
+            raise VaultSchemaError(
+                f"vault schema migration from 3 to 4 failed: {exc}"
+            ) from exc
 
     def _initialize(self) -> None:
         if self.path.exists() and self.path.is_dir():
@@ -711,32 +958,41 @@ class InfiniteVault:
                     f"vault schema {version} is newer than supported schema {SCHEMA_VERSION}"
                 )
             if version < SCHEMA_VERSION:
-                raise VaultSchemaError(
-                    f"vault schema {version} has no supported migration to {SCHEMA_VERSION}"
-                )
-            missing = _REQUIRED_TABLES.difference(tables)
-            if missing:
-                raise VaultSchemaError(
-                    "vault database is missing tables: " + ", ".join(sorted(missing))
-                )
-            for table, required_columns in _REQUIRED_COLUMNS.items():
-                actual_columns = {
-                    row[1]
-                    for row in connection.execute(
-                        f'PRAGMA table_info("{table}")'
-                    ).fetchall()
-                }
-                missing_columns = required_columns.difference(actual_columns)
-                if missing_columns:
+                if version not in {2, 3}:
                     raise VaultSchemaError(
-                        f"vault table {table} is missing columns: "
-                        + ", ".join(sorted(missing_columns))
+                        f"vault schema {version} has no supported migration to {SCHEMA_VERSION}"
                     )
-            meta = connection.execute(
-                "SELECT value FROM schema_meta WHERE key = 'schema_version'"
-            ).fetchone()
-            if meta is None or meta[0] != str(SCHEMA_VERSION):
-                raise VaultSchemaError("vault schema metadata does not match user_version")
+                self._validate_schema_shape(
+                    connection,
+                    tables,
+                    _REQUIRED_COLUMNS_V2 if version == 2 else _REQUIRED_COLUMNS_V3,
+                    version,
+                )
+                # A migration is a mutation. Preserve the complete old database
+                # once before applying the supported sequential upgrades.
+                connection.close()
+                self._backup_existing()
+                connection = self._connect()
+                if version == 2:
+                    self._migrate_v2_to_v3(connection)
+                    version = 3
+                if version == 3:
+                    self._migrate_v3_to_v4(connection)
+                integrity = connection.execute("PRAGMA quick_check").fetchone()[0]
+                if integrity != "ok":
+                    raise VaultSchemaError(
+                        f"vault database integrity check failed after migration: {integrity}"
+                    )
+                version = int(connection.execute("PRAGMA user_version").fetchone()[0])
+                tables = {
+                    row[0]
+                    for row in connection.execute(
+                        "SELECT name FROM sqlite_master WHERE type = 'table'"
+                    )
+                }
+            self._validate_schema_shape(
+                connection, tables, _REQUIRED_COLUMNS, SCHEMA_VERSION
+            )
         finally:
             connection.close()
 
@@ -828,6 +1084,7 @@ class InfiniteVault:
             raw_sha256=str(row["raw_sha256"]),
             source_item_key=row["source_item_key"],
             label=row["label"],
+            custom_name=row["custom_name"],
             source=row["source"],
             deposit_key=row["deposit_key"],
             status=str(row["status"]),
@@ -885,6 +1142,28 @@ class InfiniteVault:
             target_pos=target_pos,
             stash_before_sha256=row["stash_before_sha256"],
             stash_after_sha256=row["stash_after_sha256"],
+            observed_stash_sha256=row["observed_stash_sha256"],
+            error=row["error"],
+            created_at=str(row["created_at"]),
+            updated_at=str(row["updated_at"]),
+            finished_at=row["finished_at"],
+        )
+
+    @staticmethod
+    def _batch_from_row(row: sqlite3.Row) -> TransferBatchRecord:
+        return TransferBatchRecord(
+            request_id=str(row["request_id"]),
+            request_hash=str(row["request_hash"]),
+            direction=str(row["direction"]),
+            status=str(row["status"]),
+            item_count=int(row["item_count"]),
+            collection_id=(
+                int(row["collection_id"])
+                if row["collection_id"] is not None else None
+            ),
+            collection_name=row["collection_name"],
+            stash_before_sha256=str(row["stash_before_sha256"]),
+            stash_after_sha256=str(row["stash_after_sha256"]),
             observed_stash_sha256=row["observed_stash_sha256"],
             error=row["error"],
             created_at=str(row["created_at"]),
@@ -1137,6 +1416,75 @@ class InfiniteVault:
 
         return self._read(operation)
 
+    def set_item_custom_name(
+        self, item_id: str, custom_name: str | None
+    ) -> VaultItemRecord:
+        """Create, replace, or clear a Vault-only item alias.
+
+        ``None`` and blank text clear the alias. The native JSON text and its
+        digest are never rewritten; only metadata and the derived search index
+        change.
+        """
+
+        clean_item_id = _clean_id(item_id, "item id")
+        clean_custom_name = _clean_custom_name(custom_name)
+
+        def operation(connection: sqlite3.Connection) -> VaultItemRecord:
+            item = connection.execute(
+                """SELECT i.*, c.name AS collection_name
+                   FROM items AS i JOIN collections AS c ON c.id = i.collection_id
+                   WHERE i.id = ?""",
+                (clean_item_id,),
+            ).fetchone()
+            if item is None:
+                raise VaultNotFoundError("item was not found")
+            if item["status"] != "available":
+                raise VaultStateError("only an available item can be renamed")
+            if item["custom_name"] == clean_custom_name:
+                return self._item_from_row(item)
+
+            decoded = validate_item_record_integrity(self._item_from_row(item))
+            search_text = _search_document(
+                decoded,
+                (
+                    item["source_item_key"],
+                    item["label"],
+                    item["source"],
+                    clean_custom_name,
+                ),
+            )
+            now = _utc_now()
+            connection.execute(
+                """UPDATE items
+                   SET custom_name = ?, search_text = ?, updated_at = ?
+                   WHERE id = ?""",
+                (clean_custom_name, search_text, now, clean_item_id),
+            )
+            self._event(
+                connection,
+                "item_custom_name_updated",
+                item_id=clean_item_id,
+                collection_name=item["collection_name"],
+                details={
+                    "previousCustomName": item["custom_name"],
+                    "customName": clean_custom_name,
+                },
+            )
+            updated = connection.execute(
+                """SELECT i.*, c.name AS collection_name
+                   FROM items AS i JOIN collections AS c ON c.id = i.collection_id
+                   WHERE i.id = ?""",
+                (clean_item_id,),
+            ).fetchone()
+            return self._item_from_row(updated)
+
+        return self._write(operation)
+
+    def clear_item_custom_name(self, item_id: str) -> VaultItemRecord:
+        """Clear a Vault-only alias without touching the native item payload."""
+
+        return self.set_item_custom_name(item_id, None)
+
     @staticmethod
     def _status_clause(status: str) -> tuple[str, tuple[str, ...]]:
         if status == "available":
@@ -1203,6 +1551,41 @@ class InfiniteVault:
                 tuple(arguments),
             ).fetchall()
             return [self._item_from_row(row) for row in rows]
+
+        return self._read(operation)
+
+    def list_all_available_items(self) -> list[VaultItemRecord]:
+        """Return one transactionally consistent unpaged snapshot for bulk work."""
+
+        return self._read(
+            lambda connection: [
+                self._item_from_row(row)
+                for row in connection.execute(
+                    """SELECT i.*, c.name AS collection_name
+                       FROM items AS i JOIN collections AS c ON c.id=i.collection_id
+                       WHERE i.status='available'
+                       ORDER BY i.created_at, i.id"""
+                ).fetchall()
+            ]
+        )
+
+    def available_item_origin_tabs(self) -> dict[str, str]:
+        """Return the machine source tab retained by each available deposit journal."""
+
+        def operation(connection: sqlite3.Connection) -> dict[str, str]:
+            rows = connection.execute(
+                """SELECT i.id,
+                          (SELECT t.source_tab FROM transfers AS t
+                           WHERE t.item_id=i.id AND t.direction='deposit'
+                             AND t.status='committed' AND t.source_tab IS NOT NULL
+                           ORDER BY t.finished_at DESC, t.created_at DESC LIMIT 1)
+                              AS origin_tab
+                   FROM items AS i WHERE i.status='available'"""
+            ).fetchall()
+            return {
+                str(row["id"]): str(row["origin_tab"])
+                for row in rows if row["origin_tab"] is not None
+            }
 
         return self._read(operation)
 
@@ -1283,6 +1666,667 @@ class InfiniteVault:
             return self._item_from_row(row)
 
         return self._write(operation)
+
+    @staticmethod
+    def _batch_member_request_id(batch_request_id: str, ordinal: int) -> str:
+        return hashlib.sha256(
+            f"{batch_request_id}:{ordinal}".encode("ascii")
+        ).hexdigest()
+
+    @staticmethod
+    def _batch_members(
+        connection: sqlite3.Connection, batch_request_id: str
+    ) -> list[sqlite3.Row]:
+        return connection.execute(
+            """SELECT * FROM transfers WHERE batch_id=?
+               ORDER BY batch_ordinal, request_id""",
+            (batch_request_id,),
+        ).fetchall()
+
+    def get_transfer_batch(self, request_id: str) -> TransferBatchRecord:
+        clean_request_id = _clean_required_request_id(request_id)
+
+        def operation(connection: sqlite3.Connection) -> TransferBatchRecord:
+            row = connection.execute(
+                "SELECT * FROM transfer_batches WHERE request_id=?",
+                (clean_request_id,),
+            ).fetchone()
+            if row is None:
+                raise VaultNotFoundError("transfer batch was not found")
+            return self._batch_from_row(row)
+
+        return self._read(operation)
+
+    def list_transfer_batch_members(self, request_id: str) -> list[TransferRecord]:
+        clean_request_id = _clean_required_request_id(request_id)
+
+        def operation(connection: sqlite3.Connection) -> list[TransferRecord]:
+            parent = connection.execute(
+                "SELECT item_count FROM transfer_batches WHERE request_id=?",
+                (clean_request_id,),
+            ).fetchone()
+            if parent is None:
+                raise VaultNotFoundError("transfer batch was not found")
+            rows = self._batch_members(connection, clean_request_id)
+            if len(rows) != int(parent["item_count"]):
+                raise VaultSchemaError("transfer batch member count is inconsistent")
+            return [self._transfer_from_row(row) for row in rows]
+
+        return self._read(operation)
+
+    def list_pending_transfer_batches(self) -> list[TransferBatchRecord]:
+        return self._read(
+            lambda connection: [
+                self._batch_from_row(row)
+                for row in connection.execute(
+                    """SELECT * FROM transfer_batches
+                       WHERE status IN ('prepared', 'conflict')
+                       ORDER BY created_at, request_id"""
+                ).fetchall()
+            ]
+        )
+
+    def prepare_bulk_deposit(
+        self,
+        collection: int | str,
+        entries: Iterable[Mapping[str, Any]],
+        *,
+        request_id: str,
+        request_hash: str,
+        stash_before_sha256: str,
+        stash_after_sha256: str,
+    ) -> TransferBatchRecord:
+        """Persist every stash item as one indivisible pending deposit batch."""
+
+        clean_request_id = _clean_required_request_id(request_id)
+        clean_request_hash = _clean_sha256(request_hash, "request hash")
+        before_hash = _clean_sha256(stash_before_sha256, "stash before hash")
+        after_hash = _clean_sha256(stash_after_sha256, "stash after hash")
+        if before_hash == after_hash:
+            raise VaultValidationError("batch before and after stash hashes must differ")
+        prepared: list[dict[str, Any]] = []
+        sources: set[tuple[str, str]] = set()
+        for raw_spec in entries:
+            if not isinstance(raw_spec, Mapping):
+                raise VaultValidationError("bulk deposit entries must be objects")
+            raw_json = raw_spec.get("raw_item_json")
+            decoded = validate_raw_item_json(raw_json)
+            source_tab = _clean_optional_text(raw_spec.get("source_tab"), "source tab")
+            source_key = _clean_optional_text(raw_spec.get("source_key"), "source key")
+            if source_tab is None or source_key is None:
+                raise VaultValidationError("bulk deposit source tab and key are required")
+            identity = (source_tab, source_key)
+            if identity in sources:
+                raise VaultValidationError("bulk deposit contains a duplicate stash source")
+            sources.add(identity)
+            label = _clean_optional_text(raw_spec.get("label"), "label")
+            source = _clean_optional_text(raw_spec.get("source"), "source") or source_tab
+            raw_sha256 = hashlib.sha256(raw_json.encode("utf-8")).hexdigest()
+            prepared.append({
+                "raw_json": raw_json,
+                "raw_sha256": raw_sha256,
+                "search_text": _search_document(decoded, (source_key, label, source)),
+                "source_tab": source_tab,
+                "source_key": source_key,
+                "label": label,
+                "source": source,
+            })
+        if not prepared:
+            raise VaultValidationError("bulk deposit requires at least one item")
+
+        def operation(connection: sqlite3.Connection) -> TransferBatchRecord:
+            target = self._resolve_collection(connection, collection)
+            expected_hash = canonical_request_hash({
+                "direction": "bulk_deposit",
+                "collectionId": int(target["id"]),
+                "items": [
+                    {
+                        "sourceTab": row["source_tab"],
+                        "sourceKey": row["source_key"],
+                        "rawSha256": row["raw_sha256"],
+                    }
+                    for row in prepared
+                ],
+            })
+            prior = connection.execute(
+                "SELECT * FROM transfer_batches WHERE request_id=?",
+                (clean_request_id,),
+            ).fetchone()
+            if prior is not None:
+                if (
+                    prior["direction"] == "deposit"
+                    and prior["request_hash"] == clean_request_hash == expected_hash
+                    and int(prior["item_count"]) == len(prepared)
+                    and int(prior["collection_id"]) == int(target["id"])
+                    and prior["stash_before_sha256"] == before_hash
+                    and prior["stash_after_sha256"] == after_hash
+                ):
+                    return self._batch_from_row(prior)
+                raise VaultConflictError("request id was reused with different bulk deposit data")
+            if clean_request_hash != expected_hash:
+                raise VaultValidationError("request hash does not match bulk deposit intent")
+            for row in prepared:
+                active = connection.execute(
+                    """SELECT request_id FROM transfers
+                       WHERE direction='deposit' AND status IN ('prepared', 'conflict')
+                         AND source_tab=? AND source_key=? AND stash_before_sha256=?
+                         AND raw_sha256=? LIMIT 1""",
+                    (
+                        row["source_tab"], row["source_key"], before_hash,
+                        row["raw_sha256"],
+                    ),
+                ).fetchone()
+                if active is not None:
+                    raise VaultConflictError(
+                        "a stash source already has an active vault transfer"
+                    )
+            now = _utc_now()
+            connection.execute(
+                """INSERT INTO transfer_batches(
+                       request_id, request_hash, direction, status, item_count,
+                       collection_id, collection_name, stash_before_sha256,
+                       stash_after_sha256, observed_stash_sha256, error,
+                       created_at, updated_at, finished_at
+                   ) VALUES (?, ?, 'deposit', 'prepared', ?, ?, ?, ?, ?, NULL,
+                             NULL, ?, ?, NULL)""",
+                (
+                    clean_request_id, clean_request_hash, len(prepared),
+                    target["id"], target["name"], before_hash, after_hash, now, now,
+                ),
+            )
+            for ordinal, row in enumerate(prepared):
+                child_id = self._batch_member_request_id(clean_request_id, ordinal)
+                item_id = uuid.uuid4().hex
+                connection.execute(
+                    """INSERT INTO items(
+                           id, collection_id, raw_json, raw_sha256, search_text,
+                           source_item_key, label, source, deposit_key, status,
+                           reserved_token, created_at, updated_at
+                       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'deposit_pending',
+                                 NULL, ?, ?)""",
+                    (
+                        item_id, target["id"], row["raw_json"], row["raw_sha256"],
+                        row["search_text"], row["source_key"], row["label"],
+                        row["source"], child_id, now, now,
+                    ),
+                )
+                connection.execute(
+                    """INSERT INTO transfers(
+                           request_id, request_hash, direction, status, item_id,
+                           collection_id, collection_name, raw_json, raw_sha256,
+                           deposit_key, source_tab, source_key, target_tab, target_key,
+                           target_pos_json, stash_before_sha256, stash_after_sha256,
+                           observed_stash_sha256, error, created_at, updated_at,
+                           finished_at, batch_id, batch_ordinal
+                       ) VALUES (?, ?, 'deposit', 'prepared', ?, ?, ?, ?, ?, ?, ?, ?,
+                                 NULL, NULL, NULL, ?, ?, NULL, NULL, ?, ?, NULL, ?, ?)""",
+                    (
+                        child_id, clean_request_hash, item_id, target["id"],
+                        target["name"], row["raw_json"], row["raw_sha256"],
+                        child_id, row["source_tab"], row["source_key"], before_hash,
+                        after_hash, now, now, clean_request_id, ordinal,
+                    ),
+                )
+            self._event(
+                connection, "bulk_deposit_prepared",
+                collection_name=target["name"], withdrawal_token=clean_request_id,
+                details={"itemCount": len(prepared)},
+            )
+            return self._batch_from_row(
+                connection.execute(
+                    "SELECT * FROM transfer_batches WHERE request_id=?",
+                    (clean_request_id,),
+                ).fetchone()
+            )
+
+        return self._write(operation)
+
+    def prepare_bulk_withdrawal(
+        self,
+        targets: Iterable[Mapping[str, Any]],
+        *,
+        request_id: str,
+        request_hash: str,
+        stash_before_sha256: str,
+        stash_after_sha256: str,
+        destination_tab: str | None = None,
+    ) -> TransferBatchRecord:
+        """Reserve the complete available Vault snapshot as one atomic batch."""
+
+        clean_request_id = _clean_required_request_id(request_id)
+        clean_request_hash = _clean_sha256(request_hash, "request hash")
+        before_hash = _clean_sha256(stash_before_sha256, "stash before hash")
+        after_hash = _clean_sha256(stash_after_sha256, "stash after hash")
+        clean_destination_tab = _clean_optional_text(
+            destination_tab, "bulk destination tab"
+        )
+        if before_hash == after_hash:
+            raise VaultValidationError("batch before and after stash hashes must differ")
+        prepared: list[dict[str, Any]] = []
+        item_ids: set[str] = set()
+        destinations: set[tuple[str, str]] = set()
+        for raw_spec in targets:
+            if not isinstance(raw_spec, Mapping):
+                raise VaultValidationError("bulk withdrawal targets must be objects")
+            item_id = _clean_id(raw_spec.get("item_id"), "item id")
+            if item_id in item_ids:
+                raise VaultValidationError("bulk withdrawal contains a duplicate item")
+            item_ids.add(item_id)
+            target_tab = _clean_optional_text(raw_spec.get("target_tab"), "target tab")
+            target_key = _clean_optional_text(raw_spec.get("target_key"), "target key")
+            if target_tab is None or target_key is None:
+                raise VaultValidationError("bulk withdrawal target tab and key are required")
+            destination = (target_tab, target_key)
+            if destination in destinations:
+                raise VaultValidationError("bulk withdrawal contains a duplicate destination")
+            destinations.add(destination)
+            raw_pos = raw_spec.get("target_pos")
+            target_pos = None if raw_pos is None else _clean_target_pos(raw_pos)
+            prepared.append({
+                "item_id": item_id,
+                "raw_sha256": _clean_sha256(raw_spec.get("raw_sha256"), "raw item hash"),
+                "metadata_sha256": _clean_sha256(
+                    raw_spec.get("metadata_sha256"), "Vault metadata hash"
+                ),
+                "target_tab": target_tab,
+                "target_key": target_key,
+                "target_pos": target_pos,
+            })
+        if not prepared:
+            raise VaultValidationError("bulk withdrawal requires at least one item")
+
+        def operation(connection: sqlite3.Connection) -> TransferBatchRecord:
+            prior = connection.execute(
+                "SELECT * FROM transfer_batches WHERE request_id=?",
+                (clean_request_id,),
+            ).fetchone()
+            expected_intent = {
+                "direction": "bulk_withdrawal",
+                "items": [
+                    {
+                        "itemId": row["item_id"],
+                        "rawSha256": row["raw_sha256"],
+                        "metadataSha256": row["metadata_sha256"],
+                        "targetTab": row["target_tab"],
+                        "targetKey": row["target_key"],
+                        "targetPos": (
+                            list(row["target_pos"])
+                            if row["target_pos"] is not None else None
+                        ),
+                    }
+                    for row in prepared
+                ],
+            }
+            if clean_destination_tab is not None:
+                expected_intent["destinationTab"] = clean_destination_tab
+            expected_hash = canonical_request_hash(expected_intent)
+            if prior is not None:
+                if (
+                    prior["direction"] == "withdrawal"
+                    and prior["request_hash"] == clean_request_hash == expected_hash
+                    and int(prior["item_count"]) == len(prepared)
+                    and prior["stash_before_sha256"] == before_hash
+                    and prior["stash_after_sha256"] == after_hash
+                ):
+                    return self._batch_from_row(prior)
+                raise VaultConflictError(
+                    "request id was reused with different bulk withdrawal data"
+                )
+            if clean_request_hash != expected_hash:
+                raise VaultValidationError("request hash does not match bulk withdrawal intent")
+            available_rows = connection.execute(
+                """SELECT i.*, c.name AS collection_name
+                   FROM items AS i JOIN collections AS c ON c.id=i.collection_id
+                   WHERE i.status='available' ORDER BY i.id"""
+            ).fetchall()
+            if {str(row["id"]) for row in available_rows} != item_ids:
+                raise VaultConflictError(
+                    "the available Vault changed after the bulk transfer was previewed"
+                )
+            by_id = {str(row["id"]): row for row in available_rows}
+            for target in prepared:
+                item = by_id[target["item_id"]]
+                _validate_stored_raw_item_integrity(
+                    item["raw_json"], item["raw_sha256"]
+                )
+                if item["raw_sha256"] != target["raw_sha256"]:
+                    raise VaultConflictError("a Vault item changed after preview")
+                metadata_sha256 = canonical_request_hash({
+                    "id": str(item["id"]),
+                    "collectionId": int(item["collection_id"]),
+                    "collectionName": str(item["collection_name"]),
+                    "sourceItemKey": item["source_item_key"],
+                    "label": item["label"],
+                    "customName": item["custom_name"],
+                    "source": item["source"],
+                    "depositKey": item["deposit_key"],
+                    "createdAt": str(item["created_at"]),
+                    "updatedAt": str(item["updated_at"]),
+                })
+                if metadata_sha256 != target["metadata_sha256"]:
+                    raise VaultConflictError(
+                        "Vault item metadata changed after preview"
+                    )
+            now = _utc_now()
+            connection.execute(
+                """INSERT INTO transfer_batches(
+                       request_id, request_hash, direction, status, item_count,
+                       collection_id, collection_name, stash_before_sha256,
+                       stash_after_sha256, observed_stash_sha256, error,
+                       created_at, updated_at, finished_at
+                   ) VALUES (?, ?, 'withdrawal', 'prepared', ?, NULL, NULL, ?, ?,
+                             NULL, NULL, ?, ?, NULL)""",
+                (
+                    clean_request_id, clean_request_hash, len(prepared),
+                    before_hash, after_hash, now, now,
+                ),
+            )
+            for ordinal, target in enumerate(prepared):
+                item = by_id[target["item_id"]]
+                child_id = self._batch_member_request_id(clean_request_id, ordinal)
+                target_pos_json = (
+                    json.dumps(list(target["target_pos"]), separators=(",", ":"))
+                    if target["target_pos"] is not None else None
+                )
+                connection.execute(
+                    """INSERT INTO transfers(
+                           request_id, request_hash, direction, status, item_id,
+                           collection_id, collection_name, raw_json, raw_sha256,
+                           deposit_key, source_tab, source_key, target_tab, target_key,
+                           target_pos_json, stash_before_sha256, stash_after_sha256,
+                           observed_stash_sha256, error, created_at, updated_at,
+                           finished_at, batch_id, batch_ordinal
+                       ) VALUES (?, ?, 'withdrawal', 'prepared', ?, ?, ?, ?, ?, ?, ?, ?,
+                                 ?, ?, ?, ?, ?, NULL, NULL, ?, ?, NULL, ?, ?)""",
+                    (
+                        child_id, clean_request_hash, item["id"], item["collection_id"],
+                        item["collection_name"], item["raw_json"], item["raw_sha256"],
+                        item["deposit_key"], item["source"], item["source_item_key"],
+                        target["target_tab"], target["target_key"], target_pos_json,
+                        before_hash, after_hash, now, now, clean_request_id, ordinal,
+                    ),
+                )
+                connection.execute(
+                    """UPDATE items SET status='reserved', reserved_token=?, updated_at=?
+                       WHERE id=? AND status='available'""",
+                    (child_id, now, item["id"]),
+                )
+                if connection.execute("SELECT changes()").fetchone()[0] != 1:
+                    raise VaultConflictError("a Vault item could not be reserved")
+            self._event(
+                connection, "bulk_withdrawal_prepared",
+                withdrawal_token=clean_request_id,
+                details={"itemCount": len(prepared)},
+            )
+            return self._batch_from_row(
+                connection.execute(
+                    "SELECT * FROM transfer_batches WHERE request_id=?",
+                    (clean_request_id,),
+                ).fetchone()
+            )
+
+        return self._write(operation)
+
+    @staticmethod
+    def _validate_batch_members(
+        connection: sqlite3.Connection, batch: sqlite3.Row
+    ) -> list[sqlite3.Row]:
+        members = InfiniteVault._batch_members(connection, str(batch["request_id"]))
+        if len(members) != int(batch["item_count"]):
+            raise VaultSchemaError("transfer batch member count is inconsistent")
+        for ordinal, member in enumerate(members):
+            if int(member["batch_ordinal"]) != ordinal:
+                raise VaultSchemaError("transfer batch ordinals are inconsistent")
+            if member["direction"] != batch["direction"]:
+                raise VaultSchemaError("transfer batch direction is inconsistent")
+            if member["request_hash"] != batch["request_hash"]:
+                raise VaultSchemaError("transfer batch intent hash is inconsistent")
+            if member["stash_before_sha256"] != batch["stash_before_sha256"]:
+                raise VaultSchemaError("transfer batch before hash is inconsistent")
+            if member["stash_after_sha256"] != batch["stash_after_sha256"]:
+                raise VaultSchemaError("transfer batch after hash is inconsistent")
+        return members
+
+    @staticmethod
+    def _finish_batch_locked(
+        connection: sqlite3.Connection,
+        batch: sqlite3.Row,
+        outcome: str,
+        observed: str,
+        *,
+        evidence: str | None = None,
+    ) -> TransferBatchRecord:
+        if outcome not in {"committed", "cancelled"}:
+            raise VaultValidationError("batch outcome must be committed or cancelled")
+        if batch["status"] in {"committed", "cancelled"}:
+            if batch["status"] != outcome:
+                raise VaultStateError("finished transfer batch has the opposite outcome")
+            return InfiniteVault._batch_from_row(batch)
+        members = InfiniteVault._validate_batch_members(connection, batch)
+        now = _utc_now()
+        for member in members:
+            item = connection.execute(
+                "SELECT * FROM items WHERE id=?", (member["item_id"],)
+            ).fetchone()
+            if batch["direction"] == "deposit":
+                if (
+                    item is None
+                    or item["status"] != "deposit_pending"
+                    or item["raw_sha256"] != member["raw_sha256"]
+                    or item["deposit_key"] != member["request_id"]
+                ):
+                    raise VaultSchemaError("pending batch deposit item is inconsistent")
+                if outcome == "committed":
+                    connection.execute(
+                        "UPDATE items SET status='available', updated_at=? WHERE id=?",
+                        (now, item["id"]),
+                    )
+                else:
+                    connection.execute("DELETE FROM items WHERE id=?", (item["id"],))
+            else:
+                if (
+                    item is None
+                    or item["status"] != "reserved"
+                    or item["reserved_token"] != member["request_id"]
+                    or item["raw_sha256"] != member["raw_sha256"]
+                ):
+                    raise VaultSchemaError("reserved batch withdrawal item is inconsistent")
+                if outcome == "committed":
+                    connection.execute("DELETE FROM items WHERE id=?", (item["id"],))
+                else:
+                    connection.execute(
+                        """UPDATE items SET status='available', reserved_token=NULL,
+                                  updated_at=? WHERE id=?""",
+                        (now, item["id"]),
+                    )
+        connection.execute(
+            """UPDATE transfers SET status=?, observed_stash_sha256=?, error=NULL,
+                      updated_at=?, finished_at=? WHERE batch_id=?""",
+            (outcome, observed, now, now, batch["request_id"]),
+        )
+        connection.execute(
+            """UPDATE transfer_batches
+               SET status=?, observed_stash_sha256=?, error=NULL,
+                   updated_at=?, finished_at=? WHERE request_id=?""",
+            (outcome, observed, now, now, batch["request_id"]),
+        )
+        InfiniteVault._event(
+            connection,
+            f"bulk_{batch['direction']}_{outcome}",
+            collection_name=batch["collection_name"],
+            withdrawal_token=batch["request_id"],
+            details={
+                "itemCount": int(batch["item_count"]),
+                **({"evidence": evidence} if evidence else {}),
+            },
+        )
+        return InfiniteVault._batch_from_row(
+            connection.execute(
+                "SELECT * FROM transfer_batches WHERE request_id=?",
+                (batch["request_id"],),
+            ).fetchone()
+        )
+
+    def commit_transfer_batch(
+        self, request_id: str, observed_stash_sha256: str
+    ) -> TransferBatchRecord:
+        clean_request_id = _clean_required_request_id(request_id)
+        observed = _clean_sha256(observed_stash_sha256, "observed stash hash")
+
+        def operation(connection: sqlite3.Connection) -> TransferBatchRecord:
+            batch = connection.execute(
+                "SELECT * FROM transfer_batches WHERE request_id=?",
+                (clean_request_id,),
+            ).fetchone()
+            if batch is None:
+                raise VaultNotFoundError("transfer batch was not found")
+            if batch["status"] == "committed":
+                return self._batch_from_row(batch)
+            if batch["status"] == "cancelled":
+                raise VaultStateError("a cancelled transfer batch cannot be committed")
+            if observed != batch["stash_after_sha256"]:
+                return self._mark_batch_conflict_locked(
+                    connection, batch,
+                    "observed stash hash does not match prepared batch after hash",
+                    observed,
+                )
+            return self._finish_batch_locked(connection, batch, "committed", observed)
+
+        return self._write(operation)
+
+    def cancel_transfer_batch(
+        self, request_id: str, observed_stash_sha256: str
+    ) -> TransferBatchRecord:
+        clean_request_id = _clean_required_request_id(request_id)
+        observed = _clean_sha256(observed_stash_sha256, "observed stash hash")
+
+        def operation(connection: sqlite3.Connection) -> TransferBatchRecord:
+            batch = connection.execute(
+                "SELECT * FROM transfer_batches WHERE request_id=?",
+                (clean_request_id,),
+            ).fetchone()
+            if batch is None:
+                raise VaultNotFoundError("transfer batch was not found")
+            if batch["status"] == "cancelled":
+                return self._batch_from_row(batch)
+            if batch["status"] == "committed":
+                raise VaultStateError("a committed transfer batch cannot be cancelled")
+            if observed != batch["stash_before_sha256"]:
+                return self._mark_batch_conflict_locked(
+                    connection, batch,
+                    "observed stash hash does not match prepared batch before hash",
+                    observed,
+                )
+            return self._finish_batch_locked(connection, batch, "cancelled", observed)
+
+        return self._write(operation)
+
+    @staticmethod
+    def _mark_batch_conflict_locked(
+        connection: sqlite3.Connection,
+        batch: sqlite3.Row,
+        error: str,
+        observed: str | None,
+    ) -> TransferBatchRecord:
+        if batch["status"] in {"committed", "cancelled"}:
+            raise VaultStateError("a finished transfer batch cannot be marked conflicted")
+        now = _utc_now()
+        connection.execute(
+            """UPDATE transfers SET status='conflict', observed_stash_sha256=?,
+                      error=?, updated_at=? WHERE batch_id=?""",
+            (observed, error, now, batch["request_id"]),
+        )
+        connection.execute(
+            """UPDATE transfer_batches SET status='conflict',
+                      observed_stash_sha256=?, error=?, updated_at=?
+               WHERE request_id=?""",
+            (observed, error, now, batch["request_id"]),
+        )
+        InfiniteVault._event(
+            connection, "bulk_transfer_conflict",
+            collection_name=batch["collection_name"],
+            withdrawal_token=batch["request_id"],
+            details={"error": error, "itemCount": int(batch["item_count"])},
+        )
+        return InfiniteVault._batch_from_row(
+            connection.execute(
+                "SELECT * FROM transfer_batches WHERE request_id=?",
+                (batch["request_id"],),
+            ).fetchone()
+        )
+
+    def mark_transfer_batch_conflict(
+        self,
+        request_id: str,
+        error: str,
+        *,
+        observed_stash_sha256: str | None = None,
+    ) -> TransferBatchRecord:
+        clean_request_id = _clean_required_request_id(request_id)
+        clean_error = _clean_optional_text(error, "transfer batch error")
+        if clean_error is None:
+            raise VaultValidationError("transfer batch error is required")
+        observed = _clean_sha256(
+            observed_stash_sha256, "observed stash hash", optional=True
+        )
+
+        def operation(connection: sqlite3.Connection) -> TransferBatchRecord:
+            batch = connection.execute(
+                "SELECT * FROM transfer_batches WHERE request_id=?",
+                (clean_request_id,),
+            ).fetchone()
+            if batch is None:
+                raise VaultNotFoundError("transfer batch was not found")
+            return self._mark_batch_conflict_locked(
+                connection, batch, clean_error, observed
+            )
+
+        return self._write(operation)
+
+    def resolve_transfer_batch_by_evidence(
+        self,
+        request_id: str,
+        outcome: str,
+        observed_stash_sha256: str,
+        evidence: str,
+    ) -> TransferBatchRecord:
+        clean_request_id = _clean_required_request_id(request_id)
+        if outcome not in {"committed", "cancelled"}:
+            raise VaultValidationError("batch evidence outcome is invalid")
+        observed = _clean_sha256(observed_stash_sha256, "observed stash hash")
+        clean_evidence = _clean_optional_text(evidence, "batch evidence")
+        if clean_evidence is None:
+            raise VaultValidationError("batch evidence is required")
+
+        def operation(connection: sqlite3.Connection) -> TransferBatchRecord:
+            batch = connection.execute(
+                "SELECT * FROM transfer_batches WHERE request_id=?",
+                (clean_request_id,),
+            ).fetchone()
+            if batch is None:
+                raise VaultNotFoundError("transfer batch was not found")
+            return self._finish_batch_locked(
+                connection, batch, outcome, observed, evidence=clean_evidence
+            )
+
+        return self._write(operation)
+
+    def reconcile_transfer_batch(
+        self, request_id: str, current_stash_sha256: str
+    ) -> TransferBatchRecord:
+        current = _clean_sha256(current_stash_sha256, "current stash hash")
+        batch = self.get_transfer_batch(request_id)
+        if batch.status in {"committed", "cancelled"}:
+            return batch
+        if current == batch.stash_after_sha256:
+            return self.commit_transfer_batch(request_id, current)
+        if current == batch.stash_before_sha256:
+            return self.cancel_transfer_batch(request_id, current)
+        return self.mark_transfer_batch_conflict(
+            request_id,
+            "current stash matches neither side of the prepared batch",
+            observed_stash_sha256=current,
+        )
 
     def prepare_deposit(
         self,
@@ -1407,6 +2451,8 @@ class InfiniteVault:
             ).fetchone()
             if transfer is None or transfer["direction"] != "deposit":
                 raise VaultNotFoundError("deposit transfer was not found")
+            if transfer["batch_id"] is not None:
+                raise VaultStateError("batch members must be committed through their parent batch")
             if transfer["status"] == "committed":
                 return self._transfer_from_row(transfer)
             if transfer["status"] == "cancelled":
@@ -1460,6 +2506,8 @@ class InfiniteVault:
             ).fetchone()
             if transfer is None or transfer["direction"] != "deposit":
                 raise VaultNotFoundError("deposit transfer was not found")
+            if transfer["batch_id"] is not None:
+                raise VaultStateError("batch members must be cancelled through their parent batch")
             if transfer["status"] == "cancelled":
                 return self._transfer_from_row(transfer)
             if transfer["status"] == "committed":
@@ -1670,7 +2718,8 @@ class InfiniteVault:
             lambda connection: [
                 self._transfer_from_row(row)
                 for row in connection.execute(
-                    """SELECT * FROM transfers WHERE status IN ('prepared', 'conflict')
+                    """SELECT * FROM transfers
+                       WHERE batch_id IS NULL AND status IN ('prepared', 'conflict')
                        ORDER BY created_at, request_id"""
                 ).fetchall()
             ]
@@ -1696,7 +2745,8 @@ class InfiniteVault:
                 self._withdrawal_from_row(row)
                 for row in connection.execute(
                     """SELECT * FROM transfers
-                       WHERE direction='withdrawal' AND status IN ('prepared', 'conflict')
+                       WHERE batch_id IS NULL AND direction='withdrawal'
+                         AND status IN ('prepared', 'conflict')
                        ORDER BY created_at, request_id"""
                 ).fetchall()
             ]
@@ -1717,6 +2767,8 @@ class InfiniteVault:
             ).fetchone()
             if transfer is None:
                 raise VaultNotFoundError("withdrawal was not found")
+            if transfer["batch_id"] is not None:
+                raise VaultStateError("batch members must be committed through their parent batch")
             if transfer["status"] == "committed":
                 return self._withdrawal_from_row(transfer)
             if transfer["status"] == "cancelled":
@@ -1778,6 +2830,8 @@ class InfiniteVault:
             ).fetchone()
             if transfer is None:
                 raise VaultNotFoundError("withdrawal was not found")
+            if transfer["batch_id"] is not None:
+                raise VaultStateError("batch members must be cancelled through their parent batch")
             if transfer["status"] == "cancelled":
                 return self._withdrawal_from_row(transfer)
             if transfer["status"] == "committed":
@@ -1848,6 +2902,8 @@ class InfiniteVault:
             ).fetchone()
             if transfer is None:
                 raise VaultNotFoundError("transfer was not found")
+            if transfer["batch_id"] is not None:
+                raise VaultStateError("batch members must be resolved through their parent batch")
             if transfer["status"] in {"committed", "cancelled"}:
                 raise VaultStateError("a finished transfer cannot be marked conflicted")
             now = _utc_now()
@@ -1900,6 +2956,8 @@ class InfiniteVault:
             ).fetchone()
             if transfer is None:
                 raise VaultNotFoundError("transfer was not found")
+            if transfer["batch_id"] is not None:
+                raise VaultStateError("batch members must be resolved through their parent batch")
             if transfer["status"] in {"committed", "cancelled"}:
                 if transfer["status"] != outcome:
                     raise VaultStateError("finished transfer has the opposite outcome")
@@ -1981,6 +3039,7 @@ class InfiniteVault:
 __all__ = [
     "SCHEMA_VERSION",
     "DEFAULT_COLLECTION_NAME",
+    "MAX_CUSTOM_NAME_LENGTH",
     "CollectionRecord",
     "VaultItemRecord",
     "WithdrawalRecord",
@@ -1993,5 +3052,6 @@ __all__ = [
     "VaultStateError",
     "InfiniteVault",
     "validate_raw_item_json",
+    "validate_item_record_integrity",
     "canonical_request_hash",
 ]

@@ -71,6 +71,9 @@ class _PendingVault:
     def list_pending_transfers(self):
         return [object()]
 
+    def list_pending_transfer_batches(self):
+        return []
+
 
 class HSSRecoveryIntegrationTests(unittest.TestCase):
     def setUp(self):

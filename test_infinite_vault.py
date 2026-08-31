@@ -1,3 +1,4 @@
+import hashlib
 import importlib.util
 import json
 import multiprocessing
@@ -77,6 +78,200 @@ class InfiniteVaultTests(unittest.TestCase):
         self.assertEqual(reopened.raw_item_json, RAW_SWORD)
         self.assertEqual(reopened.decoded_item()["data"]["a"], 123.0)
         self.assertEqual(len(reopened.raw_sha256), 64)
+
+    def test_custom_name_crud_search_audit_and_raw_preservation(self):
+        item = self.vault.deposit(
+            "Vault", RAW_SWORD, label="Night's Edge", source="Shared Stash 1"
+        )
+        original_json = item.raw_item_json
+        original_sha256 = item.raw_sha256
+
+        named = self.vault.set_item_custom_name(item.id, "  Bo\u0301ss Melter  ")
+        self.assertEqual(named.custom_name, "B\u00f3ss Melter")
+        self.assertEqual(named.as_dict()["customName"], "B\u00f3ss Melter")
+        self.assertEqual(named.raw_item_json, original_json)
+        self.assertEqual(named.raw_sha256, original_sha256)
+        self.assertEqual(self.vault.search_items("B\u00d3SS MELTER")[0].id, item.id)
+
+        # Updating replaces the indexed alias; repeating the same value is
+        # idempotent and does not create another audit event.
+        renamed = self.vault.set_item_custom_name(item.id, "Arena Loadout")
+        same = self.vault.set_item_custom_name(item.id, "Arena Loadout")
+        self.assertEqual(same, renamed)
+        self.assertEqual(self.vault.search_items("B\u00f3ss Melter"), [])
+        self.assertEqual(self.vault.search_items("arena loadout")[0].id, item.id)
+
+        reopened = vault_module.InfiniteVault(self.path)
+        persisted = reopened.get_item(item.id)
+        self.assertEqual(persisted.custom_name, "Arena Loadout")
+        self.assertEqual(persisted.raw_item_json, original_json)
+        self.assertEqual(persisted.raw_sha256, original_sha256)
+
+        cleared = reopened.clear_item_custom_name(item.id)
+        self.assertIsNone(cleared.custom_name)
+        self.assertEqual(reopened.search_items("arena loadout"), [])
+        self.assertEqual(reopened.search_items("Night's Edge")[0].id, item.id)
+        self.assertEqual(cleared.raw_item_json, original_json)
+        self.assertEqual(cleared.raw_sha256, original_sha256)
+
+        connection = sqlite3.connect(self.path)
+        try:
+            events = connection.execute(
+                """SELECT details_json FROM events
+                   WHERE event_type='item_custom_name_updated'
+                   ORDER BY id"""
+            ).fetchall()
+        finally:
+            connection.close()
+        self.assertEqual(len(events), 3)
+        self.assertEqual(
+            json.loads(events[0][0]),
+            {"customName": "B\u00f3ss Melter", "previousCustomName": None},
+        )
+        self.assertEqual(
+            json.loads(events[-1][0]),
+            {"customName": None, "previousCustomName": "Arena Loadout"},
+        )
+
+    def test_custom_name_validation_fails_without_mutating_item(self):
+        item = self.vault.deposit("Vault", RAW_HELM)
+        invalid_values = [
+            42,
+            "x" * (vault_module.MAX_CUSTOM_NAME_LENGTH + 1),
+            "hidden\tcontrol",
+            "broken\ud800unicode",
+        ]
+        for value in invalid_values:
+            with self.subTest(value=repr(value)):
+                with self.assertRaises(vault_module.VaultValidationError):
+                    self.vault.set_item_custom_name(item.id, value)
+        unchanged = self.vault.get_item(item.id)
+        self.assertIsNone(unchanged.custom_name)
+        self.assertEqual(unchanged.raw_item_json, RAW_HELM)
+        self.assertEqual(unchanged.raw_sha256, item.raw_sha256)
+
+    def test_custom_name_rejects_every_non_available_item(self):
+        reserved = self.vault.deposit("Vault", RAW_SWORD)
+        self.vault.set_item_custom_name(reserved.id, "Keep Me")
+        withdrawal = self.vault.reserve_withdrawal(reserved.id)
+        for attempted_name in ("Keep Me", "Changed", None):
+            with self.subTest(status="reserved", name=attempted_name):
+                with self.assertRaises(vault_module.VaultStateError):
+                    self.vault.set_item_custom_name(reserved.id, attempted_name)
+        unchanged = self.vault.get_item(reserved.id)
+        self.assertEqual(unchanged.status, "reserved")
+        self.assertEqual(unchanged.custom_name, "Keep Me")
+
+        pending = self.vault.prepare_deposit(
+            "Vault",
+            RAW_HELM,
+            request_id="pending_alias_0123456789",
+            request_hash=vault_module.canonical_request_hash({
+                "direction": "deposit",
+                "source": {"type": "stash", "tab": "stash_tab_1"},
+                "key": "0-0-999-1",
+                "collectionId": 1,
+            }),
+            source_tab="stash_tab_1",
+            source_key="0-0-999-1",
+            stash_before_sha256="a" * 64,
+            stash_after_sha256="b" * 64,
+        )
+        with self.assertRaises(vault_module.VaultStateError):
+            self.vault.set_item_custom_name(pending.item_id, "Too Early")
+        self.assertEqual(
+            self.vault.get_item(pending.item_id).status, "deposit_pending"
+        )
+        self.vault.cancel_withdrawal(withdrawal.token)
+
+    def test_public_item_integrity_validation_rejects_tampered_hash_and_raw(self):
+        item = self.vault.deposit("Vault", RAW_SWORD)
+        self.assertEqual(
+            vault_module.validate_item_record_integrity(item)["data"]["a"], 123.0
+        )
+
+        connection = sqlite3.connect(self.path)
+        try:
+            connection.execute(
+                "UPDATE items SET raw_sha256=? WHERE id=?", ("0" * 64, item.id)
+            )
+            connection.commit()
+        finally:
+            connection.close()
+        tampered_hash = self.vault.get_item(item.id)
+        with self.assertRaises(vault_module.VaultSchemaError):
+            vault_module.validate_item_record_integrity(tampered_hash)
+        with self.assertRaises(vault_module.VaultSchemaError):
+            tampered_hash.decoded_item()
+
+        malformed_raw = '{"data":[]}'
+        connection = sqlite3.connect(self.path)
+        try:
+            connection.execute(
+                "UPDATE items SET raw_json=?, raw_sha256=? WHERE id=?",
+                (
+                    malformed_raw,
+                    hashlib.sha256(malformed_raw.encode("utf-8")).hexdigest(),
+                    item.id,
+                ),
+            )
+            connection.commit()
+        finally:
+            connection.close()
+        with self.assertRaises(vault_module.VaultSchemaError):
+            vault_module.validate_item_record_integrity(self.vault.get_item(item.id))
+
+    def test_v2_database_migrates_with_backup_and_preserves_native_payload(self):
+        legacy_path = self.directory / "legacy.sqlite3"
+        legacy = vault_module.InfiniteVault(legacy_path)
+        item = legacy.deposit(
+            "Vault",
+            RAW_SWORD,
+            source_item_key="0-0-123-3",
+            label="Legacy Blade",
+            source="Shared Stash 2",
+        )
+
+        # Recreate the exact v2 shape: v3 only added this nullable column.
+        connection = sqlite3.connect(legacy_path)
+        try:
+            connection.execute("ALTER TABLE items DROP COLUMN custom_name")
+            connection.execute(
+                "UPDATE schema_meta SET value='2' WHERE key='schema_version'"
+            )
+            connection.execute("PRAGMA user_version = 2")
+            connection.commit()
+        finally:
+            connection.close()
+
+        migrated = vault_module.InfiniteVault(legacy_path)
+        reopened = migrated.get_item(item.id)
+        self.assertEqual(migrated.schema_version, vault_module.SCHEMA_VERSION)
+        self.assertIsNone(reopened.custom_name)
+        self.assertEqual(reopened.raw_item_json, RAW_SWORD)
+        self.assertEqual(reopened.raw_sha256, item.raw_sha256)
+        self.assertEqual(migrated.search_items("Legacy Blade")[0].id, item.id)
+
+        backup_path = Path(str(legacy_path) + ".bak")
+        backup = sqlite3.connect(backup_path)
+        try:
+            self.assertEqual(backup.execute("PRAGMA quick_check").fetchone()[0], "ok")
+            self.assertEqual(backup.execute("PRAGMA user_version").fetchone()[0], 2)
+            columns = {
+                row[1] for row in backup.execute("PRAGMA table_info(items)").fetchall()
+            }
+            backed_up_item = backup.execute(
+                "SELECT raw_json, raw_sha256 FROM items WHERE id=?", (item.id,)
+            ).fetchone()
+        finally:
+            backup.close()
+        self.assertNotIn("custom_name", columns)
+        self.assertEqual(backed_up_item, (RAW_SWORD, item.raw_sha256))
+
+        named = migrated.set_item_custom_name(item.id, "Migrated Favorite")
+        self.assertEqual(named.custom_name, "Migrated Favorite")
+        self.assertEqual(named.raw_item_json, RAW_SWORD)
+        self.assertEqual(named.raw_sha256, item.raw_sha256)
 
     def test_special_item_without_base_identity_is_preserved_opaquely(self):
         raw = '{"pos":[0,0],"data":{"a":123,"future":{"kind":"special"}}}'
@@ -548,6 +743,227 @@ class InfiniteVaultTests(unittest.TestCase):
             )
         finally:
             connection.close()
+
+    def test_bulk_deposit_is_one_hidden_idempotent_parent_transaction(self):
+        entries = [
+            {
+                "raw_item_json": RAW_SWORD,
+                "source_tab": "stash_tab_1",
+                "source_key": "0-0-100-3",
+                "label": "Sword",
+                "source": "stash_tab_1",
+            },
+            {
+                "raw_item_json": RAW_HELM,
+                "source_tab": "unique_items",
+                "source_key": "0-0-101-0",
+                "label": "Helm",
+                "source": "unique_items",
+            },
+        ]
+        intent = vault_module.canonical_request_hash({
+            "direction": "bulk_deposit",
+            "collectionId": 1,
+            "items": [
+                {
+                    "sourceTab": row["source_tab"],
+                    "sourceKey": row["source_key"],
+                    "rawSha256": __import__("hashlib").sha256(
+                        row["raw_item_json"].encode("utf-8")
+                    ).hexdigest(),
+                }
+                for row in entries
+            ],
+        })
+        batch = self.vault.prepare_bulk_deposit(
+            1, entries, request_id="bulk_deposit_parent_012345",
+            request_hash=intent, stash_before_sha256="1" * 64,
+            stash_after_sha256="2" * 64,
+        )
+        self.assertEqual(batch.status, "prepared")
+        self.assertEqual(batch.item_count, 2)
+        self.assertEqual(self.vault.count_items(status="available"), 0)
+        self.assertEqual(self.vault.count_items(status="deposit_pending"), 2)
+        self.assertEqual(self.vault.list_pending_transfers(), [])
+        self.assertEqual(len(self.vault.list_pending_transfer_batches()), 1)
+        members = self.vault.list_transfer_batch_members(batch.request_id)
+        with self.assertRaises(vault_module.VaultStateError):
+            self.vault.commit_deposit(members[0].request_id, "2" * 64)
+
+        retry = self.vault.prepare_bulk_deposit(
+            1, entries, request_id=batch.request_id, request_hash=intent,
+            stash_before_sha256="1" * 64, stash_after_sha256="2" * 64,
+        )
+        self.assertEqual(retry, batch)
+        committed = self.vault.commit_transfer_batch(batch.request_id, "2" * 64)
+        self.assertEqual(committed.status, "committed")
+        self.assertEqual(self.vault.count_items(status="available"), 2)
+        self.assertEqual(self.vault.list_pending_transfer_batches(), [])
+        self.assertEqual(
+            self.vault.commit_transfer_batch(batch.request_id, "2" * 64), committed
+        )
+
+    def test_bulk_withdrawal_requires_and_removes_complete_available_snapshot(self):
+        rows = [
+            self.vault.deposit(
+                "Vault", json.dumps({"data": {"a": index, "b": index + 1}}),
+                source_item_key=f"0-0-{index}-3",
+            )
+            for index in range(3)
+        ]
+        targets = [
+            {
+                "item_id": row.id,
+                "raw_sha256": row.raw_sha256,
+                "metadata_sha256": vault_module.canonical_request_hash({
+                    "id": row.id,
+                    "collectionId": row.collection_id,
+                    "collectionName": row.collection_name,
+                    "sourceItemKey": row.source_item_key,
+                    "label": row.label,
+                    "customName": row.custom_name,
+                    "source": row.source,
+                    "depositKey": row.deposit_key,
+                    "createdAt": row.created_at,
+                    "updatedAt": row.updated_at,
+                }),
+                "target_tab": "stash_tab_1",
+                "target_key": f"0-0-{100 + index}-3",
+                "target_pos": [index, 0],
+            }
+            for index, row in enumerate(rows)
+        ]
+
+        def intent(values):
+            return vault_module.canonical_request_hash({
+                "direction": "bulk_withdrawal",
+                "items": [
+                    {
+                        "itemId": row["item_id"],
+                        "rawSha256": row["raw_sha256"],
+                        "metadataSha256": row["metadata_sha256"],
+                        "targetTab": row["target_tab"],
+                        "targetKey": row["target_key"],
+                        "targetPos": row["target_pos"],
+                    }
+                    for row in values
+                ],
+            })
+
+        with self.assertRaises(vault_module.VaultConflictError):
+            self.vault.prepare_bulk_withdrawal(
+                targets[:-1], request_id="bulk_incomplete_01234567",
+                request_hash=intent(targets[:-1]), stash_before_sha256="3" * 64,
+                stash_after_sha256="4" * 64,
+            )
+        self.assertEqual(self.vault.count_items(status="available"), 3)
+        batch = self.vault.prepare_bulk_withdrawal(
+            targets, request_id="bulk_withdraw_parent_012345",
+            request_hash=intent(targets), stash_before_sha256="3" * 64,
+            stash_after_sha256="4" * 64,
+        )
+        self.assertEqual(self.vault.count_items(status="reserved"), 3)
+        self.assertEqual(len(set(
+            member.request_id
+            for member in self.vault.list_transfer_batch_members(batch.request_id)
+        )), 3)
+        committed = self.vault.reconcile_transfer_batch(batch.request_id, "4" * 64)
+        self.assertEqual(committed.status, "committed")
+        self.assertEqual(self.vault.count_items(status="all"), 0)
+        self.assertEqual(len(self.vault.list_transfer_batch_members(batch.request_id)), 3)
+
+    def test_bulk_withdrawal_revalidates_raw_integrity_inside_reservation(self):
+        item = self.vault.deposit(
+            "Vault", RAW_SWORD, source_item_key="0-0-123-3"
+        )
+        metadata_sha256 = vault_module.canonical_request_hash({
+            "id": item.id,
+            "collectionId": item.collection_id,
+            "collectionName": item.collection_name,
+            "sourceItemKey": item.source_item_key,
+            "label": item.label,
+            "customName": item.custom_name,
+            "source": item.source,
+            "depositKey": item.deposit_key,
+            "createdAt": item.created_at,
+            "updatedAt": item.updated_at,
+        })
+        target = {
+            "item_id": item.id,
+            "raw_sha256": item.raw_sha256,
+            "metadata_sha256": metadata_sha256,
+            "target_tab": "stash_tab_1",
+            "target_key": "0-0-123-3",
+            "target_pos": [0, 0],
+        }
+        request_hash = vault_module.canonical_request_hash({
+            "direction": "bulk_withdrawal",
+            "items": [{
+                "itemId": target["item_id"],
+                "rawSha256": target["raw_sha256"],
+                "metadataSha256": target["metadata_sha256"],
+                "targetTab": target["target_tab"],
+                "targetKey": target["target_key"],
+                "targetPos": target["target_pos"],
+            }],
+        })
+
+        # Simulate corruption after a caller built its preview but before the
+        # reservation transaction. The stale stored digest still matches the
+        # caller's target, so only recomputing the payload catches this change.
+        connection = sqlite3.connect(self.path)
+        try:
+            connection.execute(
+                "UPDATE items SET raw_json=? WHERE id=?", (RAW_HELM, item.id)
+            )
+            connection.commit()
+        finally:
+            connection.close()
+
+        with self.assertRaises(vault_module.VaultSchemaError):
+            self.vault.prepare_bulk_withdrawal(
+                [target],
+                request_id="bulk_raw_recheck_01234567",
+                request_hash=request_hash,
+                stash_before_sha256="7" * 64,
+                stash_after_sha256="8" * 64,
+            )
+        self.assertEqual(self.vault.count_items(status="available"), 1)
+        self.assertEqual(self.vault.list_pending_transfer_batches(), [])
+
+    def test_bulk_hash_conflict_retains_every_pending_or_reserved_item(self):
+        entry = {
+            "raw_item_json": RAW_SWORD,
+            "source_tab": "stash_tab_1",
+            "source_key": "0-0-777-3",
+            "label": "Sword",
+            "source": "stash_tab_1",
+        }
+        intent = vault_module.canonical_request_hash({
+            "direction": "bulk_deposit", "collectionId": 1,
+            "items": [{
+                "sourceTab": entry["source_tab"],
+                "sourceKey": entry["source_key"],
+                "rawSha256": __import__("hashlib").sha256(
+                    entry["raw_item_json"].encode("utf-8")
+                ).hexdigest(),
+            }],
+        })
+        batch = self.vault.prepare_bulk_deposit(
+            1, [entry], request_id="bulk_conflict_parent_012345",
+            request_hash=intent, stash_before_sha256="5" * 64,
+            stash_after_sha256="6" * 64,
+        )
+        conflicted = self.vault.reconcile_transfer_batch(batch.request_id, "7" * 64)
+        self.assertEqual(conflicted.status, "conflict")
+        self.assertEqual(self.vault.count_items(status="deposit_pending"), 1)
+        self.assertEqual(len(self.vault.list_pending_transfer_batches()), 1)
+        cancelled = self.vault.resolve_transfer_batch_by_evidence(
+            batch.request_id, "cancelled", "7" * 64,
+            "source item was verified in Shared Stash",
+        )
+        self.assertEqual(cancelled.status, "cancelled")
+        self.assertEqual(self.vault.count_items(status="all"), 0)
 
 
 if __name__ == "__main__":

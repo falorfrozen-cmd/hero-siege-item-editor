@@ -160,6 +160,67 @@ class HttpBoundaryTests(unittest.TestCase):
     def test_embedded_client_marks_every_post_as_local_json(self):
         self.assertIn("'Content-Type':'application/json'", editor.HTML)
         self.assertIn("'X-Hero-Siege-Item-Editor':'1'", editor.HTML)
+        self.assertIn("/api/stash/fill", editor.HTML)
+        self.assertIn("data-fill-stash", editor.HTML)
+        self.assertIn("STASH_FILL_IDENTITY_TARGETS", editor.HTML)
+        self.assertIn('"unique:10:0:23":1', editor.HTML)
+        self.assertIn(
+            "body.identityTargetIds=STASH_FILL_IDENTITY_TARGETS",
+            editor.HTML,
+        )
+        self.assertIn("params.set('sourceTab',source.value)", editor.HTML)
+        self.assertIn("body.sourceTab=preview.sourceTab||'all'", editor.HTML)
+        self.assertIn("params.set('destinationTab',destinationTab.value)", editor.HTML)
+        self.assertIn("body.destinationTab=preview.destinationTab||'auto'", editor.HTML)
+
+    def test_bulk_source_tab_whitelist_is_enforced_at_http_boundary(self):
+        status, preview = self.request(
+            "GET",
+            "/api/vault/bulk-preview?direction=stash-to-vault&collectionId=1&sourceTab=stash_tab_20",
+        )
+        self.assertEqual(status, 200)
+        self.assertIn("sourceTab", preview.get("err", ""))
+
+        body = json.dumps({
+            "direction": "stash-to-vault",
+            "collectionId": 1,
+            "sourceTab": "../stash_tab_1",
+            "requestId": "http_invalid_bulk_source_012345",
+            "previewToken": "0" * 64,
+        }).encode()
+        with patch.object(editor, "game_running", return_value=False):
+            status, result = self.request(
+                "POST", "/api/vault/bulk", body,
+                content_type="application/json",
+                origin=f"http://127.0.0.1:{self.port}",
+            )
+        self.assertEqual(status, 200)
+        self.assertIn("sourceTab", result.get("err", ""))
+        self.assertFalse(self.db_path.exists())
+
+    def test_bulk_destination_tab_whitelist_is_enforced_at_http_boundary(self):
+        status, preview = self.request(
+            "GET",
+            "/api/vault/bulk-preview?direction=vault-to-stash&destinationTab=stash_tab_20",
+        )
+        self.assertEqual(status, 200)
+        self.assertIn("destinationTab", preview.get("err", ""))
+
+        body = json.dumps({
+            "direction": "vault-to-stash",
+            "destinationTab": "../stash_tab_1",
+            "requestId": "http_invalid_bulk_target_012345",
+            "previewToken": "0" * 64,
+        }).encode()
+        with patch.object(editor, "game_running", return_value=False):
+            status, result = self.request(
+                "POST", "/api/vault/bulk", body,
+                content_type="application/json",
+                origin=f"http://127.0.0.1:{self.port}",
+            )
+        self.assertEqual(status, 200)
+        self.assertIn("destinationTab", result.get("err", ""))
+        self.assertFalse(self.db_path.exists())
 
     def test_html_cannot_be_framed_and_responses_disable_sniffing(self):
         connection = http.client.HTTPConnection("127.0.0.1", self.port, timeout=3)

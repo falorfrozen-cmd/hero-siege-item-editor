@@ -173,6 +173,27 @@ def valid_document():
 
 
 class RollProfileDatabaseTests(unittest.TestCase):
+    def test_runtime_build_compatibility_is_exact_hash_bound_and_audited(self):
+        self.assertTrue(
+            roll_db.supports_executable_sha256(roll_db.EXPECTED_EXE_SHA256)
+        )
+        self.assertTrue(
+            roll_db.supports_executable_sha256(
+                roll_db.SEASON_10_706_EXE_SHA256.lower()
+            )
+        )
+        self.assertFalse(roll_db.supports_executable_sha256("0" * 64))
+        self.assertFalse(roll_db.supports_executable_sha256(None))
+
+        proof = roll_db.ROLL_BUILD_EQUIVALENCE_PROOFS[
+            roll_db.SEASON_10_706_EXE_SHA256
+        ]
+        self.assertEqual(proof["sourceExeSha256"], roll_db.EXPECTED_EXE_SHA256)
+        self.assertEqual(proof["definitionProfileCount"], 1_444)
+        self.assertEqual(proof["generatedPoolProfileCount"], 21)
+        self.assertEqual(proof["generatedPoolActiveSlotCount"], 43)
+        self.assertEqual(proof["runtimeProfileCount"], 5_059)
+
     def test_runtime_game_build_mismatch_hides_all_profiles(self):
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "profiles.json"
@@ -211,6 +232,10 @@ class RollProfileDatabaseTests(unittest.TestCase):
             "best": 1, "exact": 1, "fixed": 1,
         })
         self.assertEqual(database.summary()["profileCount"], 3)
+        self.assertEqual(
+            set(database.summary()["supportedRuntimeExeSha256"]),
+            set(roll_db.SUPPORTED_RUNTIME_EXE_SHA256),
+        )
         self.assertEqual(database.lookup("unique", 1, 0, 52)["mode"], "exact")
         runeword = database.lookup_runeword(7, 3, 3, 18)
         self.assertEqual(runeword["mode"], "best")

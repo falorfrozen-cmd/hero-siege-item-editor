@@ -22,11 +22,12 @@ import base64
 import hashlib
 import importlib.util
 import json
+import sqlite3
 import sys
 import tempfile
 import threading
 import unittest
-from contextlib import contextmanager
+from contextlib import closing, contextmanager
 from http.server import ThreadingHTTPServer
 from pathlib import Path
 from unittest.mock import patch
@@ -192,6 +193,21 @@ class InfiniteVaultIntegrationTests(unittest.TestCase):
         items = self._vault().list_items(status="all")
         self.assertEqual(len(items), 1)
         return items[0]
+
+    def _full_bulk_stash(self) -> dict:
+        stash = self._read_stash()
+        stash.setdefault("material_tab", {})
+        stash.setdefault("socket_tab", {})
+        stash.setdefault("unique_items", {})
+        for index in range(1, 20):
+            stash.setdefault(f"stash_tab_{index}", {})
+        stash["stash_reset"] = 0.0
+        stash["stash_tab_data"] = {
+            "NH": [], "LocalNH": [], "SH": [], "BP": [],
+            "LocalNS": [{"tab": -5.0, "name": "Unique"}],
+            "SS": [], "NS": [], "Odyssey": [],
+        }
+        return stash
 
     @contextmanager
     def _http_server(self):
@@ -863,6 +879,1339 @@ class InfiniteVaultIntegrationTests(unittest.TestCase):
         self.assertEqual(
             json.loads(self._single_vault_item().raw_item_json), self.original_entry
         )
+
+    def test_vault_payload_is_compact_and_uses_semantic_tooltip_fingerprint(self):
+        self._assert_ok(self._deposit())
+        stored = self._single_vault_item()
+        build_status = {
+            "matched": True,
+            "code": "matched",
+            "message": "Verified test build.",
+            "expectedSha256": editor.EXPECTED_GAME_EXE_SHA256,
+            "detectedSha256": editor.EXPECTED_GAME_EXE_SHA256,
+        }
+        named = self._vault().set_item_custom_name(stored.id, "Boss <Melter>")
+        payload = editor._vault_item_payload(named, build_status)
+
+        self.assertEqual(payload["customName"], "Boss <Melter>")
+        self.assertEqual(payload["gameTooltip"]["item"]["customName"], "Boss <Melter>")
+        self.assertEqual(payload["fingerprint"], payload["gameTooltip"]["fingerprint"])
+        self.assertRegex(payload["fingerprint"], r"^[0-9A-F]{16}$")
+        self.assertNotIn("raw", payload)
+        self.assertNotIn("rollProfile", payload)
+        self.assertNotIn("skillSelector", payload)
+        serialized = json.dumps(payload, ensure_ascii=False)
+        self.assertNotIn("unknown_future_field", serialized)
+        self.assertNotIn("do_not_drop", serialized)
+
+        moved_entry = json.loads(json.dumps(self.original_entry))
+        moved_entry["pos"] = [12.0, 15.0]
+        second = self._vault().deposit(
+            "Vault",
+            json.dumps(moved_entry, separators=(",", ":")),
+            source_item_key=SOURCE_KEY,
+            label="Loaded Dice",
+        )
+        second_payload = editor._vault_item_payload(second, build_status)
+        self.assertNotEqual(stored.raw_sha256, second.raw_sha256)
+        self.assertEqual(payload["fingerprint"], second_payload["fingerprint"])
+
+    def test_custom_name_api_updates_and_clears_metadata_without_touching_native_item(self):
+        self._assert_ok(self._deposit())
+        stored = self._single_vault_item()
+        raw_before = stored.raw_item_json
+        sha_before = stored.raw_sha256
+        build_status = {
+            "matched": False,
+            "code": "test_unverified",
+            "message": "Test build intentionally unverified.",
+            "expectedSha256": editor.EXPECTED_GAME_EXE_SHA256,
+        }
+        with patch.object(editor.GAME_BUILD_GUARD, "summary", return_value=build_status):
+            named = editor.op_vault_item({
+                "action": "setCustomName",
+                "itemId": stored.id,
+                "customName": "<img src=x onerror=alert(1)>",
+            })
+            self._assert_ok(named)
+            self.assertEqual(
+                named["item"]["customName"], "<img src=x onerror=alert(1)>"
+            )
+            cleared = editor.op_vault_item({
+                "action": "setCustomName",
+                "itemId": stored.id,
+                "customName": "   ",
+            })
+            self._assert_ok(cleared)
+            self.assertIsNone(cleared["item"]["customName"])
+
+        final = self._vault().get_item(stored.id)
+        self.assertEqual(final.raw_item_json, raw_before)
+        self.assertEqual(final.raw_sha256, sha_before)
+
+    def test_tooltip_identity_is_enriched_with_the_verified_subskill_name(self):
+        # Load the immutable proven-build assets without consulting the locally
+        # installed executable.  The developer machine may already be on a
+        # newer patch, while this unit test deliberately exercises the old
+        # verified model with an explicit matched build attestation below.
+        proven_rolls = editor.load_roll_profile_database(editor.BASE)
+        proven_dice = editor.load_dice_skill_database(editor.BASE)
+        item = editor.resolve(
+            "0-0-1700000000100-10",
+            {"c": 1.0, "b": 89.0, "j": 0.0, "a": 123456789.0},
+        )
+        item["rollProfile"] = proven_rolls.lookup("unique", 10, 0, 89)
+        item["skillSelector"] = proven_dice.selector(
+            "unique:10:0:89", item["raw"]["a"]
+        )
+        model = editor._game_tooltip_model(item, build_status={
+            "matched": True,
+            "code": "matched",
+            "message": "Verified test build.",
+            "expectedSha256": editor.EXPECTED_GAME_EXE_SHA256,
+            "detectedSha256": editor.EXPECTED_GAME_EXE_SHA256,
+        })
+        self.assertEqual(model["item"]["canonicalName"], "Overloaded Dice")
+        self.assertEqual(len(model["identities"]), 1)
+        self.assertEqual(model["identities"][0]["selectedIdentity"], 56)
+        self.assertEqual(model["identities"][0]["selectedName"], "Pirate: Buckshot")
+
+    def test_embedded_ui_has_safe_shared_tooltip_compare_and_custom_name_controls(self):
+        html = editor.HTML
+        for marker in (
+            "function renderGameTooltip(model,options={})",
+            "function tooltipDifferenceKeys(left,right)",
+            "const vaultCompareItems=new Map()",
+            "function openVaultCompare()",
+            "async function editVaultCustomName(row)",
+            "data-vault-compare",
+            "data-vault-name",
+            "registerPreviewModel(row.gameTooltip)",
+            "Array.isArray(model.identities)",
+            "Max endpoints",
+            "formattedValue:'—'",
+            "function tooltipComparisonLayout(left,right)",
+        ):
+            self.assertIn(marker, html)
+        self.assertIn(
+            "e.target.closest('button,input,select,textarea')", html
+        )
+        self.assertIn("esc(row.customName)", html)
+        custom_name_ui = html.split(
+            "async function editVaultCustomName(row){", 1
+        )[1].split("async function withdrawVaultItem", 1)[0]
+        self.assertNotIn("prompt(", custom_name_ui)
+        self.assertIn('maxlength="128"', custom_name_ui)
+        self.assertIn("Vault Custom Name", custom_name_ui)
+        self.assertIn("SAVE", custom_name_ui)
+        self.assertIn("CLEAR", custom_name_ui)
+        vault_renderer = html.split("function renderVaultItems(payload){", 1)[1]
+        vault_renderer = vault_renderer.split("async function withdrawVaultItem", 1)[0]
+        self.assertNotIn("data-raw", vault_renderer)
+        self.assertNotIn("data-roll", vault_renderer)
+        self.assertNotIn("data-skill", vault_renderer)
+
+    def test_frozen_build_bundles_exact_tooltip_module_and_model(self):
+        spec_text = (MODULE_DIR / "HeroSiegeItemEditor.spec").read_text(encoding="utf-8")
+        self.assertIn('"hs_tooltip_roll_models.json"', spec_text)
+        self.assertIn('"exact_tooltip"', spec_text)
+
+    def test_bulk_complete_stash_round_trip_is_exact_including_unique_duplicates_and_metadata(self):
+        stash = self._full_bulk_stash()
+        duplicate = json.loads(json.dumps(self.original_entry))
+        duplicate["pos"] = [8.0, 7.0]
+        stash["stash_tab_2"][SOURCE_KEY] = duplicate
+        unique = json.loads(json.dumps(self.original_entry))
+        unique.pop("pos", None)
+        stash["unique_items"]["0-0-1700000000101-10"] = unique
+        stash["material_tab"]["0-0-1700000000102-14"] = {
+            "pos": [0.0, 0.0],
+            "data": {"a": 123.0, "j": 0.0, "b": 71.0, "c": 0.0, "o": 37.0},
+        }
+        stash["socket_tab"]["0-0-1700000000103-15"] = {
+            "pos": [0.0, 0.0],
+            "data": {"a": 124.0, "j": 0.0, "b": 136.0, "c": 0.0, "o": 8.0},
+        }
+        original = json.loads(json.dumps(stash))
+        self._write_stash(stash)
+
+        preview = editor.vault_bulk_preview({
+            "direction": ["stash-to-vault"], "collectionId": ["1"],
+        })
+        self.assertNotIn("err", preview, preview.get("err"))
+        self.assertEqual(preview["itemCount"], 5)
+        explicit_all_preview = editor.vault_bulk_preview({
+            "direction": ["stash-to-vault"], "collectionId": ["1"],
+            "sourceTab": ["all"],
+        })
+        self.assertEqual(explicit_all_preview["previewToken"], preview["previewToken"])
+        deposited = editor.op_vault_bulk({
+            "direction": "stash-to-vault", "collectionId": 1,
+            "sourceTab": "all",
+            "requestId": "bulk_full_deposit_0123456789",
+            "previewToken": preview["previewToken"],
+        })
+        self._assert_ok(deposited)
+        self.assertEqual(deposited["movedCount"], 5)
+        emptied = self._read_stash()
+        self.assertTrue(all(not emptied[tab] for tab in editor.BULK_STASH_ITEM_TABS))
+        self.assertEqual(emptied["stash_tab_data"], original["stash_tab_data"])
+        self.assertEqual(self._vault().count_items(status="available"), 5)
+
+        before_retry = self.stash_path.read_bytes()
+        retry = editor.op_vault_bulk({
+            "direction": "stash-to-vault", "collectionId": 1,
+            "requestId": "bulk_full_deposit_0123456789",
+            "previewToken": preview["previewToken"],
+        })
+        self._assert_ok(retry)
+        self.assertEqual(self.stash_path.read_bytes(), before_retry)
+        self.assertEqual(self._vault().count_items(status="available"), 5)
+
+        return_preview = editor.vault_bulk_preview({
+            "direction": ["vault-to-stash"],
+        })
+        self.assertEqual(return_preview["itemCount"], 5)
+        returned = editor.op_vault_bulk({
+            "direction": "vault-to-stash",
+            "requestId": "bulk_full_withdraw_012345678",
+            "previewToken": return_preview["previewToken"],
+        })
+        self._assert_ok(returned)
+        self.assertEqual(self._read_stash(), original)
+        self.assertEqual(self._vault().count_items(status="all"), 0)
+
+    def test_bulk_selected_numbered_tab_moves_only_that_tab_and_retries_exactly(self):
+        stash = self._full_bulk_stash()
+        selected_key = "0-0-1700000000200-10"
+        selected_entry = json.loads(json.dumps(self.original_entry))
+        selected_entry["pos"] = [11.0, 8.0]
+        selected_entry["data"]["a"] = 987001.0
+        stash["stash_tab_2"][selected_key] = selected_entry
+        stash["material_tab"]["0-0-1700000000201-14"] = {
+            "pos": [0.0, 0.0],
+            "data": {"a": 987002.0, "j": 0.0, "b": 71.0, "c": 0.0, "o": 37.0},
+        }
+        original = json.loads(json.dumps(stash))
+        self._write_stash(stash)
+
+        preview = editor.vault_bulk_preview({
+            "direction": ["stash-to-vault"],
+            "collectionId": ["1"],
+            "sourceTab": ["stash_tab_2"],
+        })
+        self.assertNotIn("err", preview, preview.get("err"))
+        self.assertEqual(preview["sourceTab"], "stash_tab_2")
+        self.assertEqual(preview["sourceLabel"], "Shared Stash Tab 2")
+        self.assertEqual(preview["itemCount"], 1)
+        self.assertEqual(
+            preview["tabCounts"],
+            [{"tab": "stash_tab_2", "label": "Shared Stash Tab 2", "count": 1}],
+        )
+
+        request = {
+            "direction": "stash-to-vault",
+            "collectionId": 1,
+            "sourceTab": "stash_tab_2",
+            "requestId": "bulk_selected_tab_2_012345678",
+            "previewToken": preview["previewToken"],
+        }
+        result = editor.op_vault_bulk(request)
+        self._assert_ok(result)
+        self.assertEqual(result["movedCount"], 1)
+        after = self._read_stash()
+        self.assertEqual(after["stash_tab_2"], {})
+        for tab in editor.BULK_STASH_ITEM_TABS:
+            if tab != "stash_tab_2":
+                self.assertEqual(after[tab], original[tab], tab)
+        self.assertEqual(after["stash_tab_data"], original["stash_tab_data"])
+        stored = self._vault().list_items(status="available")
+        self.assertEqual(len(stored), 1)
+        self.assertEqual(stored[0].source, "stash_tab_2")
+        self.assertEqual(stored[0].source_item_key, selected_key)
+
+        bytes_after = self.stash_path.read_bytes()
+        backups_after = set(self.saves.glob("stash.hss.guibak_*"))
+        retry = editor.op_vault_bulk(request)
+        self._assert_ok(retry)
+        self.assertEqual(self.stash_path.read_bytes(), bytes_after)
+        self.assertEqual(set(self.saves.glob("stash.hss.guibak_*")), backups_after)
+        self.assertEqual(self._vault().count_items(status="available"), 1)
+
+        other_preview = editor.vault_bulk_preview({
+            "direction": ["stash-to-vault"],
+            "collectionId": ["1"],
+            "sourceTab": ["stash_tab_1"],
+        })
+        reused_elsewhere = editor.op_vault_bulk({
+            "direction": "stash-to-vault",
+            "collectionId": 1,
+            "sourceTab": "stash_tab_1",
+            "requestId": request["requestId"],
+            "previewToken": other_preview["previewToken"],
+        })
+        self.assertEqual(reused_elsewhere.get("code"), "preview_stale")
+        self.assertEqual(self._read_stash()["stash_tab_1"], original["stash_tab_1"])
+        self.assertEqual(self._vault().count_items(status="available"), 1)
+
+        return_preview = editor.vault_bulk_preview({
+            "direction": ["vault-to-stash"],
+        })
+        returned = editor.op_vault_bulk({
+            "direction": "vault-to-stash",
+            "requestId": "bulk_selected_return_012345678",
+            "previewToken": return_preview["previewToken"],
+        })
+        self._assert_ok(returned)
+        self.assertEqual(self._read_stash(), original)
+        self.assertEqual(self._vault().count_items(status="all"), 0)
+
+    def test_bulk_selected_special_tabs_are_independent_sources(self):
+        stash = self._full_bulk_stash()
+        stash["material_tab"]["0-0-1700000000300-14"] = {
+            "pos": [0.0, 0.0],
+            "data": {"a": 988001.0, "j": 0.0, "b": 71.0, "c": 0.0, "o": 37.0},
+        }
+        stash["socket_tab"]["0-0-1700000000301-15"] = {
+            "pos": [0.0, 0.0],
+            "data": {"a": 988002.0, "j": 0.0, "b": 136.0, "c": 0.0, "o": 8.0},
+        }
+        unique = json.loads(json.dumps(self.original_entry))
+        unique.pop("pos", None)
+        unique["data"]["a"] = 988003.0
+        stash["unique_items"]["0-0-1700000000302-10"] = unique
+        metadata = json.loads(json.dumps(stash["stash_tab_data"]))
+        numbered = json.loads(json.dumps(stash["stash_tab_1"]))
+        self._write_stash(stash)
+
+        for index, (tab, label) in enumerate((
+            ("material_tab", "Material Tab"),
+            ("socket_tab", "Socket Tab"),
+            ("unique_items", "Unique Tab"),
+        )):
+            with self.subTest(tab=tab):
+                preview = editor.vault_bulk_preview({
+                    "direction": ["stash-to-vault"],
+                    "collectionId": ["1"],
+                    "sourceTab": [tab],
+                })
+                self.assertNotIn("err", preview, preview.get("err"))
+                self.assertEqual(preview["sourceLabel"], label)
+                self.assertEqual(preview["itemCount"], 1)
+                moved = editor.op_vault_bulk({
+                    "direction": "stash-to-vault",
+                    "collectionId": 1,
+                    "sourceTab": tab,
+                    "requestId": f"bulk_special_{index}_012345678901",
+                    "previewToken": preview["previewToken"],
+                })
+                self._assert_ok(moved)
+                self.assertEqual(self._read_stash()[tab], {})
+                self.assertEqual(self._read_stash()["stash_tab_1"], numbered)
+                self.assertEqual(self._read_stash()["stash_tab_data"], metadata)
+
+        self.assertEqual(self._vault().count_items(status="available"), 3)
+
+    def test_bulk_empty_selected_tab_is_noop_even_when_other_tabs_have_items(self):
+        stash = self._full_bulk_stash()
+        original = json.loads(json.dumps(stash))
+        self._write_stash(stash)
+        preview = editor.vault_bulk_preview({
+            "direction": ["stash-to-vault"],
+            "collectionId": ["1"],
+            "sourceTab": ["stash_tab_2"],
+        })
+        self.assertTrue(preview["empty"])
+        self.assertFalse(preview["canRun"])
+        self.assertEqual(preview["itemCount"], 0)
+        backups_before = set(self.saves.glob("stash.hss.guibak_*"))
+
+        result = editor.op_vault_bulk({
+            "direction": "stash-to-vault",
+            "collectionId": 1,
+            "sourceTab": "stash_tab_2",
+            "requestId": "bulk_empty_selected_012345678",
+            "previewToken": preview["previewToken"],
+        })
+        self._assert_ok(result)
+        self.assertEqual(result["code"], "empty")
+        self.assertEqual(result["movedCount"], 0)
+        self.assertEqual(self._read_stash(), original)
+        self.assertEqual(set(self.saves.glob("stash.hss.guibak_*")), backups_before)
+        self.assertEqual(self._vault().count_items(status="all"), 0)
+
+    def test_bulk_source_tab_is_strictly_validated_and_preview_bound(self):
+        stash = self._full_bulk_stash()
+        second = json.loads(json.dumps(self.original_entry))
+        second["pos"] = [8.0, 8.0]
+        second["data"]["a"] = 989001.0
+        stash["stash_tab_2"]["0-0-1700000000400-10"] = second
+        self._write_stash(stash)
+        before = self.stash_path.read_bytes()
+        backups_before = set(self.saves.glob("stash.hss.guibak_*"))
+
+        invalid_preview = editor.vault_bulk_preview({
+            "direction": ["stash-to-vault"],
+            "collectionId": ["1"],
+            "sourceTab": ["stash_tab_20"],
+        })
+        self.assertIn("err", invalid_preview)
+        invalid_return_scope = editor.vault_bulk_preview({
+            "direction": ["vault-to-stash"],
+            "sourceTab": ["stash_tab_1"],
+        })
+        self.assertIn("err", invalid_return_scope)
+        invalid_post = editor.op_vault_bulk({
+            "direction": "stash-to-vault",
+            "collectionId": 1,
+            "sourceTab": "../stash_tab_1",
+            "requestId": "bulk_invalid_source_012345678",
+            "previewToken": "0" * 64,
+        })
+        self.assertIn("err", invalid_post)
+
+        preview_tab_1 = editor.vault_bulk_preview({
+            "direction": ["stash-to-vault"],
+            "collectionId": ["1"],
+            "sourceTab": ["stash_tab_1"],
+        })
+        mismatched = editor.op_vault_bulk({
+            "direction": "stash-to-vault",
+            "collectionId": 1,
+            "sourceTab": "stash_tab_2",
+            "requestId": "bulk_mismatched_source_0123456",
+            "previewToken": preview_tab_1["previewToken"],
+        })
+        self.assertEqual(mismatched.get("code"), "preview_stale")
+        self.assertEqual(self.stash_path.read_bytes(), before)
+        self.assertEqual(set(self.saves.glob("stash.hss.guibak_*")), backups_before)
+        self.assertEqual(self._vault().count_items(status="all"), 0)
+
+    def test_bulk_selected_preview_expires_when_an_unselected_tab_changes(self):
+        stash = self._full_bulk_stash()
+        selected = json.loads(json.dumps(self.original_entry))
+        selected["pos"] = [9.0, 9.0]
+        stash["stash_tab_2"]["0-0-1700000000500-10"] = selected
+        self._write_stash(stash)
+        preview = editor.vault_bulk_preview({
+            "direction": ["stash-to-vault"],
+            "collectionId": ["1"],
+            "sourceTab": ["stash_tab_2"],
+        })
+        changed = self._read_stash()
+        changed["stash_tab_1"][SOURCE_KEY]["data"]["a"] += 1.0
+        self._write_stash(changed)
+        before = self.stash_path.read_bytes()
+
+        result = editor.op_vault_bulk({
+            "direction": "stash-to-vault",
+            "collectionId": 1,
+            "sourceTab": "stash_tab_2",
+            "requestId": "bulk_unselected_stale_01234567",
+            "previewToken": preview["previewToken"],
+        })
+        self.assertEqual(result.get("code"), "preview_stale")
+        self.assertEqual(self.stash_path.read_bytes(), before)
+        self.assertEqual(self._vault().count_items(status="all"), 0)
+
+    def test_bulk_preview_token_rejects_stale_stash_without_backup_or_vault_mutation(self):
+        stash = self._full_bulk_stash()
+        for tab in editor.BULK_STASH_ITEM_TABS:
+            stash[tab] = {}
+        self._write_stash(stash)
+        preview = editor.vault_bulk_preview({
+            "direction": ["stash-to-vault"], "collectionId": ["1"],
+        })
+        self.assertTrue(preview["empty"])
+
+        changed = self._read_stash()
+        changed["stash_tab_1"][SOURCE_KEY] = self.original_entry
+        self._write_stash(changed)
+        before = self.stash_path.read_bytes()
+        backups_before = set(self.saves.glob("stash.hss.guibak_*"))
+        result = editor.op_vault_bulk({
+            "direction": "stash-to-vault", "collectionId": 1,
+            "requestId": "bulk_stale_preview_012345678",
+            "previewToken": preview["previewToken"],
+        })
+        self.assertEqual(result.get("code"), "preview_stale")
+        self.assertEqual(self.stash_path.read_bytes(), before)
+        self.assertEqual(set(self.saves.glob("stash.hss.guibak_*")), backups_before)
+        self.assertEqual(self._vault().count_items(status="all"), 0)
+
+    def test_bulk_ui_exposes_previewed_all_collection_transfer_controls(self):
+        html = editor.HTML
+        self.assertIn("MOVE SHARED STASH → VAULT", html)
+        self.assertIn("RETURN ALL VAULT → SHARED STASH", html)
+        self.assertIn("/api/vault/bulk-preview?", html)
+        self.assertIn("/api/vault/bulk", html)
+        self.assertIn("every available item in every collection", html)
+        self.assertIn('id="vaultbulksource"', html)
+        self.assertIn('id="vaultbulkdestination"', html)
+        self.assertIn("params.set('sourceTab',source.value)", html)
+        self.assertIn("params.set('destinationTab',destinationTab.value)", html)
+        self.assertIn("body.sourceTab=preview.sourceTab||'all'", html)
+        self.assertIn("body.destinationTab=preview.destinationTab||'auto'", html)
+        self.assertIn("vaultBulkSessionKey(direction,sourceTab='all',collectionId='all',destinationTab='auto')", html)
+        self.assertIn("sessionStorage.setItem(stableKey,stableId)", html)
+        self.assertIn("RETRY SAME TRANSFER", html)
+        self.assertIn("role=\"dialog\"", html)
+        self.assertIn("/api/vault/batch/resolve", html)
+        self.assertIn("PRESERVE VAULT OWNERSHIP", html)
+        self.assertIn("data-health-vault-resolve", html)
+
+        options = editor._bulk_deposit_source_options()
+        self.assertEqual(options[0]["tab"], "all")
+        self.assertEqual(
+            [row["tab"] for row in options[1:20]],
+            [f"stash_tab_{index}" for index in range(1, 20)],
+        )
+        self.assertEqual(
+            [row["tab"] for row in options[-3:]],
+            ["material_tab", "socket_tab", "unique_items"],
+        )
+        destinations = editor._bulk_withdrawal_destination_options()
+        self.assertEqual(destinations[0]["tab"], "auto")
+        self.assertEqual(
+            [row["tab"] for row in destinations[1:20]],
+            [f"stash_tab_{index}" for index in range(1, 20)],
+        )
+        self.assertEqual(
+            [row["tab"] for row in destinations[-3:]],
+            ["material_tab", "socket_tab", "unique_items"],
+        )
+
+    def test_bulk_withdraw_exact_numbered_destination_accepts_mixed_normal_and_unique(self):
+        stash = self._full_bulk_stash()
+        normal_key = "0-0-1700000000500-10"
+        stash["stash_tab_1"][normal_key] = {
+            "pos": [8.0, 7.0],
+            "data": {
+                "w": 1.0, "a": 991000.0, "j": 0.0,
+                "b": 0.0, "c": 0.0, "o": 1.0,
+            },
+        }
+        original_data = sorted(
+            (entry["data"] for entry in stash["stash_tab_1"].values()),
+            key=lambda data: (data["c"], data["b"]),
+        )
+        self._write_stash(stash)
+        deposit_preview = editor.vault_bulk_preview({
+            "direction": ["stash-to-vault"], "collectionId": ["1"],
+            "sourceTab": ["stash_tab_1"],
+        })
+        deposited = editor.op_vault_bulk({
+            "direction": "stash-to-vault", "collectionId": 1,
+            "sourceTab": "stash_tab_1",
+            "requestId": "bulk_exact_target_seed_01234567",
+            "previewToken": deposit_preview["previewToken"],
+        })
+        self._assert_ok(deposited)
+
+        preview = editor.vault_bulk_preview({
+            "direction": ["vault-to-stash"],
+            "destinationTab": ["stash_tab_2"],
+        })
+        self.assertNotIn("err", preview, preview.get("err"))
+        self.assertEqual(preview["destinationTab"], "stash_tab_2")
+        self.assertEqual(preview["destinationLabel"], "Shared Stash Tab 2")
+        self.assertEqual(
+            preview["tabCounts"],
+            [{"tab": "stash_tab_2", "label": "Shared Stash Tab 2", "count": 2}],
+        )
+        automatic = editor.vault_bulk_preview({
+            "direction": ["vault-to-stash"], "destinationTab": ["auto"],
+        })
+        self.assertNotEqual(preview["previewToken"], automatic["previewToken"])
+
+        request = {
+            "direction": "vault-to-stash",
+            "destinationTab": "stash_tab_2",
+            "requestId": "bulk_exact_target_tab_2_012345",
+            "previewToken": preview["previewToken"],
+        }
+        returned = editor.op_vault_bulk(request)
+        self._assert_ok(returned)
+        after = self._read_stash()
+        self.assertEqual(after["stash_tab_1"], {})
+        self.assertEqual(len(after["stash_tab_2"]), 2)
+        returned_entries = list(after["stash_tab_2"].values())
+        self.assertEqual(
+            sorted(
+                (entry["data"] for entry in returned_entries),
+                key=lambda data: (data["c"], data["b"]),
+            ),
+            original_data,
+        )
+        self.assertTrue(all("pos" in entry for entry in returned_entries))
+        self.assertEqual(self._vault().count_items(status="available"), 0)
+
+        before_retry = self.stash_path.read_bytes()
+        retry = editor.op_vault_bulk(request)
+        self._assert_ok(retry)
+        self.assertEqual(self.stash_path.read_bytes(), before_retry)
+
+    def test_bulk_withdraw_exact_destination_rejects_incompatible_items_read_only(self):
+        stash = self._full_bulk_stash()
+        stash["material_tab"]["0-0-1700000000600-14"] = {
+            "pos": [0.0, 0.0],
+            "data": {"a": 991001.0, "j": 0.0, "b": 71.0, "c": 0.0, "o": 37.0},
+        }
+        stash["socket_tab"]["0-0-1700000000601-15"] = {
+            "pos": [0.0, 0.0],
+            "data": {"a": 991002.0, "j": 0.0, "b": 136.0, "c": 0.0, "o": 8.0},
+        }
+        self._write_stash(stash)
+        deposit_preview = editor.vault_bulk_preview({
+            "direction": ["stash-to-vault"], "collectionId": ["1"],
+            "sourceTab": ["all"],
+        })
+        deposited = editor.op_vault_bulk({
+            "direction": "stash-to-vault", "collectionId": 1,
+            "sourceTab": "all", "requestId": "bulk_mixed_target_seed_0123456",
+            "previewToken": deposit_preview["previewToken"],
+        })
+        self._assert_ok(deposited)
+        stash_before = self.stash_path.read_bytes()
+        vault_before = self._vault().count_items(status="available")
+        backups_before = set(self.saves.glob("stash.hss.guibak_*"))
+
+        for destination in ("material_tab", "socket_tab", "unique_items"):
+            with self.subTest(destination=destination):
+                preview = editor.vault_bulk_preview({
+                    "direction": ["vault-to-stash"],
+                    "destinationTab": [destination],
+                })
+                self.assertIn("err", preview)
+                self.assertEqual(self.stash_path.read_bytes(), stash_before)
+                self.assertEqual(
+                    self._vault().count_items(status="available"), vault_before
+                )
+                self.assertEqual(
+                    set(self.saves.glob("stash.hss.guibak_*")), backups_before
+                )
+
+    def test_bulk_withdraw_destination_is_strictly_validated_and_preview_bound(self):
+        stash = self._full_bulk_stash()
+        stash["stash_tab_1"][SOURCE_KEY]["data"]["c"] = 0.0
+        self._write_stash(stash)
+        deposit_preview = editor.vault_bulk_preview({
+            "direction": ["stash-to-vault"], "collectionId": ["1"],
+            "sourceTab": ["stash_tab_1"],
+        })
+        self._assert_ok(editor.op_vault_bulk({
+            "direction": "stash-to-vault", "collectionId": 1,
+            "sourceTab": "stash_tab_1",
+            "requestId": "bulk_bound_target_seed_0123456",
+            "previewToken": deposit_preview["previewToken"],
+        }))
+        invalid = editor.vault_bulk_preview({
+            "direction": ["vault-to-stash"],
+            "destinationTab": ["../stash_tab_1"],
+        })
+        self.assertIn("err", invalid)
+        preview = editor.vault_bulk_preview({
+            "direction": ["vault-to-stash"],
+            "destinationTab": ["stash_tab_2"],
+        })
+        before = self.stash_path.read_bytes()
+        result = editor.op_vault_bulk({
+            "direction": "vault-to-stash",
+            "destinationTab": "stash_tab_3",
+            "requestId": "bulk_bound_target_post_0123456",
+            "previewToken": preview["previewToken"],
+        })
+        self.assertEqual(result.get("code"), "preview_stale")
+        self.assertEqual(self.stash_path.read_bytes(), before)
+        self.assertEqual(self._vault().count_items(status="available"), 1)
+
+    def test_bulk_withdraw_exact_special_destinations_accept_only_native_kind(self):
+        stash = self._full_bulk_stash()
+        stash["stash_tab_1"] = {}
+        material_key = "0-0-1700000000700-14"
+        stash["material_tab"][material_key] = {
+            "pos": [4.0, 5.0],
+            "data": {"a": 992001.0, "j": 0.0, "b": 71.0, "c": 0.0, "o": 37.0},
+        }
+        self._write_stash(stash)
+        material_deposit = editor.vault_bulk_preview({
+            "direction": ["stash-to-vault"], "collectionId": ["1"],
+            "sourceTab": ["material_tab"],
+        })
+        self._assert_ok(editor.op_vault_bulk({
+            "direction": "stash-to-vault", "collectionId": 1,
+            "sourceTab": "material_tab",
+            "requestId": "bulk_material_target_seed_01234",
+            "previewToken": material_deposit["previewToken"],
+        }))
+        material_return = editor.vault_bulk_preview({
+            "direction": ["vault-to-stash"],
+            "destinationTab": ["material_tab"],
+        })
+        self.assertNotIn("err", material_return, material_return.get("err"))
+        self.assertEqual(material_return["tabCounts"][0]["tab"], "material_tab")
+        self._assert_ok(editor.op_vault_bulk({
+            "direction": "vault-to-stash", "destinationTab": "material_tab",
+            "requestId": "bulk_material_target_return_012",
+            "previewToken": material_return["previewToken"],
+        }))
+        self.assertIn(material_key, self._read_stash()["material_tab"])
+
+        stash = self._read_stash()
+        unique_key = "0-0-1700000000701-10"
+        unique = json.loads(json.dumps(self.original_entry))
+        unique.pop("pos", None)
+        stash["unique_items"][unique_key] = unique
+        self._write_stash(stash)
+        unique_deposit = editor.vault_bulk_preview({
+            "direction": ["stash-to-vault"], "collectionId": ["1"],
+            "sourceTab": ["unique_items"],
+        })
+        self._assert_ok(editor.op_vault_bulk({
+            "direction": "stash-to-vault", "collectionId": 1,
+            "sourceTab": "unique_items",
+            "requestId": "bulk_unique_target_seed_0123456",
+            "previewToken": unique_deposit["previewToken"],
+        }))
+        unique_return = editor.vault_bulk_preview({
+            "direction": ["vault-to-stash"],
+            "destinationTab": ["unique_items"],
+        })
+        self.assertNotIn("err", unique_return, unique_return.get("err"))
+        self.assertEqual(unique_return["tabCounts"][0]["tab"], "unique_items")
+        self._assert_ok(editor.op_vault_bulk({
+            "direction": "vault-to-stash", "destinationTab": "unique_items",
+            "requestId": "bulk_unique_target_return_01234",
+            "previewToken": unique_return["previewToken"],
+        }))
+        returned_unique = self._read_stash()["unique_items"][unique_key]
+        self.assertNotIn("pos", returned_unique)
+        self.assertEqual(returned_unique, unique)
+
+    def test_bulk_withdraw_exact_destination_capacity_failure_is_read_only(self):
+        stash = self._full_bulk_stash()
+        stash["stash_tab_1"][SOURCE_KEY]["data"]["c"] = 0.0
+        self._write_stash(stash)
+        deposit_preview = editor.vault_bulk_preview({
+            "direction": ["stash-to-vault"], "collectionId": ["1"],
+            "sourceTab": ["stash_tab_1"],
+        })
+        self._assert_ok(editor.op_vault_bulk({
+            "direction": "stash-to-vault", "collectionId": 1,
+            "sourceTab": "stash_tab_1",
+            "requestId": "bulk_capacity_target_seed_01234",
+            "previewToken": deposit_preview["previewToken"],
+        }))
+        before = self.stash_path.read_bytes()
+        backups_before = set(self.saves.glob("stash.hss.guibak_*"))
+        with patch.object(editor, "find_free_pos", return_value=None):
+            preview = editor.vault_bulk_preview({
+                "direction": ["vault-to-stash"],
+                "destinationTab": ["stash_tab_2"],
+            })
+        self.assertIn("err", preview)
+        self.assertIn("No safe Shared Stash space", preview["err"])
+        self.assertEqual(self.stash_path.read_bytes(), before)
+        self.assertEqual(set(self.saves.glob("stash.hss.guibak_*")), backups_before)
+        self.assertEqual(self._vault().count_items(status="available"), 1)
+
+    def test_bulk_withdraw_preview_becomes_stale_when_custom_name_changes(self):
+        stash = self._full_bulk_stash()
+        for tab in editor.BULK_STASH_ITEM_TABS:
+            stash[tab] = {}
+        self._write_stash(stash)
+        raw = json.dumps(
+            {"data": {"w": 1.0, "a": 123.0, "j": 0.0,
+                      "b": 31.0, "c": 1.0, "m": 1.0}},
+            separators=(",", ":"),
+        )
+        item = self._vault().deposit(
+            "Vault", raw, source_item_key="0-0-1800000000000-10",
+            source="unique_items",
+        )
+        preview = editor.vault_bulk_preview({
+            "direction": ["vault-to-stash"],
+        })
+        self.assertEqual(preview["customNamedCount"], 0)
+        self._vault().set_item_custom_name(item.id, "After Preview")
+        before = self.stash_path.read_bytes()
+        result = editor.op_vault_bulk({
+            "direction": "vault-to-stash",
+            "requestId": "bulk_alias_race_0123456789",
+            "previewToken": preview["previewToken"],
+        })
+        self.assertEqual(result.get("code"), "preview_stale")
+        self.assertEqual(self.stash_path.read_bytes(), before)
+        self.assertEqual(self._vault().get_item(item.id).custom_name, "After Preview")
+
+    def test_bulk_capacity_failure_is_read_only_and_keeps_every_vault_item(self):
+        stash = self._full_bulk_stash()
+        for tab in editor.BULK_STASH_ITEM_TABS:
+            stash[tab] = {}
+        self._write_stash(stash)
+        raw = json.dumps(
+            {"pos": [0.0, 0.0],
+             "data": {"a": 123.0, "j": 0.0, "b": 36.0,
+                      "c": 0.0, "o": 1.0}},
+            separators=(",", ":"),
+        )
+        item = self._vault().deposit(
+            "Vault", raw, source_item_key="0-0-1800000000001-12"
+        )
+        before_stash = self.stash_path.read_bytes()
+        before_db_count = self._vault().count_items(status="available")
+        with patch.object(editor, "find_free_pos", return_value=None):
+            preview = editor.vault_bulk_preview({
+                "direction": ["vault-to-stash"],
+            })
+        self.assertIn("err", preview)
+        self.assertIn("nothing was moved", preview["err"])
+        self.assertEqual(self.stash_path.read_bytes(), before_stash)
+        self.assertEqual(self._vault().count_items(status="available"), before_db_count)
+        self.assertEqual(self._vault().get_item(item.id).status, "available")
+
+    def test_bulk_deposit_rejects_malformed_or_unreturnable_grid_records_read_only(self):
+        cases = {
+            "malformed native key": (
+                "not-a-native-item-key",
+                {
+                    "pos": [0.0, 0.0],
+                    "data": {"a": 101.0, "j": 0.0, "b": 0.0, "c": 0.0},
+                },
+                "unsupported native key",
+            ),
+            "unknown native grid address": (
+                "0-0-1800000000100-12",
+                {
+                    "pos": [0.0, 0.0],
+                    "data": {
+                        "a": 102.0, "j": 0.0, "b": 999999.0,
+                        "c": 0.0, "o": 1.0,
+                    },
+                },
+                "proven Season 10 catalog",
+            ),
+        }
+        for label, (key, entry, expected_error) in cases.items():
+            with self.subTest(label):
+                stash = self._full_bulk_stash()
+                for tab in editor.BULK_STASH_ITEM_TABS:
+                    stash[tab] = {}
+                stash["stash_tab_1"][key] = entry
+                self._write_stash(stash)
+                before_stash = self.stash_path.read_bytes()
+                backups_before = set(self.saves.glob("stash.hss.guibak_*"))
+                items_before = self._vault().count_items(status="all")
+
+                preview = editor.vault_bulk_preview({
+                    "direction": ["stash-to-vault"], "collectionId": ["1"],
+                })
+
+                self.assertIn("err", preview)
+                self.assertIn(expected_error, preview["err"])
+                self.assertEqual(self.stash_path.read_bytes(), before_stash)
+                self.assertEqual(
+                    set(self.saves.glob("stash.hss.guibak_*")), backups_before
+                )
+                self.assertEqual(
+                    self._vault().count_items(status="all"), items_before
+                )
+
+    def test_bulk_withdraw_rejects_raw_json_hash_mismatch_read_only(self):
+        stash = self._full_bulk_stash()
+        for tab in editor.BULK_STASH_ITEM_TABS:
+            stash[tab] = {}
+        self._write_stash(stash)
+        raw = json.dumps(
+            {"data": {"a": 201.0, "j": 0.0, "b": 0.0, "c": 0.0}},
+            separators=(",", ":"),
+        )
+        item = self._vault().deposit(
+            "Vault", raw, source_item_key="0-0-1800000000200-5",
+            source="stash_tab_1",
+        )
+        tampered = json.loads(raw)
+        tampered["data"]["a"] = 999999.0
+        tampered_raw = json.dumps(tampered, separators=(",", ":"))
+        with closing(sqlite3.connect(self.vault_path)) as connection:
+            connection.execute(
+                "UPDATE items SET raw_json=? WHERE id=?", (tampered_raw, item.id)
+            )
+            connection.commit()
+        before_stash = self.stash_path.read_bytes()
+        backups_before = set(self.saves.glob("stash.hss.guibak_*"))
+        with closing(sqlite3.connect(self.vault_path)) as connection:
+            row_before = connection.execute(
+                "SELECT raw_json, raw_sha256, status, reserved_token "
+                "FROM items WHERE id=?", (item.id,),
+            ).fetchone()
+
+        preview = editor.vault_bulk_preview({"direction": ["vault-to-stash"]})
+
+        self.assertIn("err", preview)
+        self.assertIn("integrity hash", preview["err"])
+        self.assertEqual(self.stash_path.read_bytes(), before_stash)
+        self.assertEqual(set(self.saves.glob("stash.hss.guibak_*")), backups_before)
+        with closing(sqlite3.connect(self.vault_path)) as connection:
+            row_after = connection.execute(
+                "SELECT raw_json, raw_sha256, status, reserved_token "
+                "FROM items WHERE id=?", (item.id,),
+            ).fetchone()
+        self.assertEqual(row_after, row_before)
+
+    def test_bulk_withdraw_rejects_tampered_raw_sha256_read_only(self):
+        stash = self._full_bulk_stash()
+        for tab in editor.BULK_STASH_ITEM_TABS:
+            stash[tab] = {}
+        self._write_stash(stash)
+        raw = json.dumps(
+            {"data": {"a": 202.0, "j": 0.0, "b": 0.0, "c": 0.0}},
+            separators=(",", ":"),
+        )
+        item = self._vault().deposit(
+            "Vault", raw, source_item_key="0-0-1800000000201-5",
+            source="stash_tab_1",
+        )
+        with closing(sqlite3.connect(self.vault_path)) as connection:
+            connection.execute(
+                "UPDATE items SET raw_sha256=? WHERE id=?", ("f" * 64, item.id)
+            )
+            connection.commit()
+        before_stash = self.stash_path.read_bytes()
+        backups_before = set(self.saves.glob("stash.hss.guibak_*"))
+        with closing(sqlite3.connect(self.vault_path)) as connection:
+            row_before = connection.execute(
+                "SELECT raw_json, raw_sha256, status, reserved_token "
+                "FROM items WHERE id=?", (item.id,),
+            ).fetchone()
+
+        preview = editor.vault_bulk_preview({"direction": ["vault-to-stash"]})
+
+        self.assertIn("err", preview)
+        self.assertIn("integrity hash", preview["err"])
+        self.assertEqual(self.stash_path.read_bytes(), before_stash)
+        self.assertEqual(set(self.saves.glob("stash.hss.guibak_*")), backups_before)
+        with closing(sqlite3.connect(self.vault_path)) as connection:
+            row_after = connection.execute(
+                "SELECT raw_json, raw_sha256, status, reserved_token "
+                "FROM items WHERE id=?", (item.id,),
+            ).fetchone()
+        self.assertEqual(row_after, row_before)
+
+    def test_bulk_routing_preserves_scarce_normal_space_for_generic_item(self):
+        stash = self._full_bulk_stash()
+        for tab in editor.BULK_STASH_ITEM_TABS:
+            stash[tab] = {}
+        self._write_stash(stash)
+        material_raw = json.dumps(
+            {"data": {"a": 301.0, "j": 0.0, "b": 19.0,
+                      "c": 0.0, "o": 1.0}},
+            separators=(",", ":"),
+        )
+        generic_raw = json.dumps(
+            {"data": {"a": 302.0, "j": 0.0, "b": 0.0, "c": 0.0}},
+            separators=(",", ":"),
+        )
+        self._vault().deposit(
+            "Vault", material_raw,
+            source_item_key="0-0-1800000000300-13",
+            source="stash_tab_1",
+        )
+        self._vault().deposit(
+            "Vault", generic_raw,
+            source_item_key="0-0-1800000000301-5",
+        )
+        normal_slot_taken = False
+
+        def scarce_capacity(_items, tab, _width, _height):
+            nonlocal normal_slot_taken
+            if tab == "material_tab":
+                return [0.0, 0.0]
+            if tab.startswith("stash_tab_") and not normal_slot_taken:
+                normal_slot_taken = True
+                return [0.0, 0.0]
+            return None
+
+        with patch.object(editor, "find_free_pos", side_effect=scarce_capacity):
+            preview = editor.vault_bulk_preview({
+                "direction": ["vault-to-stash"],
+            })
+
+        self.assertNotIn("err", preview, preview.get("err"))
+        self.assertEqual(preview["itemCount"], 2)
+        self.assertEqual(
+            {row["tab"]: row["count"] for row in preview["tabCounts"]},
+            {"material_tab": 1, "stash_tab_1": 1},
+        )
+
+    def test_bulk_withdraw_prefers_free_exact_origin_position(self):
+        stash = self._full_bulk_stash()
+        for tab in editor.BULK_STASH_ITEM_TABS:
+            stash[tab] = {}
+        self._write_stash(stash)
+        expected = {
+            "pos": [12.0, 9.0],
+            "data": {"a": 401.0, "j": 0.0, "b": 0.0, "c": 0.0},
+        }
+        raw = json.dumps(expected, separators=(",", ":"))
+        self._vault().deposit(
+            "Vault", raw, source_item_key="0-0-1800000000400-5",
+            source="stash_tab_7",
+        )
+        preview = editor.vault_bulk_preview({"direction": ["vault-to-stash"]})
+        self.assertNotIn("err", preview, preview.get("err"))
+        returned = editor.op_vault_bulk({
+            "direction": "vault-to-stash",
+            "requestId": "bulk_exact_origin_01234567890",
+            "previewToken": preview["previewToken"],
+        })
+
+        self._assert_ok(returned)
+        self.assertEqual(
+            self._read_stash()["stash_tab_7"],
+            {"0-0-1800000000400-5": expected},
+        )
+        self.assertEqual(self._vault().count_items(status="all"), 0)
+
+    def test_bulk_withdraw_rejects_decoded_hss_size_limit_read_only(self):
+        stash = self._full_bulk_stash()
+        for tab in editor.BULK_STASH_ITEM_TABS:
+            stash[tab] = {}
+        self._write_stash(stash)
+        raw = json.dumps(
+            {
+                "data": {"a": 501.0, "j": 0.0, "b": 0.0, "c": 0.0},
+                "future_padding": "x" * 8192,
+            },
+            separators=(",", ":"),
+        )
+        item = self._vault().deposit(
+            "Vault", raw, source_item_key="0-0-1800000000500-5",
+            source="stash_tab_1",
+        )
+        before_stash = self.stash_path.read_bytes()
+        backups_before = set(self.saves.glob("stash.hss.guibak_*"))
+
+        with patch.object(editor, "MAX_HSS_DECODED_BYTES", 4096):
+            preview = editor.vault_bulk_preview({
+                "direction": ["vault-to-stash"],
+            })
+
+        self.assertIn("err", preview)
+        self.assertIn("decoded HSS size limit", preview["err"])
+        self.assertEqual(self.stash_path.read_bytes(), before_stash)
+        self.assertEqual(set(self.saves.glob("stash.hss.guibak_*")), backups_before)
+        with closing(sqlite3.connect(self.vault_path)) as connection:
+            state = connection.execute(
+                "SELECT status, reserved_token FROM items WHERE id=?", (item.id,),
+            ).fetchone()
+        self.assertEqual(state, ("available", None))
+
+    def test_bulk_recovery_commits_whole_deposit_after_atomic_stash_write(self):
+        stash = self._full_bulk_stash()
+        self._write_stash(stash)
+        plan = editor._bulk_plan_locked("stash-to-vault", 1)
+        batch = self._vault().prepare_bulk_deposit(
+            1, plan["entries"], request_id="bulk_powerloss_012345678901",
+            request_hash=plan["intentHash"],
+            stash_before_sha256=plan["stashSha256"],
+            stash_after_sha256=hashlib.sha256(
+                plan["encodedAfter"].encode("ascii")
+            ).hexdigest(),
+        )
+        self.assertEqual(batch.status, "prepared")
+        self.stash_path.write_text(plan["encodedAfter"], encoding="ascii")
+        recovered = editor.reconcile_vault_transfers()
+        self.assertEqual(recovered["pending"], 0)
+        self.assertEqual(
+            self._vault().get_transfer_batch(batch.request_id).status, "committed"
+        )
+        self.assertEqual(self._vault().count_items(status="available"), 1)
+        self.assertTrue(all(
+            not self._read_stash()[tab] for tab in editor.BULK_STASH_ITEM_TABS
+        ))
+
+    def test_unreadable_stash_preserves_pending_deposit_copies_in_vault(self):
+        self._write_stash(self._full_bulk_stash())
+        plan = editor._bulk_plan_locked("stash-to-vault", 1)
+        batch = self._vault().prepare_bulk_deposit(
+            1, plan["entries"], request_id="bulk_unreadable_deposit_0001",
+            request_hash=plan["intentHash"],
+            stash_before_sha256=plan["stashSha256"],
+            stash_after_sha256=hashlib.sha256(
+                plan["encodedAfter"].encode("ascii")
+            ).hexdigest(),
+        )
+        corrupt = b"not-a-valid-hss-payload!"
+        self.stash_path.write_bytes(corrupt)
+
+        recovered = editor.reconcile_vault_transfers()
+
+        self.assertEqual(recovered["pending"], 0)
+        self.assertEqual(recovered["conflicts"], 0)
+        self.assertEqual(len(recovered["warnings"]), 1)
+        warning = recovered["warnings"][0]
+        self.assertTrue(warning["possibleDuplicate"])
+        self.assertEqual(
+            warning["code"], "vault_ownership_preserved_possible_duplicate"
+        )
+        self.assertEqual(
+            self._vault().get_transfer_batch(batch.request_id).status, "committed"
+        )
+        self.assertEqual(self._vault().count_items(status="available"), 1)
+        self.assertEqual(self.stash_path.read_bytes(), corrupt)
+
+    def test_unreadable_stash_returns_pending_withdrawal_items_to_vault(self):
+        stash = self._full_bulk_stash()
+        for tab in editor.BULK_STASH_ITEM_TABS:
+            stash[tab] = {}
+        self._write_stash(stash)
+        raw = json.dumps(self.original_entry, separators=(",", ":"))
+        item = self._vault().deposit(
+            "Vault", raw, source_item_key=SOURCE_KEY,
+            source="stash_tab_1",
+        )
+        plan = editor._bulk_plan_locked("vault-to-stash", None)
+        batch = self._vault().prepare_bulk_withdrawal(
+            plan["targets"], request_id="bulk_unreadable_withdraw_001",
+            request_hash=plan["intentHash"],
+            stash_before_sha256=plan["stashSha256"],
+            stash_after_sha256=hashlib.sha256(
+                plan["encodedAfter"].encode("ascii")
+            ).hexdigest(),
+        )
+        corrupt = b"not-a-valid-hss-payload!"
+        self.stash_path.write_bytes(corrupt)
+
+        recovered = editor.reconcile_vault_transfers()
+
+        self.assertEqual(recovered["pending"], 0)
+        self.assertEqual(len(recovered["warnings"]), 1)
+        self.assertTrue(recovered["warnings"][0]["possibleDuplicate"])
+        self.assertEqual(
+            self._vault().get_transfer_batch(batch.request_id).status, "cancelled"
+        )
+        self.assertEqual(self._vault().get_item(item.id).status, "available")
+        self.assertEqual(self.stash_path.read_bytes(), corrupt)
+
+    def test_unreadable_stash_preserves_legacy_single_deposit_copy_in_vault(self):
+        store = self._vault()
+        before_hash = editor._file_sha256(self.stash_path)
+        intended_after = self._read_stash()
+        raw_item_json = editor._vault_item_json(
+            intended_after["stash_tab_1"][SOURCE_KEY]
+        )
+        del intended_after["stash_tab_1"][SOURCE_KEY]
+        encoded_after = editor._encoded_stash_document(intended_after)
+        after_hash = hashlib.sha256(encoded_after.encode("ascii")).hexdigest()
+        request_hash = editor.canonical_request_hash({
+            "direction": "deposit",
+            "source": {"type": "stash", "tab": "stash_tab_1"},
+            "key": SOURCE_KEY,
+            "collectionId": 1,
+        })
+        prepared = store.prepare_deposit(
+            1, raw_item_json, request_id=DEPOSIT_REQUEST,
+            request_hash=request_hash, source_tab="stash_tab_1",
+            source_key=SOURCE_KEY, stash_before_sha256=before_hash,
+            stash_after_sha256=after_hash, label="Legacy pending deposit",
+        )
+        self.assertEqual(prepared.status, "prepared")
+        corrupt = b"not-a-valid-hss-payload!"
+        self.stash_path.write_bytes(corrupt)
+
+        recovered = editor.reconcile_vault_transfers()
+
+        self.assertEqual(recovered["pending"], 0)
+        self.assertEqual(recovered["conflicts"], 0)
+        self.assertEqual(len(recovered["warnings"]), 1)
+        self.assertEqual(recovered["warnings"][0]["itemCount"], 1)
+        self.assertTrue(recovered["warnings"][0]["possibleDuplicate"])
+        self.assertEqual(store.get_transfer(DEPOSIT_REQUEST).status, "committed")
+        self.assertEqual(store.count_items(status="available"), 1)
+        self.assertEqual(self.stash_path.read_bytes(), corrupt)
+
+    def test_unreadable_stash_releases_legacy_single_withdrawal_to_vault(self):
+        stash = self._read_stash()
+        stash["stash_tab_1"] = {}
+        self._write_stash(stash)
+        store = self._vault()
+        raw = json.dumps(self.original_entry, separators=(",", ":"))
+        item = store.deposit(
+            "Vault", raw, source_item_key=SOURCE_KEY, source="stash_tab_1"
+        )
+        before_hash = editor._file_sha256(self.stash_path)
+        intended_after = self._read_stash()
+        intended_after["stash_tab_1"][SOURCE_KEY] = self.original_entry
+        encoded_after = editor._encoded_stash_document(intended_after)
+        after_hash = hashlib.sha256(encoded_after.encode("ascii")).hexdigest()
+        request_hash = editor.canonical_request_hash({
+            "direction": "withdrawal",
+            "itemId": item.id,
+            "target": {"type": "stash", "tab": "stash_tab_1"},
+        })
+        prepared = store.prepare_withdrawal(
+            item.id, request_id=WITHDRAW_REQUEST,
+            request_hash=request_hash, target_tab="stash_tab_1",
+            target_key=SOURCE_KEY, target_pos=(4, 7),
+            stash_before_sha256=before_hash,
+            stash_after_sha256=after_hash,
+        )
+        self.assertEqual(prepared.status, "prepared")
+        corrupt = b"not-a-valid-hss-payload!"
+        self.stash_path.write_bytes(corrupt)
+
+        recovered = editor.reconcile_vault_transfers()
+
+        self.assertEqual(recovered["pending"], 0)
+        self.assertEqual(recovered["conflicts"], 0)
+        self.assertEqual(len(recovered["warnings"]), 1)
+        self.assertEqual(recovered["warnings"][0]["itemCount"], 1)
+        self.assertTrue(recovered["warnings"][0]["possibleDuplicate"])
+        self.assertEqual(store.get_transfer(WITHDRAW_REQUEST).status, "cancelled")
+        self.assertEqual(store.get_item(item.id).status, "available")
+        self.assertEqual(self.stash_path.read_bytes(), corrupt)
+
+    def test_explicit_deposit_conflict_resolution_keeps_stash_and_vault_copies(self):
+        stash = self._full_bulk_stash()
+        second_key = "0-0-1700000000001-10"
+        second = json.loads(json.dumps(self.original_entry))
+        second["pos"] = [8.0, 7.0]
+        second["data"]["a"] = 429566.0
+        stash["stash_tab_1"][second_key] = second
+        self._write_stash(stash)
+        plan = editor._bulk_plan_locked("stash-to-vault", 1)
+        batch = self._vault().prepare_bulk_deposit(
+            1, plan["entries"], request_id="bulk_mixed_deposit_resolve_01",
+            request_hash=plan["intentHash"],
+            stash_before_sha256=plan["stashSha256"],
+            stash_after_sha256=hashlib.sha256(
+                plan["encodedAfter"].encode("ascii")
+            ).hexdigest(),
+        )
+        mixed = self._read_stash()
+        mixed["stash_tab_1"].pop(SOURCE_KEY)
+        self._write_stash(mixed)
+        mixed_bytes = self.stash_path.read_bytes()
+        recovery = editor.reconcile_vault_transfers()
+        self.assertEqual(recovery["conflicts"], 1)
+
+        resolved = editor.op_vault_resolve_batch({
+            "action": "preserve-vault-ownership",
+            "requestId": batch.request_id,
+        })
+
+        self._assert_ok(resolved)
+        self.assertTrue(resolved["possibleDuplicate"])
+        self.assertIn("duplicates may exist", resolved["warning"])
+        self.assertEqual(
+            self._vault().get_transfer_batch(batch.request_id).status, "committed"
+        )
+        self.assertEqual(self._vault().count_items(status="available"), 2)
+        self.assertEqual(self.stash_path.read_bytes(), mixed_bytes)
+        self.assertIn(second_key, self._read_stash()["stash_tab_1"])
+
+    def test_explicit_withdrawal_conflict_resolution_releases_every_reservation(self):
+        stash = self._full_bulk_stash()
+        for tab in editor.BULK_STASH_ITEM_TABS:
+            stash[tab] = {}
+        self._write_stash(stash)
+        first = json.loads(json.dumps(self.original_entry))
+        second = json.loads(json.dumps(self.original_entry))
+        second["pos"] = [8.0, 7.0]
+        second["data"]["a"] = 429566.0
+        records = [
+            self._vault().deposit(
+                "Vault", json.dumps(entry, separators=(",", ":")),
+                source_item_key=key, source="stash_tab_1",
+            )
+            for entry, key in (
+                (first, SOURCE_KEY),
+                (second, "0-0-1700000000001-10"),
+            )
+        ]
+        plan = editor._bulk_plan_locked("vault-to-stash", None)
+        batch = self._vault().prepare_bulk_withdrawal(
+            plan["targets"], request_id="bulk_mixed_withdraw_resolve_1",
+            request_hash=plan["intentHash"],
+            stash_before_sha256=plan["stashSha256"],
+            stash_after_sha256=hashlib.sha256(
+                plan["encodedAfter"].encode("ascii")
+            ).hexdigest(),
+        )
+        mixed = json.loads(json.dumps(plan["work"]))
+        omitted = plan["targets"][1]
+        mixed[omitted["target_tab"]].pop(omitted["target_key"])
+        self._write_stash(mixed)
+        mixed_bytes = self.stash_path.read_bytes()
+        recovery = editor.reconcile_vault_transfers()
+        self.assertEqual(recovery["conflicts"], 1)
+
+        resolved = editor.op_vault_resolve_batch({
+            "action": "preserve-vault-ownership",
+            "requestId": batch.request_id,
+        })
+
+        self._assert_ok(resolved)
+        self.assertTrue(resolved["possibleDuplicate"])
+        self.assertEqual(
+            self._vault().get_transfer_batch(batch.request_id).status, "cancelled"
+        )
+        self.assertEqual(self._vault().count_items(status="available"), 2)
+        self.assertTrue(all(
+            self._vault().get_item(record.id).status == "available"
+            for record in records
+        ))
+        self.assertEqual(self.stash_path.read_bytes(), mixed_bytes)
+
+    def test_bulk_return_all_is_not_limited_to_first_five_hundred_items(self):
+        stash = self._full_bulk_stash()
+        for tab in editor.BULK_STASH_ITEM_TABS:
+            stash[tab] = {}
+        self._write_stash(stash)
+        entries = []
+        for index in range(501):
+            raw = json.dumps(
+                {"data": {"w": 1.0, "a": float(index + 1), "j": 0.0,
+                          "b": 31.0, "c": 1.0, "m": 1.0}},
+                separators=(",", ":"),
+            )
+            entries.append({
+                "raw_item_json": raw,
+                "source_tab": "unique_items",
+                "source_key": f"0-0-{1900000000000 + index}-10",
+                "label": f"Unique {index}",
+                "source": "unique_items",
+            })
+        intent = editor.canonical_request_hash({
+            "direction": "bulk_deposit", "collectionId": 1,
+            "items": [{
+                "sourceTab": row["source_tab"],
+                "sourceKey": row["source_key"],
+                "rawSha256": hashlib.sha256(
+                    row["raw_item_json"].encode("utf-8")
+                ).hexdigest(),
+            } for row in entries],
+        })
+        seeded = self._vault().prepare_bulk_deposit(
+            1, entries, request_id="bulk_seed_501_items_01234567",
+            request_hash=intent, stash_before_sha256="a" * 64,
+            stash_after_sha256="b" * 64,
+        )
+        self._vault().commit_transfer_batch(seeded.request_id, "b" * 64)
+        preview = editor.vault_bulk_preview({
+            "direction": ["vault-to-stash"],
+        })
+        self.assertNotIn("err", preview, preview.get("err"))
+        self.assertEqual(preview["itemCount"], 501)
+        returned = editor.op_vault_bulk({
+            "direction": "vault-to-stash",
+            "requestId": "bulk_return_501_items_012345",
+            "previewToken": preview["previewToken"],
+        })
+        self._assert_ok(returned)
+        self.assertEqual(len(self._read_stash()["unique_items"]), 501)
+        self.assertEqual(self._vault().count_items(status="all"), 0)
 
 
 if __name__ == "__main__":

@@ -30,6 +30,43 @@ CATALOG_PROFILE = "Season 10"
 EXPECTED_EXE_SHA256 = (
     "438BF4848688C5BE52AC15F26F02B46DA620D90587C28E766A9CEA190F3A7DE4"
 )
+SEASON_10_706_EXE_SHA256 = (
+    "2034FAD4096BE6DE1147E4FF61B942A706673A9567B10C3013C6393ED0686486"
+)
+
+# The runtime artifact was exhaustively solved against EXPECTED_EXE_SHA256.
+# A later Steam build may reuse it only after a fresh, static compatibility
+# audit proves that the complete roll model is semantically identical.  The
+# 7.0.6 proof was produced from the clean executable on 2026-08-31:
+#
+# * all 1,444 definition profiles re-extracted with zero failures/warnings;
+# * their address/stat/event projection matched 7.0.5 exactly;
+# * CPR, seed-domain, CreateItem, random/high-roller/special/subskill and
+#   runeword instruction paths matched after relocation-only normalization;
+# * all 21 generated-pool profiles and 43 active slots matched exactly.
+#
+# Keep this evidence separate from ``exeSha256`` in the JSON.  That field is
+# still the provenance hash of the solved artifact and must never be rewritten
+# merely to make a new executable pass validation.
+ROLL_BUILD_EQUIVALENCE_PROOFS: dict[str, dict[str, Any]] = {
+    SEASON_10_706_EXE_SHA256: {
+        "sourceExeSha256": EXPECTED_EXE_SHA256,
+        "definitionProfileCount": 1_444,
+        "definitionSemanticSha256": (
+            "37534DE9BEE18D967AFBAD3FC51150E755DCB2A8F7793F0530D82E11A5FF1853"
+        ),
+        "generatedPoolProfileCount": 21,
+        "generatedPoolActiveSlotCount": 43,
+        "generatedPoolSemanticSha256": (
+            "39BAC822BE415341B0609979AAF53EAB8685F81D5B4FE9C3111AECA1A64EF9C1"
+        ),
+        "runtimeProfileCount": 5_059,
+    },
+}
+SUPPORTED_RUNTIME_EXE_SHA256 = frozenset({
+    EXPECTED_EXE_SHA256,
+    *ROLL_BUILD_EQUIVALENCE_PROOFS,
+})
 ALGORITHM = "Hero Siege S10 CPR binary64 exhaustive"
 OBJECTIVE = [
     "maximize endpoint-hit count",
@@ -70,6 +107,15 @@ _RUNEWORD_ID_RE = re.compile(
     r"(?P<cls>0|[1-9][0-9]*):(?P<sub>0|[1-9][0-9]*):"
     r"(?P<base>0|[1-9][0-9]*)\Z"
 )
+
+
+def supports_executable_sha256(digest: Any) -> bool:
+    """Return true only for an exact build covered by the roll proof."""
+
+    return (
+        isinstance(digest, str)
+        and digest.upper() in SUPPORTED_RUNTIME_EXE_SHA256
+    )
 
 
 class RollProfileValidationError(ValueError):
@@ -195,6 +241,7 @@ class RollProfileDatabase:
             "schemaVersion": self._document["schemaVersion"],
             "catalogProfile": self._document["catalogProfile"],
             "exeSha256": self._document["exeSha256"],
+            "supportedRuntimeExeSha256": sorted(SUPPORTED_RUNTIME_EXE_SHA256),
             "algorithm": self._document["algorithm"],
             "seedDomain": copy.deepcopy(self._document["seedDomain"]),
             "modes": copy.deepcopy(coverage["modes"]),
@@ -902,13 +949,16 @@ __all__ = [
     "DEFAULT_DATABASE_PATH",
     "EXPECTED_EXE_SHA256",
     "OBJECTIVE",
+    "ROLL_BUILD_EQUIVALENCE_PROOFS",
     "RollEvaluation",
     "RollProfileDatabase",
     "RollProfileStatus",
     "RollProfileValidationError",
     "SCHEMA_VERSION",
+    "SEASON_10_706_EXE_SHA256",
     "SEED_START",
     "SEED_STOP",
+    "SUPPORTED_RUNTIME_EXE_SHA256",
     "address_key",
     "evaluate_seed",
     "load_roll_profile_db",
@@ -917,5 +967,6 @@ __all__ = [
     "make_runeword_key",
     "runeword_key",
     "runeword_address_key",
+    "supports_executable_sha256",
     "validate_roll_profile_document",
 ]
