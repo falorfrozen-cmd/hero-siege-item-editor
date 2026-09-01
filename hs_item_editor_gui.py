@@ -34,13 +34,11 @@ try:
     from roll_profile_db import (
         EXPECTED_EXE_SHA256 as EXPECTED_GAME_EXE_SHA256,
         load_roll_profile_database,
-        supports_executable_sha256 as roll_supports_executable_sha256,
     )
 except ModuleNotFoundError:  # package-style import used by the unit tests
     from HSItemEditor.roll_profile_db import (
         EXPECTED_EXE_SHA256 as EXPECTED_GAME_EXE_SHA256,
         load_roll_profile_database,
-        supports_executable_sha256 as roll_supports_executable_sha256,
     )
 
 try:
@@ -68,7 +66,6 @@ try:
         TorchClassValidationError,
         load_torch_class_database,
         profile_id_for_address as torch_profile_id_for_address,
-        supports_executable_sha256 as torch_supports_executable_sha256,
     )
 except ModuleNotFoundError:  # package-style import used by the unit tests
     from HSItemEditor.torch_class_selector import (
@@ -76,13 +73,7 @@ except ModuleNotFoundError:  # package-style import used by the unit tests
         TorchClassValidationError,
         load_torch_class_database,
         profile_id_for_address as torch_profile_id_for_address,
-        supports_executable_sha256 as torch_supports_executable_sha256,
     )
-
-try:
-    from game_build_identity import GameBuildGuard
-except ModuleNotFoundError:
-    from HSItemEditor.game_build_identity import GameBuildGuard
 
 try:
     from hss_recovery import (
@@ -168,53 +159,50 @@ def _resource_base() -> Path:
 BASE = _resource_base()
 CATALOG_FILE = BASE / "hs_full_catalog.json"
 PORT = 8765
-APP_VERSION = "2.11.1-s10"
+APP_VERSION = "2.11.4-s10"
 APPLICATION_ID = "hero-siege-item-editor"
 CATALOG_PROFILE = "Season 10"
 MAX_POST_BYTES = 2 * 1024 * 1024
 EDITOR_REQUEST_HEADER = "X-Hero-Siege-Item-Editor"
 if DICE_EXPECTED_GAME_EXE_SHA256 != EXPECTED_GAME_EXE_SHA256:
     raise RuntimeError("roll and Dice databases target different Hero Siege builds")
-GAME_BUILD_GUARD = GameBuildGuard(EXPECTED_GAME_EXE_SHA256)
-
-
 def _roll_runtime_build_error() -> str | None:
-    """Accept only stable executables covered by the complete roll proof."""
+    """Do not block editing because Steam or a mod changed the game EXE."""
 
-    summary = GAME_BUILD_GUARD.summary()
-    if summary.get("matched"):
-        return None
-    if (
-        summary.get("code") == "build_mismatch"
-        and roll_supports_executable_sha256(summary.get("detectedSha256"))
-    ):
-        return None
-    return str(summary.get("message") or "Installed Hero Siege build is unverified")
+    return None
 
 
 def _torch_runtime_build_error() -> str | None:
-    """Accept only the two statically matched Torch paths (plus proven 7.0.5 Aurie)."""
+    """Do not block Torch targets because Steam or a mod changed the game EXE."""
 
-    summary = GAME_BUILD_GUARD.summary()
-    if summary.get("matched"):
-        # GameBuildGuard separately normalizes the known 7.0.5 Aurie patch to
-        # its clean base image; Dice keeps using this same existing decision.
-        return None
-    if (
-        summary.get("code") == "build_mismatch"
-        and torch_supports_executable_sha256(summary.get("detectedSha256"))
-    ):
-        return None
-    return str(summary.get("message") or "Installed Hero Siege build is unverified")
+    return None
+
+
+def _editor_runtime_build_status(build_status: object = None) -> dict:
+    """Return an unlocked feature status without hashing the installed game.
+
+    The editor's bundled profile/target artifacts still perform their own
+    schema, checksum and replay validation. Only the external Hero_Siege.exe
+    identity gate is disabled so Steam patches and ForgePact/Aurie do not turn
+    otherwise healthy editor features off.
+    """
+
+    raw = dict(build_status) if isinstance(build_status, dict) else {}
+    return {
+        **raw,
+        "matched": True,
+        "code": "ready_unrestricted",
+        "message": "Game executable matching is not enforced.",
+        "expectedSha256": EXPECTED_GAME_EXE_SHA256,
+        "matchingEnforced": False,
+    }
 
 
 ROLL_DB = load_roll_profile_database(
     BASE, runtime_build_check=_roll_runtime_build_error
 )
-# Dice has a separate identity/rejection model.  A build proven compatible for
-# numeric Perfect/Best rolls must not silently unlock Dice skill targets.
 DICE_SKILL_DB = load_dice_skill_database(
-    BASE, runtime_build_check=GAME_BUILD_GUARD.error
+    BASE, runtime_build_check=_roll_runtime_build_error
 )
 TORCH_CLASS_DB = load_torch_class_database(
     runtime_build_check=_torch_runtime_build_error
@@ -852,7 +840,8 @@ def generation_roll_profile_for_request(
     """Validate generation, allowing a proven Torch class seed to own ``a``.
 
     The roll artifact keeps its 7.0.5 source provenance while the complete
-    general numeric path is independently proven compatible with exact 7.0.6.
+    general numeric path is independently proven compatible with the later
+    Season 10 executable variant.
     Torch still uses its dedicated selector proof and may own ``a`` only when
     an explicit class target is present and valid.
     """
@@ -1094,14 +1083,9 @@ def item_socket_limit(item: object) -> int:
     if item.get("isRW"):
         return 6
     profile = item.get("rollProfile")
-    if isinstance(profile, dict):
-        verified = profile.get("maxSockets")
-        if (
-            isinstance(verified, int)
-            and not isinstance(verified, bool)
-            and 1 <= verified <= 6
-        ):
-            return verified
+    verified = roll_profile_max_sockets(profile)
+    if verified is not None:
+        return verified
     catalog_id = item.get("cid")
     if (
         isinstance(catalog_id, int)
@@ -1130,7 +1114,7 @@ def resolve(key: str, data: dict) -> dict:
             out.update(name=r["name"], rar=r["rar"], w=r["w"], h=r["h"], cid=r["id"],
                        set=r.get("set"), clsName=CLASS_NAMES.get(r["cls"], "?"), spr=r.get("spr"))
             if r.get("rollProfile"):
-                out["rollProfile"] = r["rollProfile"]
+                out["rollProfile"] = effective_roll_profile(r["rollProfile"])
             skill_profile_id = catalog_skill_profile_id(r)
             target_database = (
                 skill_target_database(skill_profile_id)
@@ -1174,7 +1158,7 @@ def resolve(key: str, data: dict) -> dict:
             except (KeyError, TypeError, ValueError):
                 profile = None
             if profile:
-                out["rollProfile"] = profile
+                out["rollProfile"] = effective_roll_profile(profile)
             else:
                 out.pop("rollProfile", None)
     out["socketLimit"] = item_socket_limit(out)
@@ -1288,33 +1272,10 @@ def _tooltip_runtime_build_status(
     catalog_row: dict,
     build_status: object,
 ) -> object:
-    """Promote only non-Dice items covered by the exact 7.0.6 roll proof."""
+    """Keep exact tooltip and target features available on every EXE build."""
 
-    if not isinstance(build_status, dict):
-        return build_status
-    status = dict(build_status)
-    if status.get("matched") is True:
-        return status
-    expected = str(status.get("expectedSha256") or "").upper()
-    detected = str(status.get("detectedSha256") or "").upper()
-    if not (
-        status.get("code") == "build_mismatch"
-        and expected == EXPECTED_GAME_EXE_SHA256
-        and detected != EXPECTED_GAME_EXE_SHA256
-        and roll_supports_executable_sha256(detected)
-    ):
-        return status
-    if catalog_dice_profile_id(catalog_row) is not None:
-        return status
-    status.update({
-        "matched": True,
-        "code": "ready_compatible",
-        "message": (
-            "Installed Hero Siege build matches an independently audited "
-            "numeric tooltip/roll compatibility proof."
-        ),
-    })
-    return status
+    del catalog_row
+    return _editor_runtime_build_status(build_status)
 
 
 def _game_tooltip_model(
@@ -1328,7 +1289,7 @@ def _game_tooltip_model(
         return _catalog_only_tooltip_model(item, row, custom_name=custom_name)
     if build_status is None:
         try:
-            build_status = GAME_BUILD_GUARD.summary()
+            build_status = _editor_runtime_build_status()
         except Exception as exc:
             build_status = {
                 "matched": False,
@@ -1379,7 +1340,28 @@ def _game_tooltip_model(
 
 
 def _attach_game_tooltip(item: dict, build_status: dict | None = None) -> dict:
-    item["gameTooltip"] = _game_tooltip_model(item, build_status=build_status)
+    model = _game_tooltip_model(item, build_status=build_status)
+    item["gameTooltip"] = model
+    # Keep the socket editor aligned with the exact tooltip's final stat-20
+    # value, including a saved zz.sockets override when present.
+    stats = model.get("stats") if isinstance(model, dict) else None
+    if isinstance(stats, list):
+        socket_line = next(
+            (
+                line for line in stats
+                if isinstance(line, dict) and line.get("statKey") == 20
+            ),
+            None,
+        )
+        value = socket_line.get("value") if isinstance(socket_line, dict) else None
+        if (
+            isinstance(value, (int, float))
+            and not isinstance(value, bool)
+            and math.isfinite(float(value))
+            and float(value).is_integer()
+            and 0 <= int(value) <= 6
+        ):
+            item["socketCount"] = int(value)
     return item
 
 
@@ -1440,7 +1422,7 @@ def read_char(slot: int) -> dict:
     m = re.search(r'inventory="([A-Za-z0-9+/=]+)"', txt)
     inv = json.loads(base64.b64decode(m.group(1))) if m else {}
     try:
-        tooltip_build_status = GAME_BUILD_GUARD.summary()
+        tooltip_build_status = _editor_runtime_build_status()
     except Exception:
         tooltip_build_status = {
             "matched": False,
@@ -1487,7 +1469,7 @@ def read_char(slot: int) -> dict:
 def read_stash() -> dict:
     d = json.loads(decode_hss(SAVES / "stash.hss"))
     try:
-        tooltip_build_status = GAME_BUILD_GUARD.summary()
+        tooltip_build_status = _editor_runtime_build_status()
     except Exception:
         tooltip_build_status = {
             "matched": False,
@@ -1567,16 +1549,221 @@ def roll_profile_field_seeds(profile: dict | None) -> dict[str, float]:
     return output
 
 
-def roll_profile_max_sockets(profile: dict | None) -> int | None:
-    """Return a validated native socket-capacity maximum from a roll profile.
+_SOCKET_SEED_DOCUMENT: dict | None = None
+_SOCKET_SEEDS: dict | None = None
 
-    ``maxSockets`` comes from the same authenticated definition database as the
-    proven seed chains.  The save format supports at most six socket payloads;
-    reject anything outside that native range instead of serializing it.
+
+def _load_socket_seed_document() -> dict:
+    """Load and structurally validate the build-measured socket seed table.
+
+    This asset changes item generation, so a missing or malformed bundled file
+    must stop the editor instead of silently falling back to lower-socket seeds.
+    The offline generation scripts perform the full CPR replay; this runtime
+    check protects the packaged data boundary and every value consumed here.
     """
+
+    global _SOCKET_SEED_DOCUMENT, _SOCKET_SEEDS
+    if _SOCKET_SEED_DOCUMENT is not None:
+        return _SOCKET_SEED_DOCUMENT
+
+    path = BASE / "hs_socket_seeds.json"
+    try:
+        document = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, UnicodeError, json.JSONDecodeError) as exc:
+        raise RuntimeError(f"socket seed database unavailable: {exc}") from exc
+    if not isinstance(document, dict) or document.get("schemaVersion") != 1:
+        raise RuntimeError("socket seed database has an unsupported schema")
+    seeds = document.get("seeds")
+    if not isinstance(seeds, dict) or not seeds:
+        raise RuntimeError("socket seed database contains no verified entries")
+
+    for address_key, entry in seeds.items():
+        label = f"socket seed {address_key!r}"
+        if not isinstance(address_key, str) or not re.fullmatch(
+            r"(?:normal|unique):\d+:\d+:\d+", address_key
+        ):
+            raise RuntimeError(f"{label} has an invalid address")
+        if not isinstance(entry, dict):
+            raise RuntimeError(f"{label} must be an object")
+        seed = entry.get("seed")
+        if (
+            isinstance(seed, bool)
+            or not isinstance(seed, int)
+            or not SEED_MIN <= seed <= SEED_MAX
+        ):
+            raise RuntimeError(f"{label} has an invalid a seed")
+        capacity = entry.get("maxSockets")
+        if (
+            isinstance(capacity, bool)
+            or not isinstance(capacity, int)
+            or not 1 <= capacity <= 6
+            or entry.get("sockets") != capacity
+        ):
+            raise RuntimeError(f"{label} has an invalid socket maximum")
+        bounds = entry.get("statBounds")
+        if (
+            not isinstance(bounds, list)
+            or any(
+                isinstance(bound, bool)
+                or not isinstance(bound, int)
+                or bound < 0
+                for bound in bounds
+            )
+        ):
+            raise RuntimeError(f"{label} has invalid stat bounds")
+        maxed = entry.get("maxed")
+        total = entry.get("total")
+        deficit = entry.get("endpointDeficit")
+        if (
+            isinstance(maxed, bool)
+            or not isinstance(maxed, int)
+            or isinstance(total, bool)
+            or not isinstance(total, int)
+            or isinstance(deficit, bool)
+            or not isinstance(deficit, int)
+            or total != len(bounds)
+            or not 0 <= maxed <= total
+            or deficit < 0
+        ):
+            raise RuntimeError(f"{label} has invalid roll-quality metadata")
+
+    _SOCKET_SEED_DOCUMENT = document
+    _SOCKET_SEEDS = seeds
+    return document
+
+
+def socket_roll_for_profile(profile: dict | None) -> dict | None:
+    """Return one validated, build-measured max-socket roll overlay."""
 
     if not isinstance(profile, dict):
         return None
+    address_key = profile.get("addressKey")
+    if (
+        not isinstance(address_key, str)
+        or re.fullmatch(r"(?:normal|unique):\d+:\d+:\d+", address_key) is None
+    ):
+        return None
+    entry = _load_socket_seed_document()["seeds"].get(address_key)
+    return entry if isinstance(entry, dict) else None
+
+
+def socket_seed_for_profile(profile: dict | None) -> int | None:
+    """Return the ``a`` seed measured to roll this item's maximum sockets."""
+
+    entry = socket_roll_for_profile(profile)
+    return int(entry["seed"]) if entry is not None else None
+
+
+def effective_roll_field_seeds(profile: dict | None) -> dict[str, float]:
+    """Overlay a measured max-socket ``a`` seed on the canonical roll fields."""
+
+    seeds = roll_profile_field_seeds(profile)
+    socket_seed = socket_seed_for_profile(profile)
+    if socket_seed is not None:
+        seeds["a"] = float(socket_seed)
+    return seeds
+
+
+def effective_roll_mode(profile: dict | None) -> str | None:
+    """Classify the combined stat + maximum-socket roll without overclaiming."""
+
+    if not isinstance(profile, dict):
+        return None
+    entry = socket_roll_for_profile(profile)
+    if entry is None:
+        return profile.get("mode")
+    socket_chain_exact = (
+        entry["maxed"] == entry["total"]
+        and entry["endpointDeficit"] == 0
+    )
+    return (
+        "exact"
+        if profile.get("mode") == "exact" and socket_chain_exact
+        else "best"
+    )
+
+
+def effective_roll_detail(profile: dict | None) -> str:
+    """Describe the combined roll using the current-build socket measurement."""
+
+    if not isinstance(profile, dict):
+        return ""
+    entry = socket_roll_for_profile(profile)
+    if entry is None:
+        return str(profile.get("detail") or "")
+    detail = (
+        f"{entry['maxed']}/{entry['total']} current-build a-chain stats MAX; "
+        f"{entry['maxSockets']} sockets MAX"
+    )
+    if entry["endpointDeficit"]:
+        detail += f"; verified endpoint deficit {entry['endpointDeficit']}"
+    return detail
+
+
+def effective_roll_label(profile: dict | None) -> str:
+    """Return an honest user-facing label for the combined roll evidence."""
+
+    mode = effective_roll_mode(profile)
+    if mode == "exact":
+        return "EXACT MAX"
+    if socket_roll_for_profile(profile) is not None:
+        return "BEST VERIFIED + MAX SOCKETS"
+    return "BEST POSSIBLE"
+
+
+def effective_roll_profile(profile: dict | None) -> dict | None:
+    """Return the client-facing roll profile after applying socket evidence."""
+
+    if not isinstance(profile, dict):
+        return None
+    output = copy.deepcopy(profile)
+    entry = socket_roll_for_profile(profile)
+    if entry is None:
+        return output
+    output.update({
+        "fieldSeeds": effective_roll_field_seeds(profile),
+        "mode": effective_roll_mode(profile),
+        "rollLabel": effective_roll_label(profile),
+        "detail": effective_roll_detail(profile),
+        "maxSockets": entry["maxSockets"],
+        "maxed": entry["maxed"],
+        "total": entry["total"],
+        "endpointDeficit": entry["endpointDeficit"],
+        "socketRoll": {
+            "verified": True,
+            "seed": entry["seed"],
+            "maxSockets": entry["maxSockets"],
+            "searchedThrough": entry.get("searchedThrough"),
+        },
+    })
+    return output
+
+
+def catalog_api_rows() -> list[dict]:
+    """Expose effective socket-aware profiles without mutating the roll DB."""
+
+    rows = []
+    for row in CAT:
+        output = dict(row)
+        if isinstance(row.get("rollProfile"), dict):
+            output["rollProfile"] = effective_roll_profile(row["rollProfile"])
+        rows.append(output)
+    return rows
+
+
+# Fail at startup if a release forgot or corrupted the socket database. A
+# silent fallback would create apparently Perfect items with lower sockets.
+_load_socket_seed_document()
+
+
+def roll_profile_max_sockets(profile: dict | None) -> int | None:
+    """Return the measured capacity, falling back to the canonical profile."""
+
+    if not isinstance(profile, dict):
+        return None
+    entry = socket_roll_for_profile(profile)
+    if entry is not None:
+        return int(entry["maxSockets"])
     value = profile.get("maxSockets")
     if isinstance(value, bool) or not isinstance(value, int):
         return None
@@ -1586,7 +1773,7 @@ def roll_profile_max_sockets(profile: dict | None) -> int | None:
 def preferred_item_seed(row: dict) -> float:
     """Use a proven item profile when one exists; otherwise create a real roll."""
     profile = row.get("rollProfile") or catalog_roll_profile(row)
-    verified = roll_profile_field_seeds(profile)
+    verified = effective_roll_field_seeds(profile)
     return verified["a"] if "a" in verified else random_item_seed()
 
 
@@ -1673,7 +1860,7 @@ def make_data(r: dict, equipped_g=None, skill_id: object = None) -> dict:
     c = 1.0 if r["kind"] == "unique" else 0.0
     j = float(r["sub"] if r["cls"] == 3 else 0)
     profile = generation_roll_profile_for_request(r, skill_id)
-    verified_seeds = roll_profile_field_seeds(profile)
+    verified_seeds = effective_roll_field_seeds(profile)
     item_seed = (
         item_seed_for_generation(r, skill_id)
         if skill_id is not None
@@ -1689,9 +1876,9 @@ def make_data(r: dict, equipped_g=None, skill_id: object = None) -> dict:
         return {"a": d["a"], "j": 0.0, "b": d["b"], "c": 0.0, "o": 1.0}
     max_sockets = roll_profile_max_sockets(profile)
     if max_sockets is not None:
-        # The game gives an explicit saved override precedence over the CPR
-        # roll.  Persist the proven maximum so an item generated as Perfect /
-        # Best Possible cannot later surface with a stale one-socket override.
+        # The game rolls capacity from ``a``; this explicit value keeps the
+        # editor's empty-slot count and compatibility metadata aligned with
+        # that measured result. It is not the source of the in-game roll.
         d["zz"] = {"sockets": float(max_sockets)}
     if equipped_g is not None:
         d.update({"g": float(equipped_g), "d": 0.0, "n": 0.0, "e": 0.0})
@@ -2852,7 +3039,7 @@ def vault_items(query: dict) -> dict:
     else:
         total = store.count_items(collection=collection, status="available")
     try:
-        tooltip_build_status = GAME_BUILD_GUARD.summary()
+        tooltip_build_status = _editor_runtime_build_status()
     except Exception:
         tooltip_build_status = {
             "matched": False,
@@ -3856,18 +4043,14 @@ def op_modify(body: dict) -> dict:
         if profile.get("mode") == "fixed":
             return {"err": (f"{it['name']}: definition stats are fixed; "
                             "there is no variable roll to change")}
-        field_seeds = roll_profile_field_seeds(profile)
+        field_seeds = effective_roll_field_seeds(profile)
         if not field_seeds:
             return {"err": f"{it['name']}: verified profile has no actionable seed fields; item unchanged"}
         # Each listed field owns an independently proven CPR chain. Filled
         # socket payloads and unrelated metadata are preserved byte-for-byte.
-        # When the authenticated profile declares a native maximum capacity,
-        # Perfect also repairs the explicit ``zz.sockets`` override: the game
-        # gives that saved value precedence over the seed-derived stat.
-        # Save field ``s`` is also an enable flag: when it is absent the game's
-        # LoadCommonItems path skips socket-count generation.  Never create it
-        # on an existing item merely because a profile can optimize that chain.
         data = entry.setdefault("data", {})
+        # Save field s activates a separate loader chain. Preserve the native
+        # shape of existing items: optimize it only when it already exists.
         applicable_field_seeds = {
             field: seed for field, seed in field_seeds.items()
             if field != "s" or "s" in data
@@ -3904,7 +4087,8 @@ def op_modify(body: dict) -> dict:
                 and float(existing_zz["sockets"]) == float(max_sockets)
             )
         )
-        mode = "EXACT MAX" if profile["mode"] == "exact" else "BEST POSSIBLE"
+        mode = effective_roll_label(profile)
+        detail = effective_roll_detail(profile)
         already_applied = socket_capacity_applied and all(
             isinstance(data.get(field), (int, float))
             and not isinstance(data.get(field), bool)
@@ -3917,14 +4101,14 @@ def op_modify(body: dict) -> dict:
         if max_sockets is not None:
             seed_detail += f", zz.sockets={max_sockets}"
         if already_applied:
-            return {"ok": f"{it['name']}: already {mode} ({profile['detail']})",
+            return {"ok": f"{it['name']}: already {mode} ({detail})",
                     "backup": ""}
         data.update(applicable_field_seeds)
         if max_sockets is not None:
             zz = data.setdefault("zz", {})
             zz["sockets"] = float(max_sockets)
         baks = ctx.save_all()
-        return {"ok": (f"{it['name']}: {mode} applied ({profile['detail']}; "
+        return {"ok": (f"{it['name']}: {mode} applied ({detail}; "
                        f"{seed_detail})"),
                 "backup": ", ".join(baks)}
     if action == "setstack":
@@ -4429,9 +4613,9 @@ def op_sockets(body: dict) -> dict:
         if encoded is not None:
             updated[f"s{n}"] = encoded
 
-    # zz.sockets is where the game reads the socket COUNT, so always write it;
-    # without it the game does NOT SEE sockets added from the editor (regression:
-    # this had been removed once).
+    # The payload fields s1..s6 hold contents, not slot capacity. ``zz.sockets``
+    # records the editor-visible empty-slot count; native in-game capacity is
+    # still generated from the item's measured ``a`` seed.
     if "zz" in updated or len(sockets) > 0:
         if "zz" in updated and not isinstance(updated.get("zz"), dict):
             return {"err": f"{it['name']}: socket metadata is malformed; item unchanged"}
@@ -4449,7 +4633,10 @@ def op_sockets(body: dict) -> dict:
     baks = ctx.save_all()
     filled = sum(encoded is not None for encoded in prepared)
     return {
-        "ok": f"{it['name']}: sockets updated ({filled}/{len(sockets)} filled)",
+        "ok": (
+            f"{it['name']}: sockets updated "
+            f"({filled}/{len(sockets)} filled)"
+        ),
         "backup": ", ".join(baks),
         "socketCount": len(sockets),
         "maxSockets": max_sockets,
@@ -5935,7 +6122,7 @@ class H(BaseHTTPRequestHandler):
                 "profile": CATALOG_PROFILE,
                 "catalogItems": sum(1 for row in CAT if row.get("available", True)),
                 "s10VerifiedAdditions": sum(1 for row in CAT if row.get("s10Verified")),
-                "gameBuild": GAME_BUILD_GUARD.summary(),
+                "gameBuild": _editor_runtime_build_status(),
                 "rollProfiles": ROLL_DB.summary(),
                 "diceSkillTargets": DICE_SKILL_DB.summary(),
                 "torchClassTargets": TORCH_CLASS_DB.summary(),
@@ -5950,7 +6137,7 @@ class H(BaseHTTPRequestHandler):
                 ),
             })
         elif u.path == "/api/catalog":
-            self._json(CAT)
+            self._json(catalog_api_rows())
         elif u.path == "/api/dice-skills":
             profile_id = parse_qs(u.query).get("profile", [""])[0]
             selector = DICE_SKILL_DB.selector(profile_id)
@@ -6498,14 +6685,14 @@ function gridHTML(tab,items,delTarget){
     const rr=it.rar&&it.rar!=='?'?it.rar:'_';
     const previewId=registerPreviewModel(it.gameTooltip);
     const inner=it.spr?`<img src="/icons/${attr(it.spr)}.png?v=2" loading="lazy">`:esc(short(it.name));
-    h+=`<div class="item b-${attr(rr)}" draggable="true" title="" data-i="${i}" data-preview-id="${attr(previewId)}" data-del='${attr(JSON.stringify(delTarget))}' data-key="${attr(it.key)}" data-w="${it.w||1}" data-h="${it.h||1}" data-cid="${it.cid??''}" data-rwcid="${it.rwcid??''}" data-socket-limit="${it.socketLimit??0}" data-roll="${attr(JSON.stringify(it.rollProfile||null))}" data-skill="${attr(JSON.stringify(it.skillSelector||null))}" data-raw='${attr(JSON.stringify(it.raw||{}))}'
+    h+=`<div class="item b-${attr(rr)}" draggable="true" title="" data-i="${i}" data-preview-id="${attr(previewId)}" data-del='${attr(JSON.stringify(delTarget))}' data-key="${attr(it.key)}" data-w="${it.w||1}" data-h="${it.h||1}" data-cid="${it.cid??''}" data-rwcid="${it.rwcid??''}" data-socket-limit="${it.socketLimit??0}" data-socket-count="${it.socketCount??''}" data-roll="${attr(JSON.stringify(it.rollProfile||null))}" data-skill="${attr(JSON.stringify(it.skillSelector||null))}" data-raw='${attr(JSON.stringify(it.raw||{}))}'
       style="left:${p[0]*CELL}px;top:${p[1]*CELL}px;width:${(it.w||1)*CELL-2}px;height:${(it.h||1)*CELL-2}px">${inner}${it.stack?`<span class="stk">x${it.stack}</span>`:''}</div>`;
   });
   return h+'</div>';
 }
 function uniqueListHTML(items,delTarget){
   if(!items.length)return '<div class="muted">This auto-sorted tab is empty.</div>';
-  return `<div class="unique-list">${items.map(it=>`<div class="unique-card" data-item-preview data-preview-id="${attr(registerPreviewModel(it.gameTooltip))}" data-del='${attr(JSON.stringify(delTarget))}' data-key="${attr(it.key)}" data-cid="${it.cid??''}" data-rwcid="${it.rwcid??''}" data-socket-limit="${it.socketLimit??0}" data-roll="${attr(JSON.stringify(it.rollProfile||null))}" data-skill="${attr(JSON.stringify(it.skillSelector||null))}" data-raw='${attr(JSON.stringify(it.raw||{}))}'>${it.spr?`<img src="/icons/${attr(it.spr)}.png?v=2" loading="lazy">`:'<div class="found-icon">&#9671;</div>'}<div><div class="r-${attr(it.rar||'_')}">${esc(it.name)}</div><div class="muted">right-click for actions</div></div></div>`).join('')}</div>`;
+  return `<div class="unique-list">${items.map(it=>`<div class="unique-card" data-item-preview data-preview-id="${attr(registerPreviewModel(it.gameTooltip))}" data-del='${attr(JSON.stringify(delTarget))}' data-key="${attr(it.key)}" data-cid="${it.cid??''}" data-rwcid="${it.rwcid??''}" data-socket-limit="${it.socketLimit??0}" data-socket-count="${it.socketCount??''}" data-roll="${attr(JSON.stringify(it.rollProfile||null))}" data-skill="${attr(JSON.stringify(it.skillSelector||null))}" data-raw='${attr(JSON.stringify(it.raw||{}))}'>${it.spr?`<img src="/icons/${attr(it.spr)}.png?v=2" loading="lazy">`:'<div class="found-icon">&#9671;</div>'}<div><div class="r-${attr(it.rar||'_')}">${esc(it.name)}</div><div class="muted">right-click for actions</div></div></div>`).join('')}</div>`;
 }
 function occFree(g,x,y,w,h,skipKey){
   if(x<0||y<0||x+w>g.cols||y+h>g.rows)return false;
@@ -6657,7 +6844,9 @@ function openSocketEditor(target,key,el){
   }
   const declared=Number(raw&&raw.zz&&raw.zz.sockets);
   const declaredCount=Number.isFinite(declared)?Math.max(0,Math.min(6,Math.trunc(declared))):0;
-  const currentCount=Math.max(declaredCount,highestPayload);
+  const native=Number(el.dataset.socketCount);
+  const nativeCount=Number.isFinite(native)?Math.max(0,Math.min(6,Math.trunc(native))):0;
+  const currentCount=Math.max(nativeCount,declaredCount,highestPayload);
   const RUNES=CAT.filter(r=>r.available!==false&&r.kind==='normal'&&r.cls===15);
   const choiceLabel=r=>String(r.socketChoiceLabel||r.name||'').trim();
   const byLabel=new Map();RUNES.forEach(r=>byLabel.set(choiceLabel(r).toLowerCase(),Number(r.b)));
@@ -6885,7 +7074,7 @@ function renderCatalogTooltip(cid,extra,raw,profileOverride,skillSelector){
     h+=`<div class="ttype">${meta}${r.tier?` &middot; Tier ${esc(r.tier)}`:''}${extra||''}</div>`;
     if(r.lvl)h+=`<div class="ttype">Requires Level ${r.lvl}</div>`;
     const profile=profileOverride||r.rollProfile||null;
-    const fieldSeeds=profile&&profile.fieldSeeds&&typeof profile.fieldSeeds==='object'?profile.fieldSeeds:{};
+    const fieldSeeds=profile&&profile.fieldSeeds&&typeof profile.fieldSeeds==='object'?{...profile.fieldSeeds}:{};
     const seedFields=['a','i','s'].filter(field=>Object.prototype.hasOwnProperty.call(fieldSeeds,field));
     const hasSeed=raw&&raw.a!==undefined&&Number.isFinite(Number(raw.a));
     if(isOrdinarySmallCharm(r)){
@@ -6895,10 +7084,10 @@ function renderCatalogTooltip(cid,extra,raw,profileOverride,skillSelector){
         const isClass=skillSelector.targetKind==='class';
         const kind=isClass?'CLASS TARGET':skillSelector.targetKind==='subskill'?'SUBSKILL TARGET':'SKILL TARGET';
         const target=isClass?`${esc(skillSelector.current.name)} &middot; Class ID ${skillSelector.current.id}`:`${esc(skillSelector.current.className)}: ${esc(skillSelector.current.name)} &middot; ID ${skillSelector.current.id}`;
-        h+=`<div class="ttype" style="color:#72dfdf">&#10003; ${kind} &middot; ${target} &middot; a=${hasSeed?Number(raw.a):'missing'}${isClass?' &middot; chosen targets use 4/4 MAX stats':''}</div>`;
+        h+=`<div class="ttype" style="color:#72dfdf">&#10003; ${kind} &middot; ${target} &middot; a=${hasSeed?Number(raw.a):'missing'}${isClass?' &middot; chosen targets use 4/4 MAX stats &middot; 2/2 sockets':''}</div>`;
       }else if(!raw&&skillSelector.available){
         const kind=skillSelector.targetKind==='class'?'CLASS':skillSelector.targetKind==='subskill'?'SUBSKILL':'SKILL';
-        h+=`<div class="ttype" style="color:#72dfdf">&#10003; VERIFIED ${kind} SELECTOR &middot; choose a target before adding${kind==='CLASS'?' &middot; 4/4 stats MAX':''}</div>`;
+        h+=`<div class="ttype" style="color:#72dfdf">&#10003; VERIFIED ${kind} SELECTOR &middot; choose a target before adding${kind==='CLASS'?' &middot; 4/4 stats MAX &middot; 2/2 sockets':''}</div>`;
       }else{
         h+=`<div class="ttype" style="color:#ffb46e">${skillSelector.targetKind==='class'?'Class':'Skill'} target unavailable &middot; ${esc(skillSelector.message||'saved seed could not be decoded')}</div>`;
       }
@@ -6906,13 +7095,14 @@ function renderCatalogTooltip(cid,extra,raw,profileOverride,skillSelector){
       h+=`<div class="ttype" style="color:#74ee98">&#10003; FIXED DEFINITION STATS &middot; no variable roll</div>`;
     }else if(profile&&seedFields.length&&raw){
       const applied=seedFields.every(field=>Number.isFinite(Number(raw[field]))&&Number(raw[field])===Number(fieldSeeds[field]));
-      const label=applied?(profile.mode==='exact'?'&#10003; EXACT MAX':'&#9733; BEST POSSIBLE'):'Current roll seed';
+      const rollLabel=profile.rollLabel||(profile.mode==='exact'?'EXACT MAX':'BEST POSSIBLE');
+      const label=applied?`${profile.mode==='exact'?'&#10003;':'&#9733;'} ${rollLabel}`:'Current roll seed';
       const values=seedFields.map(field=>`${field}=${raw[field]===undefined?'missing':Number(raw[field])}`).join(', ');
       h+=`<div class="ttype" style="color:${applied?'#74ee98':'#a9bdd2'}">${label} &middot; ${esc(values)}${applied?` &middot; ${esc(profile.detail)}`:''}</div>`;
     }else if(hasSeed){
       h+=`<div class="ttype" style="color:#a9bdd2">Current roll seed &middot; a=${Number(raw.a)}</div>`;
     }else if(profile){
-      h+=`<div class="ttype" style="color:#74ee98">Verified ${profile.mode==='exact'?'EXACT MAX':'BEST POSSIBLE'} profile available &middot; ${esc(profile.detail)}</div>`;
+      h+=`<div class="ttype" style="color:#74ee98">Verified ${esc(profile.rollLabel||(profile.mode==='exact'?'EXACT MAX':'BEST POSSIBLE'))} profile available &middot; ${esc(profile.detail)}</div>`;
     }
     for(const [lbl,val] of (r.stats||[])){
       h+=`<div class="tstat"><b>${esc(val)}</b> ${esc(lbl)}</div>`;
@@ -7317,7 +7507,7 @@ function dslot(g,w,h,label){
   const del=attr(JSON.stringify({type:"equipped",slot:curChar,tab:"equipped_items"}));
   const previewId=e?registerPreviewModel(e.gameTooltip):'';
   return `<div class="dslot${rr?' b-'+rr:''}" data-g="${g}" style="width:${w*DC}px;height:${h*DC}px"
-    ${e?`draggable="true" data-preview-id="${attr(previewId)}" data-del='${del}' data-key="${attr(e.key)}" data-w="${e.w||1}" data-h="${e.h||1}" data-cid="${e.cid??''}" data-rwcid="${e.rwcid??''}" data-socket-limit="${e.socketLimit??0}" data-roll="${attr(JSON.stringify(e.rollProfile||null))}" data-skill="${attr(JSON.stringify(e.skillSelector||null))}" data-raw='${attr(JSON.stringify(e.raw||{}))}'`:`title="${attr(label)} (empty)"`}>
+    ${e?`draggable="true" data-preview-id="${attr(previewId)}" data-del='${del}' data-key="${attr(e.key)}" data-w="${e.w||1}" data-h="${e.h||1}" data-cid="${e.cid??''}" data-rwcid="${e.rwcid??''}" data-socket-limit="${e.socketLimit??0}" data-socket-count="${e.socketCount??''}" data-roll="${attr(JSON.stringify(e.rollProfile||null))}" data-skill="${attr(JSON.stringify(e.skillSelector||null))}" data-raw='${attr(JSON.stringify(e.raw||{}))}'`:`title="${attr(label)} (empty)"`}>
     <span class="lbl">${esc(label)}</span>${e&&e.spr?`<img src="/icons/${attr(e.spr)}.png?v=2">`:(e?esc(short(e.name)):'')}</div>`;
 }
 function wpanel(side){
@@ -7764,7 +7954,7 @@ function showCtx(x,y,target,key,el){
   let skillSelector=null;
   try{skillSelector=JSON.parse((el&&el.dataset&&el.dataset.skill)||'null')}catch(e){}
   if(skillSelector)acts.push([skillSelector.targetKind==='class'?'Choose class...':skillSelector.targetKind==='subskill'?'Choose subskill target...':'Choose skill target...','SKILL','']);
-  else if(rollProfile&&['exact','best'].includes(rollProfile.mode))acts.push([rollProfile.mode==='exact'?'Apply EXACT MAX':'Apply BEST POSSIBLE','perfect','']);
+  else if(rollProfile&&['exact','best'].includes(rollProfile.mode))acts.push([`Apply ${rollProfile.rollLabel||(rollProfile.mode==='exact'?'EXACT MAX':'BEST POSSIBLE')}`,'perfect','']);
   acts.push(['Random reroll','reroll','']);
   const socketLimit=Number.parseInt((el&&el.dataset&&el.dataset.socketLimit)||'0',10);
   if(Number.isFinite(socketLimit)&&socketLimit>0)acts.push(['Edit sockets...','SOCKETS','']);
@@ -7834,9 +8024,9 @@ async function renderTargets(){
     ?'Random rarity & affixes · native seed'
     :diceSelector
     ?(diceSelector.available
-      ?(diceSelector.targetKind==='class'?'Choose exact class target · 4/4 stats MAX':`Choose exact ${diceSelector.targetKind==='subskill'?'subskill':'skill'} target`)
+      ?(diceSelector.targetKind==='class'?'Choose exact class target · 4/4 stats MAX · 2/2 sockets':`Choose exact ${diceSelector.targetKind==='subskill'?'subskill':'skill'} target`)
       :`${diceSelector.targetKind==='class'?'Class':'Skill'} targets disabled · ${diceSelector.message||'database unavailable'}`)
-    :(!rp?'Random roll · no verified profile':rp.mode==='fixed'?'Fixed definition stats · no roll needed':rp.mode==='exact'?`Exact MAX ${rp.maxed}/${rp.total}`:`Best Possible ${rp.maxed}/${rp.total} MAX`);
+    :(!rp?'Random roll · no verified profile':rp.mode==='fixed'?'Fixed definition stats · no roll needed':`${rp.rollLabel||(rp.mode==='exact'?'EXACT MAX':'BEST POSSIBLE')} · ${rp.maxed}/${rp.total} MAX`);
   si.innerHTML=`Selected: <span class="r-${selectedRow.rar}">${esc(selectedRow.name)}</span> <span class="muted">${selectedRow.w}x${selectedRow.h}</span> <span style="color:${(rp||diceSelector&&diceSelector.available)?'#74ee98':'#e0a05b'}">&middot; ${esc(rollText)}</span>`;
   let dicePayload=null;
   if(diceSelector&&diceSelector.available){
@@ -7885,7 +8075,7 @@ async function renderTargets(){
   const skillSelect=document.getElementById('skilladdselect');
   if(skillSelect)skillSelect.onchange=()=>{DICE_ADD_SELECTION[selectedId]=Number(skillSelect.value)};
   btn.disabled=options.length===0||Boolean(diceSelector&&!skillSelect);
-  btn.textContent=ordinarySmallCharm?'Add · RANDOM ROLL':diceSelector?(diceSelector.targetKind==='class'?'Add · CHOSEN CLASS':'Add · CHOSEN SKILL'):(actionable?(rp.mode==='exact'?'Add · EXACT MAX':'Add · BEST POSSIBLE'):(rp&&rp.mode==='fixed'?'Add · FIXED STATS':'Add · RANDOM ROLL'));
+  btn.textContent=ordinarySmallCharm?'Add · RANDOM ROLL':diceSelector?(diceSelector.targetKind==='class'?'Add · CHOSEN CLASS':'Add · CHOSEN SKILL'):(actionable?`Add · ${rp.rollLabel||(rp.mode==='exact'?'EXACT MAX':'BEST POSSIBLE')}`:(rp&&rp.mode==='fixed'?'Add · FIXED STATS':'Add · RANDOM ROLL'));
   btn.onclick=async()=>{
     if(btn.disabled)return;
     btn.disabled=true;

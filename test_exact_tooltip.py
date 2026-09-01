@@ -87,7 +87,10 @@ class ExactTooltipTests(unittest.TestCase):
         self.assertEqual(mismatches, [])
 
     def test_zephy_perfect_seed_replays_each_named_value(self):
-        model = self.model("unique:1:0:52", 1149, {"a": 3_888_156.0})
+        model = self.model(
+            "unique:1:0:52", 1149,
+            {"a": 3_888_156.0},
+        )
         values = {key: row["value"] for key, row in self.by_key(model).items()}
         self.assertEqual(values, {
             20: 3,
@@ -110,7 +113,10 @@ class ExactTooltipTests(unittest.TestCase):
         self.assertEqual(model["calculation"]["unsupportedPaths"], [])
 
     def test_arbitrary_nonperfect_seed_uses_native_cpr_order(self):
-        model = self.model("unique:1:0:52", 1149, {"a": 1.0})
+        model = self.model(
+            "unique:1:0:52", 1149,
+            {"a": 1.0},
+        )
         values = {key: row["value"] for key, row in self.by_key(model).items()}
         self.assertEqual(values[29], 134)   # 100 + CPR(50) -> 34
         self.assertEqual(values[53], 15)    # 7 + CPR(8) -> 8
@@ -154,7 +160,9 @@ class ExactTooltipTests(unittest.TestCase):
             "detectedSha256": "0" * 64,
         }
         model = self.model(
-            "unique:1:0:52", 1149, {"a": 3_888_156}, build_status=mismatch
+            "unique:1:0:52", 1149,
+            {"a": 3_888_156},
+            build_status=mismatch,
         )
         self.assertFalse(model["calculation"]["numbersExact"])
         self.assertIn("build_unverified", model["calculation"]["unsupportedPaths"])
@@ -162,23 +170,25 @@ class ExactTooltipTests(unittest.TestCase):
             row["confidence"] == "modelled_unverified" for row in model["stats"]
         ))
 
-    def test_audited_706_build_claims_exact_values_without_weakening_unknowns(self):
+    def test_audited_compatible_build_claims_exact_values_without_weakening_unknowns(self):
         compatible = {
             "matched": True,
             "code": "ready_compatible",
             "message": "numeric path independently audited",
             "expectedSha256": subject.EXPECTED_EXE_SHA256,
-            "detectedSha256": roll_db.SEASON_10_706_EXE_SHA256,
+            "detectedSha256": roll_db.SEASON_10_COMPATIBLE_EXE_SHA256,
         }
         model = self.model(
-            "unique:1:0:52", 1149, {"a": 3_888_156}, build_status=compatible
+            "unique:1:0:52", 1149,
+            {"a": 3_888_156},
+            build_status=compatible,
         )
         self.assertTrue(model["calculation"]["numbersExact"])
         self.assertTrue(model["calculation"]["buildMatched"])
         self.assertEqual(model["buildGuard"]["code"], "ready_compatible")
         self.assertEqual(
             model["buildGuard"]["detectedExeSha256"],
-            roll_db.SEASON_10_706_EXE_SHA256,
+            roll_db.SEASON_10_COMPATIBLE_EXE_SHA256,
         )
 
         rejected_statuses = (
@@ -190,7 +200,8 @@ class ExactTooltipTests(unittest.TestCase):
         for rejected in rejected_statuses:
             with self.subTest(status=rejected):
                 guarded = self.model(
-                    "unique:1:0:52", 1149, {"a": 3_888_156},
+                    "unique:1:0:52", 1149,
+                    {"a": 3_888_156},
                     build_status=rejected,
                 )
                 self.assertFalse(guarded["calculation"]["numbersExact"])
@@ -409,7 +420,11 @@ class ExactTooltipTests(unittest.TestCase):
             json.dumps({"a": 123, "b": 42, "n": 0}).encode("ascii")
         ).decode("ascii")
         model = self.model(
-            "unique:1:0:52", 1149, {"a": 3_888_156, "s1": socket}
+            "unique:1:0:52", 1149,
+            {
+                "a": 3_888_156,
+                "s1": socket,
+            },
         )
         self.assertEqual(model["sockets"], [{
             "index": 1,
@@ -424,11 +439,16 @@ class ExactTooltipTests(unittest.TestCase):
             model["calculation"]["unsupportedPaths"],
         )
 
-    def test_native_socket_count_overrides_definition_capacity_and_stays_exact(self):
+    def test_ordinary_unique_uses_explicit_saved_socket_override(self):
         model = self.model(
             "unique:1:0:52",
             1149,
-            {"a": 3_888_156, "zz": {"sockets": 1.0}},
+            {
+                "a": 3_888_156,
+                "c": 1.0,
+                "s": 1.0,
+                "zz": {"sockets": 1.0},
+            },
         )
         sockets = self.by_key(model)[20]
         self.assertEqual(sockets["value"], 1)
@@ -437,25 +457,19 @@ class ExactTooltipTests(unittest.TestCase):
         self.assertEqual(sockets["confidence"], "exact")
         self.assertTrue(model["calculation"]["numbersExact"])
         self.assertEqual(model["calculation"]["unsupportedPaths"], [])
+        self.assertEqual(model["calculation"]["warnings"], [])
 
-    def test_invalid_native_socket_count_fails_closed(self):
-        invalid_data = [
-            {"zz": {"sockets": invalid}}
-            for invalid in (-1, 7, 1.5, True, "2")
-        ] + [{"zz": invalid} for invalid in (None, 3, "malformed", [])]
-        for invalid in invalid_data:
+    def test_invalid_stale_s_field_does_not_replace_direct_a_socket_roll(self):
+        for invalid in (0, -1, 1.5, True, "2", None, float("nan")):
             with self.subTest(invalid=invalid):
                 model = self.model(
                     "unique:1:0:52",
                     1149,
-                    {"a": 3_888_156, **invalid},
+                    {"a": 3_888_156, "s": invalid},
                 )
-                self.assertFalse(model["calculation"]["numbersExact"])
-                self.assertIn(
-                    "invalid_socket_count",
-                    model["calculation"]["unsupportedPaths"],
-                )
-                self.assertEqual(self.by_key(model)[20]["confidence"], "unresolved")
+                self.assertTrue(model["calculation"]["numbersExact"])
+                self.assertEqual(self.by_key(model)[20]["value"], 3)
+                self.assertEqual(self.by_key(model)[20]["saveField"], "a")
 
     def test_real_runeword_socket_payloads_remain_partial(self):
         rune_ids = (26, 15, 27, 2, 33, 28)  # Breath of the Damned recipe #1

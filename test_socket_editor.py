@@ -9,7 +9,6 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-
 MODULE_PATH = Path(__file__).with_name("hs_item_editor_gui.py")
 SPEC = importlib.util.spec_from_file_location("hs_item_editor_socket_tests", MODULE_PATH)
 editor = importlib.util.module_from_spec(SPEC)
@@ -73,7 +72,122 @@ class SocketEditorTests(unittest.TestCase):
         self.assertIn("ok", result)
         self.assertEqual(result["socketCount"], 4)
         self.assertEqual(result["maxSockets"], 4)
-        self.assertEqual(self._read_data()["zz"]["sockets"], 4.0)
+        data = self._read_data()
+        self.assertEqual(data["a"], 4677950.0)
+        self.assertNotIn("s", data)
+        self.assertEqual(data["zz"], {"sockets": 4.0})
+
+    def test_every_measured_socket_seed_is_used_for_generation(self):
+        checked = 0
+        for row in editor.CAT:
+            profile = row.get("rollProfile")
+            socket_roll = editor.socket_roll_for_profile(profile)
+            if socket_roll is None:
+                continue
+            with self.subTest(address=profile["addressKey"], name=row["name"]):
+                data = editor.make_data(row)
+                self.assertEqual(data["a"], float(socket_roll["seed"]))
+                self.assertEqual(data["c"], 1.0)
+                self.assertEqual(
+                    data["zz"],
+                    {"sockets": float(socket_roll["maxSockets"])},
+                )
+                self.assertEqual(
+                    editor.roll_profile_max_sockets(profile),
+                    socket_roll["maxSockets"],
+                )
+                previous = socket_roll["previous"]
+                self.assertGreaterEqual(socket_roll["maxed"], previous["maxed"])
+                self.assertLessEqual(
+                    socket_roll["endpointDeficit"],
+                    previous["endpointDeficit"],
+                )
+            checked += 1
+        self.assertEqual(checked, 267)
+
+    def test_st_ahto_persists_three_socket_override(self):
+        row = next(
+            row for row in editor.CAT
+            if row.get("key") == "gloves_ahtos_diamond_hands"
+        )
+
+        data = editor.make_data(row)
+
+        self.assertEqual(data["a"], 85_306_253.0)
+        self.assertEqual(data["zz"], {"sockets": 3.0})
+
+    def test_measured_capacity_overrides_stale_profile_and_catalog_limits(self):
+        cases = (
+            ("armors_zephys_gown", 4),
+            ("rings_parasite_loop", 2),
+        )
+        for key, expected in cases:
+            with self.subTest(key=key):
+                row = next(row for row in editor.CAT if row.get("key") == key)
+                data = editor.make_data(row)
+                item_key = f"0-0-1234567890123-{row['cls']}"
+                self.assertEqual(editor.resolve(item_key, data)["socketLimit"], expected)
+                self.assertEqual(data["zz"], {"sockets": float(expected)})
+
+    def test_socket_seed_table_replays_every_current_and_previous_result(self):
+        from socket_chain import predict_sockets
+
+        document = editor._load_socket_seed_document()
+        self.assertEqual(document["schemaVersion"], 1)
+        self.assertEqual(len(document["seeds"]), 267)
+        for address, entry in document["seeds"].items():
+            with self.subTest(address=address):
+                self.assertEqual(
+                    predict_sockets(
+                        entry["seed"], entry["statBounds"], entry["maxSockets"]
+                    ),
+                    entry["maxSockets"],
+                )
+                self.assertEqual(
+                    predict_sockets(
+                        entry["previous"]["seed"],
+                        entry["statBounds"],
+                        entry["maxSockets"],
+                    ),
+                    entry["previous"]["sockets"],
+                )
+
+    def test_missing_socket_seed_asset_fails_closed_instead_of_falling_back(self):
+        old_base = editor.BASE
+        old_document = editor._SOCKET_SEED_DOCUMENT
+        old_seeds = editor._SOCKET_SEEDS
+        try:
+            editor.BASE = self.saves
+            editor._SOCKET_SEED_DOCUMENT = None
+            editor._SOCKET_SEEDS = None
+            with self.assertRaisesRegex(RuntimeError, "socket seed database unavailable"):
+                editor._load_socket_seed_document()
+        finally:
+            editor.BASE = old_base
+            editor._SOCKET_SEED_DOCUMENT = old_document
+            editor._SOCKET_SEEDS = old_seeds
+
+    def test_editing_st_ahto_repairs_explicit_socket_override(self):
+        old_key = self.key
+        self.key = "0-0-1234567890123-4"
+        self.stash["unique_items"][self.key] = self.stash["unique_items"].pop(old_key)
+        self.data.update({
+            "a": 17303869.0,
+            "j": 0.0,
+            "b": 30.0,
+            "s": 987654321.0,
+            "zz": {"sockets": 1.0, "future": "keep"},
+        })
+        self._write_stash()
+
+        result = self._socket([None, None, None])
+
+        self.assertIn("ok", result)
+        self.assertEqual(result["maxSockets"], 3)
+        updated = self._read_data()
+        self.assertEqual(updated["a"], 17303869.0)
+        self.assertEqual(updated["s"], 987654321.0)
+        self.assertEqual(updated["zz"], {"sockets": 3.0, "future": "keep"})
 
     def test_too_many_sockets_is_atomic_and_creates_no_backup(self):
         before = (self.saves / "stash.hss").read_bytes()
@@ -106,7 +220,8 @@ class SocketEditorTests(unittest.TestCase):
         self.assertIn("ok", cleared)
         updated = self._read_data()
         self.assertNotIn("s1", updated)
-        self.assertEqual(updated["zz"]["sockets"], 0.0)
+        self.assertNotIn("s", updated)
+        self.assertEqual(updated["zz"], {"sockets": 0.0})
 
     def test_known_item_without_socket_capacity_is_not_editable(self):
         # Leviathan's Crown has a binary-proven native 2-4 socket range even
@@ -146,6 +261,7 @@ class SocketEditorTests(unittest.TestCase):
             "future": {"opaque": True},
         }, separators=(",", ":")).encode()).decode()
         self.data.update({
+            "s": 777777777.0,
             "s1": payload,
             "zz": {"sockets": 2.0, "future": "keep"},
             "unset": 1.0,
@@ -158,6 +274,7 @@ class SocketEditorTests(unittest.TestCase):
         updated = self._read_data()
         self.assertEqual(updated["s1"], payload)
         self.assertEqual(updated["zz"], {"sockets": 2.0, "future": "keep"})
+        self.assertEqual(updated["s"], 777777777.0)
         self.assertNotIn("unset", updated)
 
     def test_existing_payload_cannot_be_copied_more_times_than_it_exists(self):
@@ -233,7 +350,9 @@ class SocketEditorTests(unittest.TestCase):
 
         self.assertIn("ok", result)
         updated = self._read_data()
-        self.assertEqual(updated["zz"]["sockets"], 4.0)
+        self.assertEqual(updated["a"], 4677950.0)
+        self.assertNotIn("s", updated)
+        self.assertEqual(updated["zz"], {"sockets": 4.0})
         decoded = json.loads(base64.b64decode(updated["s2"]))
         self.assertEqual(decoded["b"], rune["b"])
         self.assertEqual(decoded["n"], 0)
@@ -243,7 +362,8 @@ class SocketEditorTests(unittest.TestCase):
     def test_frontend_restores_declared_empty_slots_without_swallowing_clicks(self):
         html = editor.HTML
         self.assertIn("raw&&raw.zz&&raw.zz.sockets", html)
-        self.assertIn("Math.max(declaredCount,highestPayload)", html)
+        self.assertIn("data-socket-count=", html)
+        self.assertIn("Math.max(nativeCount,declaredCount,highestPayload)", html)
         self.assertIn("inp.oninput=", html)
         self.assertNotIn("inp.onchange=", html)
         self.assertIn("row.originalEncoded&&row.originalB===row.b", html)

@@ -921,29 +921,22 @@ class InfiniteVaultIntegrationTests(unittest.TestCase):
         stored = self._single_vault_item()
         raw_before = stored.raw_item_json
         sha_before = stored.raw_sha256
-        build_status = {
-            "matched": False,
-            "code": "test_unverified",
-            "message": "Test build intentionally unverified.",
-            "expectedSha256": editor.EXPECTED_GAME_EXE_SHA256,
-        }
-        with patch.object(editor.GAME_BUILD_GUARD, "summary", return_value=build_status):
-            named = editor.op_vault_item({
-                "action": "setCustomName",
-                "itemId": stored.id,
-                "customName": "<img src=x onerror=alert(1)>",
-            })
-            self._assert_ok(named)
-            self.assertEqual(
-                named["item"]["customName"], "<img src=x onerror=alert(1)>"
-            )
-            cleared = editor.op_vault_item({
-                "action": "setCustomName",
-                "itemId": stored.id,
-                "customName": "   ",
-            })
-            self._assert_ok(cleared)
-            self.assertIsNone(cleared["item"]["customName"])
+        named = editor.op_vault_item({
+            "action": "setCustomName",
+            "itemId": stored.id,
+            "customName": "<img src=x onerror=alert(1)>",
+        })
+        self._assert_ok(named)
+        self.assertEqual(
+            named["item"]["customName"], "<img src=x onerror=alert(1)>"
+        )
+        cleared = editor.op_vault_item({
+            "action": "setCustomName",
+            "itemId": stored.id,
+            "customName": "   ",
+        })
+        self._assert_ok(cleared)
+        self.assertIsNone(cleared["item"]["customName"])
 
         final = self._vault().get_item(stored.id)
         self.assertEqual(final.raw_item_json, raw_before)

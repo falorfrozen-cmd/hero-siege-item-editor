@@ -376,6 +376,7 @@ class LaunchReadinessTests(unittest.TestCase):
             "hs_runewords.json",
             "hs_sets.json",
             "hs_perfect_roll_profiles.json",
+            "hs_socket_seeds.json",
             "hs_dice_skill_targets.json",
             "item_icons",
             "roll_profile_db",

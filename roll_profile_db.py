@@ -30,14 +30,15 @@ CATALOG_PROFILE = "Season 10"
 EXPECTED_EXE_SHA256 = (
     "438BF4848688C5BE52AC15F26F02B46DA620D90587C28E766A9CEA190F3A7DE4"
 )
-SEASON_10_706_EXE_SHA256 = (
+SEASON_10_COMPATIBLE_EXE_SHA256 = (
     "2034FAD4096BE6DE1147E4FF61B942A706673A9567B10C3013C6393ED0686486"
 )
 
 # The runtime artifact was exhaustively solved against EXPECTED_EXE_SHA256.
 # A later Steam build may reuse it only after a fresh, static compatibility
 # audit proves that the complete roll model is semantically identical.  The
-# 7.0.6 proof was produced from the clean executable on 2026-08-31:
+# The compatibility proof was produced from the later Season 10 executable on
+# 2026-08-31.  Do not infer a patch number from Windows' stale PE version:
 #
 # * all 1,444 definition profiles re-extracted with zero failures/warnings;
 # * their address/stat/event projection matched 7.0.5 exactly;
@@ -49,7 +50,7 @@ SEASON_10_706_EXE_SHA256 = (
 # still the provenance hash of the solved artifact and must never be rewritten
 # merely to make a new executable pass validation.
 ROLL_BUILD_EQUIVALENCE_PROOFS: dict[str, dict[str, Any]] = {
-    SEASON_10_706_EXE_SHA256: {
+    SEASON_10_COMPATIBLE_EXE_SHA256: {
         "sourceExeSha256": EXPECTED_EXE_SHA256,
         "definitionProfileCount": 1_444,
         "definitionSemanticSha256": (
@@ -955,7 +956,7 @@ __all__ = [
     "RollProfileStatus",
     "RollProfileValidationError",
     "SCHEMA_VERSION",
-    "SEASON_10_706_EXE_SHA256",
+    "SEASON_10_COMPATIBLE_EXE_SHA256",
     "SEED_START",
     "SEED_STOP",
     "SUPPORTED_RUNTIME_EXE_SHA256",

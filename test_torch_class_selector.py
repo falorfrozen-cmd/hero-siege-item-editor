@@ -23,6 +23,7 @@ class TorchClassSelectorTests(unittest.TestCase):
                 self.assertEqual(replay.variable_rolls, (10, 2, 10, 2))
                 self.assertTrue(replay.all_variable_stats_max)
                 self.assertEqual(replay.class_id, target["id"])
+                self.assertEqual(replay.socket_count, 2)
 
     def test_known_classes_and_current_seed_decode(self):
         database = subject.load_torch_class_database()
@@ -31,10 +32,11 @@ class TorchClassSelectorTests(unittest.TestCase):
         self.assertEqual((pirate["name"], pirate["seed"]), ("Pirate", 331_867))
         self.assertEqual(
             (stormweaver["name"], stormweaver["seed"]),
-            ("Stormweaver", 314_470),
+            ("Stormweaver", 326_164),
         )
         selector = database.selector(subject.TORCH_PROFILE_ID, pirate["seed"])
         self.assertEqual(selector["targetKind"], "class")
+        self.assertEqual(selector["maxSockets"], 2)
         self.assertEqual(selector["current"]["id"], 4)
         self.assertEqual(selector["current"]["name"], "Pirate")
         self.assertEqual(subject.CLASS_NAMES[18], "Jötunn")
@@ -66,7 +68,7 @@ class TorchClassSelectorTests(unittest.TestCase):
         )
         self.assertTrue(
             subject.supports_executable_sha256(
-                subject.SEASON_10_706_EXE_SHA256.lower()
+                subject.SEASON_10_COMPATIBLE_EXE_SHA256.lower()
             )
         )
         self.assertFalse(subject.supports_executable_sha256("0" * 64))
@@ -100,7 +102,7 @@ class TorchClassSelectorTests(unittest.TestCase):
             Path(__file__).parent,
             runtime_build_check=lambda: (
                 "Installed Hero_Siege.exe does not match Dice's proven build "
-                f"(detected {subject.SEASON_10_706_EXE_SHA256})"
+                f"(detected {subject.SEASON_10_COMPATIBLE_EXE_SHA256})"
             ),
         )
         self.assertFalse(database.available)

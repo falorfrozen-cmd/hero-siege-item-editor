@@ -179,14 +179,14 @@ class RollProfileDatabaseTests(unittest.TestCase):
         )
         self.assertTrue(
             roll_db.supports_executable_sha256(
-                roll_db.SEASON_10_706_EXE_SHA256.lower()
+                roll_db.SEASON_10_COMPATIBLE_EXE_SHA256.lower()
             )
         )
         self.assertFalse(roll_db.supports_executable_sha256("0" * 64))
         self.assertFalse(roll_db.supports_executable_sha256(None))
 
         proof = roll_db.ROLL_BUILD_EQUIVALENCE_PROOFS[
-            roll_db.SEASON_10_706_EXE_SHA256
+            roll_db.SEASON_10_COMPATIBLE_EXE_SHA256
         ]
         self.assertEqual(proof["sourceExeSha256"], roll_db.EXPECTED_EXE_SHA256)
         self.assertEqual(proof["definitionProfileCount"], 1_444)

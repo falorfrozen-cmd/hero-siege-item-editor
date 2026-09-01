@@ -62,7 +62,7 @@ class FixtureRollDatabase:
             ),
             roll_profile(
                 "unique:1:0:52", "unique", "Zephy's Gown", "exact",
-                {"a": 3_888_156}, 6, 6, 0,
+                {"a": 3_888_156}, 6, 6, 0, max_sockets=3,
             ),
             roll_profile(
                 "unique:3:3:18", "unique", "The Dawn Bringer", "best",
@@ -71,6 +71,10 @@ class FixtureRollDatabase:
             roll_profile(
                 "unique:3:13:2", "unique", "Poison Ivy", "best",
                 {"a": 4_677_950}, 6, 7, 1, max_sockets=4,
+            ),
+            roll_profile(
+                "unique:4:0:30", "unique", "St. Ahto's Diamond Hands", "best",
+                {"a": 17_303_869}, 7, 9, 2, max_sockets=3,
             ),
             roll_profile(
                 "unique:7:0:61", "unique", "Parasite Loop", "exact",
@@ -270,7 +274,7 @@ class ItemEditorSeason10Tests(unittest.TestCase):
         self.assertEqual((created["c"], created["b"], created["m"]),
                          (1.0, 22.0, 1.0))
 
-    def test_verified_exact_roll_changes_only_main_seed(self):
+    def test_verified_exact_roll_updates_seed_and_socket_override(self):
         gown = catalog_row("armors_zephys_gown")
         editor.op_add({"cid": gown["id"], "target": {
             "type": "bag", "slot": 1, "tab": "inventory_tab_0"}})
@@ -295,8 +299,9 @@ class ItemEditorSeason10Tests(unittest.TestCase):
         updated = json.loads(editor.decode_hss(bags_path))
         data = updated["inventory_tab_0"][key]["data"]
         profile = gown["rollProfile"]
-        self.assertEqual(data["a"], float(profile["fieldSeeds"]["a"]))
-        self.assertIn("EXACT MAX", result["ok"])
+        socket_roll = editor.socket_roll_for_profile(profile)
+        self.assertEqual(data["a"], float(socket_roll["seed"]))
+        self.assertIn("BEST VERIFIED + MAX SOCKETS", result["ok"])
         self.assertEqual(data["i"], 222.0)
         self.assertEqual(data["s"], 333.0)
         self.assertEqual(data["zz"], {"sockets": 4.0})
@@ -320,7 +325,7 @@ class ItemEditorSeason10Tests(unittest.TestCase):
             "key": key,
         })
 
-        self.assertIn("already EXACT MAX", result["ok"])
+        self.assertIn("already BEST VERIFIED + MAX SOCKETS", result["ok"])
         self.assertEqual(result["backup"], "")
         self.assertEqual(char_path.read_bytes(), char_before)
         self.assertEqual(
@@ -360,8 +365,35 @@ class ItemEditorSeason10Tests(unittest.TestCase):
         self.assertIn("ok", result)
         bags = json.loads(editor.decode_hss(self.saves / "inventory_order_1.hss"))
         data = next(iter(bags["inventory_tab_0"].values()))["data"]
-        self.assertEqual(data["a"], 4_677_950.0)
+        self.assertEqual(data["a"], 17_234_404.0)
         self.assertEqual(data["zz"], {"sockets": 4.0})
+
+    def test_st_ahto_generation_persists_three_socket_capacity(self):
+        ahto = catalog_row("gloves_ahtos_diamond_hands")
+
+        result = editor.op_add({"cid": ahto["id"], "target": {
+            "type": "bag", "slot": 1, "tab": "inventory_tab_0"}})
+
+        self.assertIn("ok", result)
+        bags = json.loads(editor.decode_hss(self.saves / "inventory_order_1.hss"))
+        data = next(iter(bags["inventory_tab_0"].values()))["data"]
+        self.assertEqual(data["a"], 85_306_253.0)
+        self.assertEqual(data["zz"], {"sockets": 3.0})
+
+    def test_catalog_exposes_socket_aware_seed_capacity_and_label(self):
+        rows = editor.catalog_api_rows()
+        gown = next(row for row in rows if row.get("key") == "armors_zephys_gown")
+        profile = gown["rollProfile"]
+        self.assertEqual(profile["fieldSeeds"]["a"], 5_983_559.0)
+        self.assertEqual(profile["maxSockets"], 4)
+        self.assertEqual(profile["mode"], "best")
+        self.assertEqual(profile["rollLabel"], "BEST VERIFIED + MAX SOCKETS")
+        self.assertEqual(profile["socketRoll"]["seed"], 5_983_559)
+        # The authenticated source profile remains immutable; the socket data
+        # is an explicit client/runtime overlay rather than a database rewrite.
+        source = catalog_row("armors_zephys_gown")["rollProfile"]
+        self.assertEqual(source["fieldSeeds"]["a"], 3_888_156)
+        self.assertEqual(source["maxSockets"], 3)
 
     def test_poison_ivy_perfect_repairs_stale_one_socket_override(self):
         ivy = catalog_row("w_bow_poison_ivy")
@@ -375,6 +407,7 @@ class ItemEditorSeason10Tests(unittest.TestCase):
         ).decode()
         entry["data"].update({
             "a": 4_677_950.0,
+            "s": 78_396_883.0,
             "s1": socket_payload,
             "zz": {"sockets": 1.0, "opaque": {"keep": True}},
         })
@@ -386,10 +419,11 @@ class ItemEditorSeason10Tests(unittest.TestCase):
             "key": key,
         })
 
-        self.assertIn("BEST POSSIBLE", result["ok"])
+        self.assertIn("BEST VERIFIED + MAX SOCKETS", result["ok"])
         self.assertIn("zz.sockets=4", result["ok"])
         data = json.loads(editor.decode_hss(path))["inventory_tab_0"][key]["data"]
-        self.assertEqual(data["a"], 4_677_950.0)
+        self.assertEqual(data["a"], 17_234_404.0)
+        self.assertEqual(data["s"], 78_396_883.0)
         self.assertEqual(data["zz"], {"sockets": 4.0, "opaque": {"keep": True}})
         self.assertEqual(data["s1"], socket_payload)
 
@@ -485,7 +519,7 @@ class ItemEditorSeason10Tests(unittest.TestCase):
         self.assertIn("ok", result)
         bags = json.loads(editor.decode_hss(self.saves / "inventory_order_1.hss"))
         data = next(iter(bags["inventory_tab_0"].values()))["data"]
-        self.assertEqual(data["a"], 314_560.0)
+        self.assertEqual(data["a"], 314_614.0)
 
     def test_identity_only_profile_has_no_perfect_write_or_backup(self):
         charm = catalog_row("charms_overloaded_dice")
@@ -576,7 +610,7 @@ class ItemEditorSeason10Tests(unittest.TestCase):
         self.assertIn("All Skills class -> Viking", changed["ok"])
         self.assertIn("4/4 stats MAX", changed["ok"])
         updated_entry = json.loads(editor.decode_hss(path))["inventory_tab_0"][key]
-        self.assertEqual(updated_entry["data"]["a"], 332_503.0)
+        self.assertEqual(updated_entry["data"]["a"], 348_787.0)
         self.assertEqual(
             {field: value for field, value in updated_entry["data"].items() if field != "a"},
             untouched_data,
@@ -640,7 +674,7 @@ class ItemEditorSeason10Tests(unittest.TestCase):
         self.assertEqual((filled["added"], filled["existing"]), (1, 0))
         unique_items = json.loads(editor.decode_hss(stash_path))["unique_items"]
         self.assertEqual(len(unique_items), 1)
-        self.assertEqual(next(iter(unique_items.values()))["data"]["a"], 332_503.0)
+        self.assertEqual(next(iter(unique_items.values()))["data"]["a"], 348_787.0)
 
     def test_unique_fill_frontend_supplies_and_explains_torch_class_default(self):
         self.assertIn(
@@ -656,129 +690,43 @@ class ItemEditorSeason10Tests(unittest.TestCase):
             editor.HTML,
         )
 
-    def test_torch_706_hash_override_requires_stable_build_mismatch_status(self):
-        # Select the new hash independent of summary ordering.
-        digest = next(value for value in editor.TORCH_CLASS_DB.summary()["supportedExeSha256"]
-                      if value.startswith("2034FAD4"))
-
-        class StubGuard:
-            def __init__(self, summary):
-                self._summary = summary
-
-            def summary(self):
-                return dict(self._summary)
-
-        with patch.object(editor, "GAME_BUILD_GUARD", StubGuard({
-            "matched": False,
-            "code": "unstable",
-            "detectedSha256": digest,
-            "message": "executable changed while hashing",
-        })):
-            self.assertEqual(
-                editor._torch_runtime_build_error(),
-                "executable changed while hashing",
-            )
-        with patch.object(editor, "GAME_BUILD_GUARD", StubGuard({
-            "matched": False,
-            "code": "build_mismatch",
-            "detectedSha256": digest,
-            "message": "expected old hash",
-        })):
-            self.assertIsNone(editor._torch_runtime_build_error())
-
-    def test_roll_706_compatibility_is_stable_and_does_not_unlock_dice(self):
-        digest = next(
-            value
-            for value in editor.TORCH_CLASS_DB.summary()["supportedExeSha256"]
-            if value.startswith("2034FAD4")
-        )
-        self.assertTrue(editor.roll_supports_executable_sha256(digest))
-
-        class StubGuard:
-            def __init__(self, summary):
-                self._summary = summary
-
-            def summary(self):
-                return dict(self._summary)
-
-            def error(self):
-                return (
-                    None
-                    if self._summary.get("matched")
-                    else str(self._summary.get("message") or "unverified")
-                )
-
-        with patch.object(editor, "GAME_BUILD_GUARD", StubGuard({
-            "matched": False,
-            "code": "unstable",
-            "detectedSha256": digest,
-            "message": "executable changed while hashing",
-        })):
-            self.assertEqual(
-                editor._roll_runtime_build_error(),
-                "executable changed while hashing",
-            )
-
-        with patch.object(editor, "GAME_BUILD_GUARD", StubGuard({
-            "matched": False,
-            "code": "build_mismatch",
-            "detectedSha256": digest,
-            "message": "Dice still requires its original build proof",
-        })):
-            self.assertIsNone(editor._roll_runtime_build_error())
-            self.assertEqual(
-                editor.GAME_BUILD_GUARD.error(),
-                "Dice still requires its original build proof",
-            )
-
-        with patch.object(editor, "GAME_BUILD_GUARD", StubGuard({
-            "matched": False,
-            "code": "build_mismatch",
-            "detectedSha256": "0" * 64,
-            "message": "unknown executable",
-        })):
-            self.assertEqual(
-                editor._roll_runtime_build_error(),
-                "unknown executable",
-            )
-
-        compatible_status = {
+    def test_executable_matching_does_not_block_editor_capabilities(self):
+        unknown_status = {
             "matched": False,
             "code": "build_mismatch",
             "expectedSha256": editor.EXPECTED_GAME_EXE_SHA256,
-            "detectedSha256": digest,
-            "message": "source build differs",
+            "detectedSha256": "0" * 64,
+            "message": "unknown or modded executable",
         }
+
+        self.assertIsNone(editor._roll_runtime_build_error())
+        self.assertIsNone(editor._torch_runtime_build_error())
+        self.assertTrue(editor.ROLL_DB.available)
+        self.assertTrue(editor.TORCH_CLASS_DB.available)
+        self.assertTrue(editor.DICE_SKILL_DB.available)
+
         zephy = catalog_row("armors_zephys_gown")
-        promoted = editor._tooltip_runtime_build_status(zephy, compatible_status)
+        promoted = editor._tooltip_runtime_build_status(zephy, unknown_status)
         self.assertTrue(promoted["matched"])
-        self.assertEqual(promoted["code"], "ready_compatible")
-        self.assertFalse(compatible_status["matched"])  # caller data is immutable
+        self.assertEqual(promoted["code"], "ready_unrestricted")
+        self.assertFalse(promoted["matchingEnforced"])
+        self.assertFalse(unknown_status["matched"])  # caller data is immutable
 
         for key in ("charms_loaded_dice", "charms_overloaded_dice"):
             with self.subTest(key=key):
                 dice_status = editor._tooltip_runtime_build_status(
-                    catalog_row(key), compatible_status
+                    catalog_row(key), unknown_status
                 )
-                self.assertFalse(dice_status["matched"])
-                self.assertEqual(dice_status["code"], "build_mismatch")
-
-        for rejected in (
-            dict(compatible_status, code="unstable"),
-            dict(compatible_status, detectedSha256="0" * 64),
-        ):
-            with self.subTest(rejected=rejected):
-                self.assertFalse(
-                    editor._tooltip_runtime_build_status(zephy, rejected)["matched"]
-                )
+                self.assertTrue(dice_status["matched"])
+                self.assertEqual(dice_status["code"], "ready_unrestricted")
 
         zephy_item = editor.resolve("0-0-1-1", editor.make_data(zephy))
         zephy_item["rollProfile"] = self.old_roll_db.lookup("unique", 1, 0, 52)
         zephy_tooltip = editor._game_tooltip_model(
-            zephy_item, build_status=compatible_status
+            zephy_item, build_status=unknown_status
         )
         self.assertTrue(zephy_tooltip["calculation"]["numbersExact"])
-        self.assertEqual(zephy_tooltip["buildGuard"]["code"], "ready_compatible")
+        self.assertEqual(zephy_tooltip["buildGuard"]["code"], "ready_unrestricted")
 
         loaded = catalog_row("charms_loaded_dice")
         loaded_item = editor.resolve(
@@ -786,11 +734,11 @@ class ItemEditorSeason10Tests(unittest.TestCase):
         )
         loaded_item["rollProfile"] = self.old_roll_db.lookup("unique", 10, 0, 31)
         loaded_tooltip = editor._game_tooltip_model(
-            loaded_item, build_status=compatible_status
+            loaded_item, build_status=unknown_status
         )
-        self.assertFalse(loaded_tooltip["calculation"]["numbersExact"])
-        self.assertFalse(loaded_tooltip["calculation"]["buildMatched"])
-        self.assertEqual(loaded_tooltip["buildGuard"]["code"], "build_mismatch")
+        self.assertTrue(loaded_tooltip["calculation"]["numbersExact"])
+        self.assertTrue(loaded_tooltip["calculation"]["buildMatched"])
+        self.assertEqual(loaded_tooltip["buildGuard"]["code"], "ready_unrestricted")
 
     def test_capability_banner_distinguishes_roll_torch_and_dice(self):
         self.assertIn("MAX/BEST READY", editor.HTML)
@@ -1005,11 +953,12 @@ class ItemEditorSeason10Tests(unittest.TestCase):
         bags = json.loads(editor.decode_hss(path))
         key, entry = next(iter(bags["inventory_tab_0"].items()))
         entry["data"]["a"] = 1.0
+        entry["data"].pop("s", None)
         self.assertNotIn("s", entry["data"])
         path.write_text(editor.encode_hss(json.dumps(bags)), encoding="ascii")
 
-        # Synthetic future profile: creation/forge may opt into s explicitly,
-        # but Perfect on an existing item must preserve an absent enable field.
+        # A profile may optimize s, but Perfect must preserve an absent enable
+        # field on an existing item.
         profile = gown["rollProfile"]
         profile["fieldSeeds"]["s"] = 987_654
         profile["chains"]["s"] = {"seed": 987_654}
@@ -1021,11 +970,10 @@ class ItemEditorSeason10Tests(unittest.TestCase):
         self.assertIn("ok", result)
         updated = json.loads(editor.decode_hss(path))
         data = updated["inventory_tab_0"][key]["data"]
-        self.assertEqual(data["a"], 3_888_156.0)
+        self.assertEqual(data["a"], 5_983_559.0)
         self.assertNotIn("s", data)
 
-        # Once s is already present, the independently verified s chain is
-        # active and Perfect may update that field without touching payloads.
+        # Once s is present, its independently verified chain is active.
         data["s"] = 2.0
         data["s1"] = "opaque-socket-payload"
         path.write_text(editor.encode_hss(json.dumps(updated)), encoding="ascii")
@@ -1039,11 +987,12 @@ class ItemEditorSeason10Tests(unittest.TestCase):
         self.assertEqual(final["s"], 987_654.0)
         self.assertEqual(final["s1"], "opaque-socket-payload")
 
-    def test_perfect_applies_all_profile_seed_fields_and_only_those_fields(self):
+    def test_perfect_applies_all_active_profile_fields_and_socket_capacity(self):
         gown = catalog_row("armors_zephys_gown")
         gown["rollProfile"] = roll_profile(
             "unique:1:0:52", "unique", "Zephy's Gown", "exact",
             {"a": 101_001, "i": 202_002, "s": 303_003}, 3, 3, 0,
+            max_sockets=3,
         )
         result = editor.op_add({"cid": gown["id"], "target": {
             "type": "bag", "slot": 1, "tab": "inventory_tab_0"}})
@@ -1065,7 +1014,7 @@ class ItemEditorSeason10Tests(unittest.TestCase):
         })
         untouched_before = {
             field: value for field, value in entry["data"].items()
-            if field not in {"a", "i", "s"}
+            if field not in {"a", "i", "s", "zz"}
         }
         path.write_text(editor.encode_hss(json.dumps(bags)), encoding="ascii")
 
@@ -1075,19 +1024,20 @@ class ItemEditorSeason10Tests(unittest.TestCase):
             "key": key,
         })
 
-        self.assertIn("EXACT MAX", result["ok"])
+        self.assertIn("BEST VERIFIED + MAX SOCKETS", result["ok"])
         data = json.loads(editor.decode_hss(path))["inventory_tab_0"][key]["data"]
         self.assertEqual(
             (data["a"], data["i"], data["s"]),
-            (101_001.0, 202_002.0, 303_003.0),
+            (5_983_559.0, 202_002.0, 303_003.0),
         )
         self.assertEqual(
             {field: value for field, value in data.items()
-             if field not in {"a", "i", "s"}},
+             if field not in {"a", "i", "s", "zz"}},
             untouched_before,
         )
+        self.assertEqual(data["zz"], {"sockets": 4.0, "opaque": {"keep": True}})
 
-    def test_socket_only_profile_does_not_create_missing_s_or_write(self):
+    def test_measured_socket_a_keeps_legacy_s_profile_actionable_without_creating_s(self):
         gown = catalog_row("armors_zephys_gown")
         result = editor.op_add({"cid": gown["id"], "target": {
             "type": "bag", "slot": 1, "tab": "inventory_tab_0"}})
@@ -1095,26 +1045,25 @@ class ItemEditorSeason10Tests(unittest.TestCase):
         path = self.saves / "inventory_order_1.hss"
         bags = json.loads(editor.decode_hss(path))
         key = next(iter(bags["inventory_tab_0"]))
-        self.assertNotIn("s", bags["inventory_tab_0"][key]["data"])
+        bags["inventory_tab_0"][key]["data"].pop("s", None)
+        path.write_text(editor.encode_hss(json.dumps(bags)), encoding="ascii")
 
         gown["rollProfile"] = roll_profile(
             "unique:1:0:52", "unique", "Zephy's Gown", "exact",
             {"s": 404_004}, 1, 1, 0,
+            max_sockets=3,
         )
-        before = path.read_bytes()
-        backups_before = set(self.saves.glob("inventory_order_1.hss.guibak_*"))
         result = editor.op_modify({
             "action": "perfect",
             "target": {"type": "bag", "slot": 1, "tab": "inventory_tab_0"},
             "key": key,
         })
 
-        self.assertIn("socket seed is not active", result["err"])
-        self.assertEqual(path.read_bytes(), before)
-        self.assertEqual(
-            set(self.saves.glob("inventory_order_1.hss.guibak_*")),
-            backups_before,
-        )
+        self.assertIn("BEST VERIFIED + MAX SOCKETS", result["ok"])
+        data = json.loads(editor.decode_hss(path))["inventory_tab_0"][key]["data"]
+        self.assertEqual(data["a"], 5_983_559.0)
+        self.assertEqual(data["zz"], {"sockets": 4.0})
+        self.assertNotIn("s", data)
 
     def test_every_build_specific_equipment_address_fails_closed_without_a_profile(self):
         class EmptyRollDatabase:

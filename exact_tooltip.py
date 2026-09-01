@@ -51,7 +51,7 @@ _SCALAR_RE = re.compile(rf"^(?P<value>{_NUMBER})$")
 _HIDDEN_NATIVE_HELPER_STAT_KEYS = frozenset({447})
 
 # Their saved ``a`` values select identities through separate target tables,
-# not merely the numeric definition/CPR paths covered by the general 7.0.6
+# not merely the numeric definition/CPR paths covered by the compatible build
 # roll-equivalence proof.  Keep them fail-closed for a compatible-build status
 # until those complete identity tables receive their own audit.
 _COMPATIBILITY_EXCLUDED_PROFILE_IDS = frozenset({
@@ -481,7 +481,13 @@ def _guard_summary(build_status: Any) -> dict[str, Any]:
         and detected != EXPECTED_EXE_SHA256
         and roll_profile_db.supports_executable_sha256(detected)
     )
-    matched = direct_match or compatible_match
+    unrestricted_match = (
+        raw.get("matched") is True
+        and expected == EXPECTED_EXE_SHA256
+        and code == "ready_unrestricted"
+        and raw.get("matchingEnforced") is False
+    )
+    matched = direct_match or compatible_match or unrestricted_match
     return {
         "matched": matched,
         "code": code,
@@ -592,10 +598,10 @@ def _socket_payloads(data: Mapping[str, Any]) -> tuple[list[dict[str, Any]], boo
 
 
 def _native_socket_count(data: Mapping[str, Any]) -> tuple[bool, int | None]:
-    """Return the game's explicit ``zz.sockets`` override when one is present.
+    """Return the editor's explicit ``zz.sockets`` metadata when present.
 
     The save format permits JSON numbers, so an integral binary64 value is
-    accepted just like the other native numeric fields.  Presence and validity
+    accepted just like the other native numeric fields. Presence and validity
     are separate: callers must fail closed when a present override is malformed
     instead of silently falling back to definition capacity.
     """
@@ -971,11 +977,11 @@ def build_tooltip_model(
         if socket_line is not None:
             socket_line["confidence"] = "unresolved"
     elif native_socket_count is not None:
-        # ``zz.sockets`` is the saved item's current socket count and is the
-        # value consumed by the game.  It intentionally overrides a definition
-        # key-20 capacity/range without making an otherwise supported model
-        # inexact.  A missing definition line is still representable because
-        # the native metadata supplies the complete current value.
+        # ``zz.sockets`` records the editor-visible current capacity. It does
+        # not drive the game's earlier native socket RNG; the saved ``a`` seed
+        # does that. It still overrides the definition key-20 capacity/range in
+        # this tooltip because the editor keeps it aligned with the measured
+        # per-address result.
         socket_line = lines_by_key.get(20)
         if socket_line is None:
             socket_label = database.stat_label(20).get("label") or "Sockets"

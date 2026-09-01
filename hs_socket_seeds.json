@@ -1,0 +1,7156 @@
+{
+  "schemaVersion": 1,
+  "note": "Item seeds chosen so the game's socket draw lands on the item's maximum. The socket draw is taken from the `a` chain before the re-seed that hs_perfect_roll_profiles.json models, so only `a` can move it; see socket_chain.py and SOCKET_CHAIN_RESEARCH.md.",
+  "measuredAgainst": {
+    "build": "Hero-Siege-AnkerGames (1) / HeroSiege / bin",
+    "exeSha256": "2034fad4096be6de1147e4ff61b942a706673a9567b10c3013c6393ed0686486",
+    "exeBytes": 281773056,
+    "method": "ForgePact socketprobe, 1197 created items"
+  },
+  "chain": {
+    "order": "one draw per variable stat, then 8 draws with bounds 2,4,2,4,2,4,2,4, then the socket draw",
+    "socketBound": "maxSockets - 1",
+    "socketCount": "socket draw + 1"
+  },
+  "seeds": {
+    "unique:4:0:30": {
+      "name": "St. Ahto's Diamond Hands",
+      "maxSockets": 3,
+      "statBounds": [
+        15,
+        22,
+        10,
+        2,
+        2,
+        25,
+        75,
+        6,
+        30
+      ],
+      "seed": 85306253,
+      "sockets": 3,
+      "maxed": 7,
+      "total": 9,
+      "endpointDeficit": 6,
+      "searchedThrough": 1000000000,
+      "previous": {
+        "seed": 17303869,
+        "sockets": 1,
+        "maxed": 5,
+        "endpointDeficit": 11
+      }
+    },
+    "unique:3:13:2": {
+      "name": "Poison Ivy",
+      "maxSockets": 4,
+      "statBounds": [
+        5,
+        10,
+        10,
+        10,
+        8,
+        120,
+        25,
+        10
+      ],
+      "seed": 17234404,
+      "sockets": 4,
+      "maxed": 7,
+      "total": 8,
+      "endpointDeficit": 1,
+      "searchedThrough": 1000000000,
+      "previous": {
+        "seed": 4677950,
+        "sockets": 1,
+        "maxed": 5,
+        "endpointDeficit": 28
+      }
+    },
+    "unique:1:0:52": {
+      "name": "Zephy's Gown",
+      "maxSockets": 4,
+      "statBounds": [
+        30,
+        15,
+        17,
+        50,
+        8,
+        9
+      ],
+      "seed": 5983559,
+      "sockets": 4,
+      "maxed": 5,
+      "total": 6,
+      "endpointDeficit": 1,
+      "searchedThrough": 60000000,
+      "measured": {
+        "branch": "if",
+        "nStat": 6
+      },
+      "previous": {
+        "seed": 3888156,
+        "sockets": 3,
+        "maxed": 5,
+        "endpointDeficit": 1
+      }
+    },
+    "unique:4:0:44": {
+      "name": "Vigorous Lifegrips",
+      "maxSockets": 2,
+      "statBounds": [
+        3,
+        10,
+        5,
+        50,
+        50
+      ],
+      "seed": 113302,
+      "sockets": 2,
+      "maxed": 5,
+      "total": 5,
+      "endpointDeficit": 0,
+      "searchedThrough": 60000000,
+      "measured": {
+        "branch": "else",
+        "nStat": 5
+      },
+      "previous": {
+        "seed": 314470,
+        "sockets": 1,
+        "maxed": 2,
+        "endpointDeficit": 41
+      }
+    },
+    "unique:2:0:62": {
+      "name": "Marcher's of Hatred",
+      "maxSockets": 2,
+      "statBounds": [
+        18,
+        1,
+        25,
+        45,
+        50,
+        10,
+        2,
+        4,
+        22,
+        20
+      ],
+      "seed": 31166439,
+      "sockets": 2,
+      "maxed": 8,
+      "total": 10,
+      "endpointDeficit": 3,
+      "searchedThrough": 60000000,
+      "measured": {
+        "branch": "else",
+        "nStat": 10
+      },
+      "previous": {
+        "seed": 64945566,
+        "sockets": 1,
+        "maxed": 5,
+        "endpointDeficit": 22
+      }
+    },
+    "unique:5:0:34": {
+      "name": "Philosopher's Stone",
+      "maxSockets": 2,
+      "statBounds": [
+        3,
+        5
+      ],
+      "seed": 107881,
+      "sockets": 2,
+      "maxed": 2,
+      "total": 2,
+      "endpointDeficit": 0,
+      "searchedThrough": 60000000,
+      "measured": {
+        "branch": "else",
+        "nStat": 2
+      },
+      "previous": {
+        "seed": 107854,
+        "sockets": 1,
+        "maxed": 2,
+        "endpointDeficit": 0
+      }
+    },
+    "unique:7:0:9": {
+      "name": "St. Aaron's Eternal Rage",
+      "maxSockets": 2,
+      "statBounds": [
+        10,
+        10,
+        1,
+        25
+      ],
+      "seed": 315610,
+      "sockets": 2,
+      "maxed": 4,
+      "total": 4,
+      "endpointDeficit": 0,
+      "searchedThrough": 60000000,
+      "measured": {
+        "branch": "else",
+        "nStat": 4
+      },
+      "previous": {
+        "seed": 314497,
+        "sockets": 1,
+        "maxed": 3,
+        "endpointDeficit": 19
+      }
+    },
+    "unique:10:0:23": {
+      "name": "Torch of Shadows",
+      "maxSockets": 2,
+      "statBounds": [
+        2,
+        10,
+        2,
+        10,
+        2
+      ],
+      "seed": 3802,
+      "sockets": 2,
+      "maxed": 5,
+      "total": 5,
+      "endpointDeficit": 0,
+      "searchedThrough": 60000000,
+      "measured": {
+        "branch": "else",
+        "nStat": 5
+      },
+      "previous": {
+        "seed": 314470,
+        "sockets": 1,
+        "maxed": 2,
+        "endpointDeficit": 4
+      }
+    },
+    "unique:10:0:91": {
+      "name": "Soul Collector",
+      "maxSockets": 2,
+      "statBounds": [
+        3,
+        3,
+        33,
+        333
+      ],
+      "seed": 215743,
+      "sockets": 2,
+      "maxed": 4,
+      "total": 4,
+      "endpointDeficit": 0,
+      "searchedThrough": 60000000,
+      "measured": {
+        "branch": "else",
+        "nStat": 4
+      },
+      "previous": {
+        "seed": 415270,
+        "sockets": 1,
+        "maxed": 2,
+        "endpointDeficit": 57
+      }
+    },
+    "unique:0:0:79": {
+      "name": "High Roller's Deathcrown",
+      "maxSockets": 2,
+      "statBounds": [
+        99,
+        99,
+        99,
+        69,
+        39,
+        79,
+        399
+      ],
+      "seed": 4755524,
+      "sockets": 2,
+      "maxed": 4,
+      "total": 7,
+      "endpointDeficit": 134,
+      "searchedThrough": 60000000,
+      "measured": {
+        "branch": "else",
+        "nStat": 7
+      },
+      "previous": {
+        "seed": 77076508,
+        "sockets": 1,
+        "maxed": 3,
+        "endpointDeficit": 176
+      }
+    },
+    "unique:3:2:8": {
+      "name": "Fenrir's Bloodfang",
+      "maxSockets": 2,
+      "statBounds": [
+        15,
+        28,
+        10,
+        1,
+        8,
+        9,
+        2,
+        95,
+        15,
+        45
+      ],
+      "seed": 31166439,
+      "sockets": 2,
+      "maxed": 7,
+      "total": 10,
+      "endpointDeficit": 8,
+      "searchedThrough": 60000000,
+      "measured": {
+        "branch": "else",
+        "nStat": 10
+      },
+      "previous": {
+        "seed": 44545210,
+        "sockets": 1,
+        "maxed": 6,
+        "endpointDeficit": 8
+      }
+    },
+    "unique:2:0:74": {
+      "name": "Astral Roamers",
+      "maxSockets": 2,
+      "statBounds": [
+        28,
+        8,
+        18,
+        2,
+        15,
+        45,
+        10
+      ],
+      "seed": 3888156,
+      "sockets": 2,
+      "maxed": 6,
+      "total": 7,
+      "endpointDeficit": 1,
+      "searchedThrough": 60000000,
+      "measured": {
+        "branch": "else",
+        "nStat": 7
+      },
+      "previous": {
+        "seed": 88780570,
+        "sockets": 1,
+        "maxed": 5,
+        "endpointDeficit": 5
+      }
+    },
+    "unique:10:0:61": {
+      "name": "Plague Shot",
+      "maxSockets": 2,
+      "statBounds": [
+        9
+      ],
+      "seed": 302641,
+      "sockets": 2,
+      "maxed": 1,
+      "total": 1,
+      "endpointDeficit": 0,
+      "searchedThrough": 60000000,
+      "measured": {
+        "branch": "else",
+        "nStat": 1
+      },
+      "previous": {
+        "seed": 302635,
+        "sockets": 1,
+        "maxed": 1,
+        "endpointDeficit": 0
+      }
+    },
+    "unique:5:0:8": {
+      "name": "Steve's Necklace",
+      "maxSockets": 2,
+      "statBounds": [
+        8,
+        8,
+        2,
+        30
+      ],
+      "seed": 291016,
+      "sockets": 2,
+      "maxed": 4,
+      "total": 4,
+      "endpointDeficit": 0,
+      "searchedThrough": 60000000,
+      "measured": {
+        "branch": "else",
+        "nStat": 4
+      },
+      "previous": {
+        "seed": 127,
+        "sockets": 1,
+        "maxed": 2,
+        "endpointDeficit": 27
+      }
+    },
+    "unique:7:0:56": {
+      "name": "Void Bomba",
+      "maxSockets": 2,
+      "statBounds": [
+        10,
+        2,
+        10,
+        10,
+        2,
+        15
+      ],
+      "seed": 750887,
+      "sockets": 2,
+      "maxed": 6,
+      "total": 6,
+      "endpointDeficit": 0,
+      "searchedThrough": 60000000,
+      "measured": {
+        "branch": "else",
+        "nStat": 6
+      },
+      "previous": {
+        "seed": 349219,
+        "sockets": 1,
+        "maxed": 4,
+        "endpointDeficit": 7
+      }
+    },
+    "unique:1:0:2": {
+      "name": "Tayrel's Chestplate",
+      "maxSockets": 2,
+      "statBounds": [
+        130,
+        25,
+        8,
+        7,
+        10,
+        175
+      ],
+      "seed": 58463712,
+      "sockets": 2,
+      "maxed": 5,
+      "total": 6,
+      "endpointDeficit": 4,
+      "searchedThrough": 60000000,
+      "measured": {
+        "branch": "else",
+        "nStat": 6
+      },
+      "previous": {
+        "seed": 12923247,
+        "sockets": 1,
+        "maxed": 3,
+        "endpointDeficit": 12
+      }
+    },
+    "unique:1:0:95": {
+      "name": "Grand Arch Wizard's Mantle",
+      "maxSockets": 2,
+      "statBounds": [
+        100,
+        25,
+        5,
+        3,
+        10,
+        400,
+        85
+      ],
+      "seed": 3888156,
+      "sockets": 2,
+      "maxed": 6,
+      "total": 7,
+      "endpointDeficit": 14,
+      "searchedThrough": 60000000,
+      "measured": {
+        "branch": "else",
+        "nStat": 7
+      },
+      "previous": {
+        "seed": 48508192,
+        "sockets": 1,
+        "maxed": 4,
+        "endpointDeficit": 44
+      }
+    },
+    "unique:10:0:48": {
+      "name": "Earth Melon",
+      "maxSockets": 2,
+      "statBounds": [
+        44,
+        10,
+        10,
+        2
+      ],
+      "seed": 405250,
+      "sockets": 2,
+      "maxed": 4,
+      "total": 4,
+      "endpointDeficit": 0,
+      "searchedThrough": 60000000,
+      "measured": {
+        "branch": "else",
+        "nStat": 4
+      },
+      "previous": {
+        "seed": 404191,
+        "sockets": 1,
+        "maxed": 4,
+        "endpointDeficit": 0
+      }
+    },
+    "unique:8:0:11": {
+      "name": "Traveler's Double Belt",
+      "maxSockets": 2,
+      "statBounds": [
+        16,
+        75,
+        15
+      ],
+      "seed": 363367,
+      "sockets": 2,
+      "maxed": 3,
+      "total": 3,
+      "endpointDeficit": 0,
+      "searchedThrough": 60000000,
+      "measured": {
+        "branch": "else",
+        "nStat": 3
+      },
+      "previous": {
+        "seed": 415741,
+        "sockets": 1,
+        "maxed": 2,
+        "endpointDeficit": 2
+      }
+    },
+    "unique:10:0:70": {
+      "name": "Chaos Gemstone",
+      "maxSockets": 2,
+      "statBounds": [
+        1,
+        2,
+        4,
+        16,
+        2,
+        2,
+        4
+      ],
+      "seed": 145627,
+      "sockets": 2,
+      "maxed": 7,
+      "total": 7,
+      "endpointDeficit": 0,
+      "searchedThrough": 60000000,
+      "measured": {
+        "branch": "else",
+        "nStat": 7
+      },
+      "previous": {
+        "seed": 2842,
+        "sockets": 1,
+        "maxed": 3,
+        "endpointDeficit": 10
+      }
+    },
+    "unique:5:0:24": {
+      "name": "Traveler's Compass",
+      "maxSockets": 2,
+      "statBounds": [
+        1,
+        10,
+        15,
+        10
+      ],
+      "seed": 3187,
+      "sockets": 2,
+      "maxed": 4,
+      "total": 4,
+      "endpointDeficit": 0,
+      "searchedThrough": 60000000,
+      "measured": {
+        "branch": "else",
+        "nStat": 4
+      },
+      "previous": {
+        "seed": 314596,
+        "sockets": 1,
+        "maxed": 3,
+        "endpointDeficit": 1
+      }
+    },
+    "unique:3:8:5": {
+      "name": "Ancient Sun Beacon",
+      "maxSockets": 2,
+      "statBounds": [
+        15,
+        11,
+        15,
+        10
+      ],
+      "seed": 351817,
+      "sockets": 2,
+      "maxed": 4,
+      "total": 4,
+      "endpointDeficit": 0,
+      "searchedThrough": 60000000,
+      "measured": {
+        "branch": "else",
+        "nStat": 4
+      },
+      "previous": {
+        "seed": 323512,
+        "sockets": 1,
+        "maxed": 3,
+        "endpointDeficit": 1
+      }
+    },
+    "unique:3:6:4": {
+      "name": "Poseidon's Might",
+      "maxSockets": 4,
+      "statBounds": [
+        25,
+        6,
+        25,
+        10,
+        5,
+        10
+      ],
+      "seed": 14682415,
+      "sockets": 4,
+      "maxed": 6,
+      "total": 6,
+      "endpointDeficit": 0,
+      "searchedThrough": 60000000,
+      "measured": {
+        "branch": "if",
+        "nStat": 6
+      },
+      "previous": {
+        "seed": 1196628,
+        "sockets": 1,
+        "maxed": 4,
+        "endpointDeficit": 3
+      }
+    },
+    "unique:3:8:0": {
+      "name": "The Iris",
+      "maxSockets": 2,
+      "statBounds": [
+        20,
+        10,
+        11,
+        1,
+        50,
+        7,
+        5,
+        30
+      ],
+      "seed": 48061053,
+      "sockets": 2,
+      "maxed": 7,
+      "total": 8,
+      "endpointDeficit": 3,
+      "searchedThrough": 60000000,
+      "measured": {
+        "branch": "else",
+        "nStat": 8
+      },
+      "previous": {
+        "seed": 17303869,
+        "sockets": 1,
+        "maxed": 5,
+        "endpointDeficit": 10
+      }
+    },
+    "unique:3:6:10": {
+      "name": "Lancer's Glory",
+      "maxSockets": 2,
+      "statBounds": [
+        15,
+        8,
+        40,
+        30
+      ],
+      "seed": 403123,
+      "sockets": 2,
+      "maxed": 4,
+      "total": 4,
+      "endpointDeficit": 0,
+      "searchedThrough": 60000000,
+      "measured": {
+        "branch": "else",
+        "nStat": 4
+      },
+      "previous": {
+        "seed": 293134,
+        "sockets": 1,
+        "maxed": 3,
+        "endpointDeficit": 1
+      }
+    },
+    "unique:3:1:21": {
+      "name": "Crystal Infused Sword",
+      "maxSockets": 4,
+      "statBounds": [
+        4,
+        30,
+        25,
+        3
+      ],
+      "seed": 273184,
+      "sockets": 4,
+      "maxed": 4,
+      "total": 4,
+      "endpointDeficit": 0,
+      "searchedThrough": 60000000,
+      "measured": {
+        "branch": "if",
+        "nStat": 4
+      },
+      "previous": {
+        "seed": 183553,
+        "sockets": 1,
+        "maxed": 4,
+        "endpointDeficit": 0
+      }
+    },
+    "unique:3:8:4": {
+      "name": "Apocalypto",
+      "maxSockets": 2,
+      "statBounds": [
+        20,
+        10,
+        11
+      ],
+      "seed": 371152,
+      "sockets": 2,
+      "maxed": 3,
+      "total": 3,
+      "endpointDeficit": 0,
+      "searchedThrough": 60000000,
+      "measured": {
+        "branch": "else",
+        "nStat": 3
+      },
+      "previous": {
+        "seed": 325096,
+        "sockets": 1,
+        "maxed": 2,
+        "endpointDeficit": 1
+      }
+    },
+    "unique:3:6:11": {
+      "name": "Champion's Flag Lance",
+      "maxSockets": 2,
+      "statBounds": [
+        15,
+        25,
+        15,
+        2,
+        4,
+        9,
+        130
+      ],
+      "seed": 22501981,
+      "sockets": 2,
+      "maxed": 7,
+      "total": 7,
+      "endpointDeficit": 0,
+      "searchedThrough": 60000000,
+      "measured": {
+        "branch": "else",
+        "nStat": 7
+      },
+      "previous": {
+        "seed": 7681590,
+        "sockets": 1,
+        "maxed": 4,
+        "endpointDeficit": 28
+      }
+    },
+    "unique:3:6:5": {
+      "name": "Vanguard's Lance",
+      "maxSockets": 3,
+      "statBounds": [
+        5,
+        110,
+        4,
+        30,
+        5,
+        6
+      ],
+      "seed": 1167264,
+      "sockets": 3,
+      "maxed": 6,
+      "total": 6,
+      "endpointDeficit": 0,
+      "searchedThrough": 60000000,
+      "measured": {
+        "branch": "if",
+        "nStat": 6
+      },
+      "previous": {
+        "seed": 750887,
+        "sockets": 2,
+        "maxed": 5,
+        "endpointDeficit": 1
+      }
+    },
+    "unique:3:8:6": {
+      "name": "Thorn of Helheim",
+      "maxSockets": 2,
+      "statBounds": [
+        15,
+        25,
+        20,
+        2,
+        8,
+        10,
+        7,
+        7
+      ],
+      "seed": 10333836,
+      "sockets": 2,
+      "maxed": 7,
+      "total": 8,
+      "endpointDeficit": 1,
+      "searchedThrough": 60000000,
+      "measured": {
+        "branch": "else",
+        "nStat": 8
+      },
+      "previous": {
+        "seed": 339418,
+        "sockets": 1,
+        "maxed": 6,
+        "endpointDeficit": 7
+      }
+    },
+    "unique:3:6:9": {
+      "name": "St. Draxis' Pigstick",
+      "maxSockets": 2,
+      "statBounds": [
+        8,
+        200,
+        10,
+        10,
+        20
+      ],
+      "seed": 8151949,
+      "sockets": 2,
+      "maxed": 5,
+      "total": 5,
+      "endpointDeficit": 0,
+      "searchedThrough": 60000000,
+      "measured": {
+        "branch": "else",
+        "nStat": 5
+      },
+      "previous": {
+        "seed": 1196628,
+        "sockets": 1,
+        "maxed": 5,
+        "endpointDeficit": 0
+      }
+    },
+    "unique:3:1:26": {
+      "name": "Gut's BFS",
+      "maxSockets": 4,
+      "statBounds": [
+        10,
+        14,
+        6,
+        60
+      ],
+      "seed": 348151,
+      "sockets": 4,
+      "maxed": 4,
+      "total": 4,
+      "endpointDeficit": 0,
+      "searchedThrough": 60000000,
+      "measured": {
+        "branch": "if",
+        "nStat": 4
+      },
+      "previous": {
+        "seed": 283159,
+        "sockets": 3,
+        "maxed": 2,
+        "endpointDeficit": 4
+      }
+    },
+    "unique:3:6:7": {
+      "name": "Jousting Lance",
+      "maxSockets": 2,
+      "statBounds": [
+        5,
+        5,
+        15,
+        3,
+        4,
+        30
+      ],
+      "seed": 738269,
+      "sockets": 2,
+      "maxed": 6,
+      "total": 6,
+      "endpointDeficit": 0,
+      "searchedThrough": 60000000,
+      "measured": {
+        "branch": "else",
+        "nStat": 6
+      },
+      "previous": {
+        "seed": 273184,
+        "sockets": 1,
+        "maxed": 5,
+        "endpointDeficit": 5
+      }
+    },
+    "unique:3:13:10": {
+      "name": "Hellspawn Eradicator",
+      "maxSockets": 4,
+      "statBounds": [
+        15,
+        24,
+        10,
+        14,
+        130,
+        15
+      ],
+      "seed": 17303869,
+      "sockets": 4,
+      "maxed": 5,
+      "total": 6,
+      "endpointDeficit": 3,
+      "searchedThrough": 60000000,
+      "measured": {
+        "branch": "if",
+        "nStat": 6
+      },
+      "previous": {
+        "seed": 10754419,
+        "sockets": 1,
+        "maxed": 4,
+        "endpointDeficit": 16
+      }
+    },
+    "unique:3:14:8": {
+      "name": "Commander's Sentry Blaster",
+      "maxSockets": 2,
+      "statBounds": [
+        2,
+        2,
+        2,
+        2,
+        4,
+        50,
+        2,
+        10,
+        10
+      ],
+      "seed": 4967223,
+      "sockets": 2,
+      "maxed": 9,
+      "total": 9,
+      "endpointDeficit": 0,
+      "searchedThrough": 60000000,
+      "measured": {
+        "branch": "else",
+        "nStat": 9
+      },
+      "previous": {
+        "seed": 2036669,
+        "sockets": 1,
+        "maxed": 7,
+        "endpointDeficit": 2
+      }
+    },
+    "unique:1:0:16": {
+      "name": "Redneck's Shirt",
+      "maxSockets": 4,
+      "statBounds": [
+        45,
+        30,
+        3,
+        5,
+        30
+      ],
+      "seed": 6902308,
+      "sockets": 4,
+      "maxed": 5,
+      "total": 5,
+      "endpointDeficit": 0,
+      "searchedThrough": 60000000,
+      "measured": {
+        "branch": "if",
+        "nStat": 5
+      },
+      "previous": {
+        "seed": 1264227,
+        "sockets": 2,
+        "maxed": 3,
+        "endpointDeficit": 4
+      }
+    },
+    "unique:1:0:102": {
+      "name": "Skinwalker's Mantle",
+      "maxSockets": 2,
+      "statBounds": [
+        20,
+        5,
+        1,
+        25,
+        150,
+        20
+      ],
+      "seed": 3888156,
+      "sockets": 2,
+      "maxed": 6,
+      "total": 6,
+      "endpointDeficit": 0,
+      "searchedThrough": 60000000,
+      "measured": {
+        "branch": "else",
+        "nStat": 6
+      },
+      "previous": {
+        "seed": 13425040,
+        "sockets": 1,
+        "maxed": 4,
+        "endpointDeficit": 20
+      }
+    },
+    "unique:3:13:4": {
+      "name": "Flamebringer",
+      "maxSockets": 2,
+      "statBounds": [
+        10,
+        24,
+        10,
+        12,
+        200
+      ],
+      "seed": 3888156,
+      "sockets": 2,
+      "maxed": 5,
+      "total": 5,
+      "endpointDeficit": 0,
+      "searchedThrough": 60000000,
+      "measured": {
+        "branch": "if",
+        "nStat": 5
+      },
+      "previous": {
+        "seed": 336646,
+        "sockets": 1,
+        "maxed": 3,
+        "endpointDeficit": 105
+      }
+    },
+    "unique:3:13:0": {
+      "name": "Buriza-ko-nu",
+      "maxSockets": 3,
+      "statBounds": [
+        10,
+        20,
+        1,
+        12,
+        40,
+        5
+      ],
+      "seed": 3888156,
+      "sockets": 3,
+      "maxed": 6,
+      "total": 6,
+      "endpointDeficit": 0,
+      "searchedThrough": 60000000,
+      "measured": {
+        "branch": "if",
+        "nStat": 6
+      },
+      "previous": {
+        "seed": 3897651,
+        "sockets": 1,
+        "maxed": 4,
+        "endpointDeficit": 2
+      }
+    },
+    "unique:3:3:12": {
+      "name": "Sung Lee's Destroyer Flail",
+      "maxSockets": 2,
+      "statBounds": [
+        10,
+        6,
+        1,
+        6,
+        10,
+        100,
+        6,
+        20
+      ],
+      "seed": 17234404,
+      "sockets": 2,
+      "maxed": 7,
+      "total": 8,
+      "endpointDeficit": 1,
+      "searchedThrough": 60000000,
+      "measured": {
+        "branch": "else",
+        "nStat": 8
+      },
+      "previous": {
+        "seed": 18516778,
+        "sockets": 1,
+        "maxed": 6,
+        "endpointDeficit": 15
+      }
+    },
+    "unique:6:0:39": {
+      "name": "Darkwood Defender",
+      "maxSockets": 2,
+      "statBounds": [
+        4,
+        10,
+        10,
+        5,
+        10
+      ],
+      "seed": 233845,
+      "sockets": 2,
+      "maxed": 5,
+      "total": 5,
+      "endpointDeficit": 0,
+      "searchedThrough": 60000000,
+      "measured": {
+        "branch": "else",
+        "nStat": 5
+      },
+      "previous": {
+        "seed": 344848,
+        "sockets": 1,
+        "maxed": 4,
+        "endpointDeficit": 1
+      }
+    },
+    "unique:3:1:7": {
+      "name": "Hiyoki's Vorpal Katana",
+      "maxSockets": 4,
+      "statBounds": [
+        6,
+        55,
+        5,
+        5,
+        15,
+        5
+      ],
+      "seed": 3013546,
+      "sockets": 4,
+      "maxed": 6,
+      "total": 6,
+      "endpointDeficit": 0,
+      "searchedThrough": 60000000,
+      "measured": {
+        "branch": "if",
+        "nStat": 6
+      },
+      "previous": {
+        "seed": 1196628,
+        "sockets": 1,
+        "maxed": 6,
+        "endpointDeficit": 0
+      }
+    },
+    "unique:1:0:3": {
+      "name": "Uabel's Chest",
+      "maxSockets": 4,
+      "statBounds": [
+        5,
+        30,
+        10,
+        10,
+        5
+      ],
+      "seed": 416809,
+      "sockets": 4,
+      "maxed": 5,
+      "total": 5,
+      "endpointDeficit": 0,
+      "searchedThrough": 60000000,
+      "measured": {
+        "branch": "if",
+        "nStat": 5
+      },
+      "previous": {
+        "seed": 1196628,
+        "sockets": 1,
+        "maxed": 5,
+        "endpointDeficit": 0
+      }
+    },
+    "unique:3:4:4": {
+      "name": "Crystal Infused Axe",
+      "maxSockets": 3,
+      "statBounds": [
+        3,
+        55
+      ],
+      "seed": 109672,
+      "sockets": 3,
+      "maxed": 2,
+      "total": 2,
+      "endpointDeficit": 0,
+      "searchedThrough": 60000000,
+      "measured": {
+        "branch": "if",
+        "nStat": 2
+      },
+      "previous": {
+        "seed": 108088,
+        "sockets": 1,
+        "maxed": 2,
+        "endpointDeficit": 0
+      }
+    },
+    "unique:3:16:9": {
+      "name": "Valkyrie's Thunder Javelin",
+      "maxSockets": 4,
+      "statBounds": [
+        145,
+        15,
+        10,
+        2,
+        3,
+        3,
+        6,
+        50,
+        10,
+        20,
+        5
+      ],
+      "seed": 46341293,
+      "sockets": 4,
+      "maxed": 8,
+      "total": 11,
+      "endpointDeficit": 25,
+      "searchedThrough": 60000000,
+      "measured": {
+        "branch": "if",
+        "nStat": 11
+      },
+      "previous": {
+        "seed": 29211316,
+        "sockets": 1,
+        "maxed": 6,
+        "endpointDeficit": 147
+      }
+    },
+    "unique:1:0:82": {
+      "name": "Butcher's Apron",
+      "maxSockets": 4,
+      "statBounds": [
+        30,
+        7,
+        30,
+        15,
+        70,
+        12,
+        8
+      ],
+      "seed": 3888156,
+      "sockets": 4,
+      "maxed": 6,
+      "total": 7,
+      "endpointDeficit": 1,
+      "searchedThrough": 60000000,
+      "measured": {
+        "branch": "if",
+        "nStat": 7
+      },
+      "previous": {
+        "seed": 46744464,
+        "sockets": 3,
+        "maxed": 4,
+        "endpointDeficit": 3
+      }
+    },
+    "unique:3:1:36": {
+      "name": "Grimtide\u00b4s Scimitar",
+      "maxSockets": 2,
+      "statBounds": [
+        10,
+        130,
+        10,
+        25,
+        15
+      ],
+      "seed": 17303869,
+      "sockets": 2,
+      "maxed": 5,
+      "total": 5,
+      "endpointDeficit": 0,
+      "searchedThrough": 60000000,
+      "measured": {
+        "branch": "else",
+        "nStat": 5
+      },
+      "previous": {
+        "seed": 4677950,
+        "sockets": 1,
+        "maxed": 5,
+        "endpointDeficit": 0
+      }
+    },
+    "unique:3:3:4": {
+      "name": "Sacred Whip",
+      "maxSockets": 5,
+      "statBounds": [
+        110,
+        4,
+        40,
+        15,
+        5
+      ],
+      "seed": 7788825,
+      "sockets": 5,
+      "maxed": 5,
+      "total": 5,
+      "endpointDeficit": 0,
+      "searchedThrough": 60000000,
+      "measured": {
+        "branch": "if",
+        "nStat": 5
+      },
+      "previous": {
+        "seed": 283159,
+        "sockets": 1,
+        "maxed": 4,
+        "endpointDeficit": 12
+      }
+    },
+    "unique:3:3:1": {
+      "name": "Gurag's Stone Crusher",
+      "maxSockets": 2,
+      "statBounds": [
+        2,
+        5,
+        15,
+        155,
+        150,
+        10
+      ],
+      "seed": 3888156,
+      "sockets": 2,
+      "maxed": 5,
+      "total": 6,
+      "endpointDeficit": 3,
+      "searchedThrough": 60000000,
+      "measured": {
+        "branch": "else",
+        "nStat": 6
+      },
+      "previous": {
+        "seed": 12923247,
+        "sockets": 1,
+        "maxed": 5,
+        "endpointDeficit": 15
+      }
+    },
+    "unique:3:1:0": {
+      "name": "Godfather",
+      "maxSockets": 2,
+      "statBounds": [
+        16,
+        4,
+        50,
+        5,
+        25
+      ],
+      "seed": 420748,
+      "sockets": 2,
+      "maxed": 5,
+      "total": 5,
+      "endpointDeficit": 0,
+      "searchedThrough": 60000000,
+      "measured": {
+        "branch": "else",
+        "nStat": 5
+      },
+      "previous": {
+        "seed": 1476703,
+        "sockets": 1,
+        "maxed": 3,
+        "endpointDeficit": 7
+      }
+    },
+    "unique:1:0:36": {
+      "name": "Engineer's Plated Vest",
+      "maxSockets": 4,
+      "statBounds": [
+        30,
+        10,
+        30,
+        3
+      ],
+      "seed": 403123,
+      "sockets": 4,
+      "maxed": 4,
+      "total": 4,
+      "endpointDeficit": 0,
+      "searchedThrough": 60000000,
+      "measured": {
+        "branch": "if",
+        "nStat": 4
+      },
+      "previous": {
+        "seed": 391156,
+        "sockets": 3,
+        "maxed": 4,
+        "endpointDeficit": 0
+      }
+    },
+    "unique:3:14:16": {
+      "name": "Glock 22",
+      "maxSockets": 2,
+      "statBounds": [
+        15,
+        1,
+        7,
+        15,
+        50,
+        25,
+        25,
+        15,
+        10
+      ],
+      "seed": 31166439,
+      "sockets": 2,
+      "maxed": 7,
+      "total": 9,
+      "endpointDeficit": 3,
+      "searchedThrough": 60000000,
+      "measured": {
+        "branch": "else",
+        "nStat": 9
+      },
+      "previous": {
+        "seed": 11989804,
+        "sockets": 1,
+        "maxed": 5,
+        "endpointDeficit": 4
+      }
+    },
+    "unique:3:1:35": {
+      "name": "Stofflix Cooking Cleaver",
+      "maxSockets": 2,
+      "statBounds": [
+        10,
+        32,
+        10,
+        8,
+        4,
+        50,
+        10,
+        25,
+        15
+      ],
+      "seed": 24163754,
+      "sockets": 2,
+      "maxed": 7,
+      "total": 9,
+      "endpointDeficit": 5,
+      "searchedThrough": 60000000,
+      "measured": {
+        "branch": "else",
+        "nStat": 9
+      },
+      "previous": {
+        "seed": 17303869,
+        "sockets": 1,
+        "maxed": 6,
+        "endpointDeficit": 11
+      }
+    },
+    "unique:1:0:28": {
+      "name": "Lancer's Chestplate",
+      "maxSockets": 4,
+      "statBounds": [
+        30,
+        110
+      ],
+      "seed": 391156,
+      "sockets": 4,
+      "maxed": 2,
+      "total": 2,
+      "endpointDeficit": 0,
+      "searchedThrough": 60000000,
+      "measured": {
+        "branch": "if",
+        "nStat": 2
+      },
+      "previous": {
+        "seed": 420991,
+        "sockets": 1,
+        "maxed": 1,
+        "endpointDeficit": 3
+      }
+    },
+    "unique:6:0:14": {
+      "name": "Storm Gladiator's Wall",
+      "maxSockets": 5,
+      "statBounds": [
+        8,
+        18,
+        10,
+        4,
+        1,
+        60
+      ],
+      "seed": 6899176,
+      "sockets": 5,
+      "maxed": 6,
+      "total": 6,
+      "endpointDeficit": 0,
+      "searchedThrough": 60000000,
+      "measured": {
+        "branch": "if",
+        "nStat": 6
+      },
+      "previous": {
+        "seed": 845198,
+        "sockets": 1,
+        "maxed": 5,
+        "endpointDeficit": 8
+      }
+    },
+    "unique:3:3:21": {
+      "name": "Stormslayer",
+      "maxSockets": 2,
+      "statBounds": [
+        30,
+        1,
+        5,
+        10,
+        250,
+        7
+      ],
+      "seed": 3888156,
+      "sockets": 2,
+      "maxed": 6,
+      "total": 6,
+      "endpointDeficit": 0,
+      "searchedThrough": 60000000,
+      "measured": {
+        "branch": "else",
+        "nStat": 6
+      },
+      "previous": {
+        "seed": 12923247,
+        "sockets": 1,
+        "maxed": 4,
+        "endpointDeficit": 26
+      }
+    },
+    "unique:1:0:6": {
+      "name": "Hellfire Cuirass",
+      "maxSockets": 5,
+      "statBounds": [
+        25,
+        10,
+        30,
+        10,
+        1,
+        40,
+        5
+      ],
+      "seed": 1692616,
+      "sockets": 5,
+      "maxed": 6,
+      "total": 7,
+      "endpointDeficit": 1,
+      "searchedThrough": 60000000,
+      "measured": {
+        "branch": "if",
+        "nStat": 7
+      },
+      "previous": {
+        "seed": 16435418,
+        "sockets": 2,
+        "maxed": 5,
+        "endpointDeficit": 2
+      }
+    },
+    "unique:1:0:79": {
+      "name": "Aegisweave Robes",
+      "maxSockets": 2,
+      "statBounds": [
+        26,
+        10,
+        2,
+        25,
+        6
+      ],
+      "seed": 401005,
+      "sockets": 2,
+      "maxed": 5,
+      "total": 5,
+      "endpointDeficit": 0,
+      "searchedThrough": 60000000,
+      "measured": {
+        "branch": "if",
+        "nStat": 5
+      },
+      "previous": {
+        "seed": 391156,
+        "sockets": 1,
+        "maxed": 3,
+        "endpointDeficit": 3
+      }
+    },
+    "unique:3:4:7": {
+      "name": "Winter's Bite",
+      "maxSockets": 3,
+      "statBounds": [
+        15,
+        1,
+        4,
+        14,
+        2,
+        120,
+        5,
+        40,
+        8,
+        20
+      ],
+      "seed": 9456748,
+      "sockets": 3,
+      "maxed": 8,
+      "total": 10,
+      "endpointDeficit": 4,
+      "searchedThrough": 60000000,
+      "measured": {
+        "branch": "if",
+        "nStat": 10
+      },
+      "previous": {
+        "seed": 17303869,
+        "sockets": 1,
+        "maxed": 6,
+        "endpointDeficit": 19
+      }
+    },
+    "unique:1:0:29": {
+      "name": "Demon's Ribcage",
+      "maxSockets": 4,
+      "statBounds": [
+        10,
+        30,
+        30
+      ],
+      "seed": 315121,
+      "sockets": 4,
+      "maxed": 3,
+      "total": 3,
+      "endpointDeficit": 0,
+      "searchedThrough": 60000000,
+      "measured": {
+        "branch": "if",
+        "nStat": 3
+      },
+      "previous": {
+        "seed": 391156,
+        "sockets": 3,
+        "maxed": 3,
+        "endpointDeficit": 0
+      }
+    },
+    "unique:3:13:15": {
+      "name": "Arachno Phobia",
+      "maxSockets": 3,
+      "statBounds": [
+        5,
+        28,
+        30,
+        2,
+        25,
+        3,
+        150,
+        15
+      ],
+      "seed": 13239445,
+      "sockets": 3,
+      "maxed": 6,
+      "total": 8,
+      "endpointDeficit": 3,
+      "searchedThrough": 60000000,
+      "measured": {
+        "branch": "if",
+        "nStat": 8
+      },
+      "previous": {
+        "seed": 17303869,
+        "sockets": 2,
+        "maxed": 5,
+        "endpointDeficit": 15
+      }
+    },
+    "unique:3:1:23": {
+      "name": "Eternal Glaive",
+      "maxSockets": 2,
+      "statBounds": [
+        11,
+        20,
+        6,
+        35,
+        10,
+        3,
+        10,
+        10,
+        25
+      ],
+      "seed": 13239445,
+      "sockets": 2,
+      "maxed": 7,
+      "total": 9,
+      "endpointDeficit": 2,
+      "searchedThrough": 60000000,
+      "measured": {
+        "branch": "else",
+        "nStat": 9
+      },
+      "previous": {
+        "seed": 2036669,
+        "sockets": 1,
+        "maxed": 6,
+        "endpointDeficit": 5
+      }
+    },
+    "unique:3:16:10": {
+      "name": "Deep Sea Glaive",
+      "maxSockets": 2,
+      "statBounds": [
+        25,
+        6,
+        155,
+        10,
+        100
+      ],
+      "seed": 1254252,
+      "sockets": 2,
+      "maxed": 4,
+      "total": 5,
+      "endpointDeficit": 1,
+      "searchedThrough": 60000000,
+      "measured": {
+        "branch": "else",
+        "nStat": 5
+      },
+      "previous": {
+        "seed": 60962973,
+        "sockets": 1,
+        "maxed": 2,
+        "endpointDeficit": 18
+      }
+    },
+    "unique:3:14:1": {
+      "name": "Vampire Hunter",
+      "maxSockets": 4,
+      "statBounds": [
+        14,
+        6,
+        3,
+        140,
+        4,
+        15,
+        10
+      ],
+      "seed": 5544556,
+      "sockets": 4,
+      "maxed": 6,
+      "total": 7,
+      "endpointDeficit": 1,
+      "searchedThrough": 60000000,
+      "measured": {
+        "branch": "if",
+        "nStat": 7
+      },
+      "previous": {
+        "seed": 17303869,
+        "sockets": 3,
+        "maxed": 6,
+        "endpointDeficit": 2
+      }
+    },
+    "unique:1:0:77": {
+      "name": "Magiward Battlegear",
+      "maxSockets": 4,
+      "statBounds": [
+        8,
+        5,
+        30,
+        2,
+        8
+      ],
+      "seed": 309880,
+      "sockets": 4,
+      "maxed": 5,
+      "total": 5,
+      "endpointDeficit": 0,
+      "searchedThrough": 60000000,
+      "measured": {
+        "branch": "if",
+        "nStat": 5
+      },
+      "previous": {
+        "seed": 395449,
+        "sockets": 3,
+        "maxed": 3,
+        "endpointDeficit": 3
+      }
+    },
+    "unique:3:4:1": {
+      "name": "Rift Commander's Axe",
+      "maxSockets": 3,
+      "statBounds": [
+        8,
+        60,
+        4,
+        10
+      ],
+      "seed": 312523,
+      "sockets": 3,
+      "maxed": 4,
+      "total": 4,
+      "endpointDeficit": 0,
+      "searchedThrough": 60000000,
+      "measured": {
+        "branch": "if",
+        "nStat": 4
+      },
+      "previous": {
+        "seed": 288943,
+        "sockets": 2,
+        "maxed": 4,
+        "endpointDeficit": 0
+      }
+    },
+    "unique:1:0:26": {
+      "name": "Nobunaga's Battle Cuirass",
+      "maxSockets": 4,
+      "statBounds": [
+        10,
+        30,
+        2,
+        30
+      ],
+      "seed": 348151,
+      "sockets": 4,
+      "maxed": 4,
+      "total": 4,
+      "endpointDeficit": 0,
+      "searchedThrough": 60000000,
+      "measured": {
+        "branch": "if",
+        "nStat": 4
+      },
+      "previous": {
+        "seed": 391156,
+        "sockets": 3,
+        "maxed": 3,
+        "endpointDeficit": 1
+      }
+    },
+    "unique:1:0:66": {
+      "name": "Elementalist's Silk Shroud",
+      "maxSockets": 4,
+      "statBounds": [
+        8,
+        10,
+        20
+      ],
+      "seed": 289468,
+      "sockets": 4,
+      "maxed": 3,
+      "total": 3,
+      "endpointDeficit": 0,
+      "searchedThrough": 60000000,
+      "measured": {
+        "branch": "if",
+        "nStat": 3
+      },
+      "previous": {
+        "seed": 371152,
+        "sockets": 3,
+        "maxed": 2,
+        "endpointDeficit": 1
+      }
+    },
+    "unique:3:16:8": {
+      "name": "Crystal Infused Javelin",
+      "maxSockets": 2,
+      "statBounds": [
+        4,
+        135,
+        15,
+        20
+      ],
+      "seed": 630878,
+      "sockets": 2,
+      "maxed": 4,
+      "total": 4,
+      "endpointDeficit": 0,
+      "searchedThrough": 60000000,
+      "measured": {
+        "branch": "else",
+        "nStat": 4
+      },
+      "previous": {
+        "seed": 293134,
+        "sockets": 1,
+        "maxed": 4,
+        "endpointDeficit": 0
+      }
+    },
+    "unique:3:13:6": {
+      "name": "St. Soloyolo's Holy Bow",
+      "maxSockets": 2,
+      "statBounds": [
+        25,
+        12,
+        100,
+        5,
+        6,
+        6,
+        40,
+        50
+      ],
+      "seed": 12535358,
+      "sockets": 2,
+      "maxed": 7,
+      "total": 8,
+      "endpointDeficit": 7,
+      "searchedThrough": 60000000,
+      "measured": {
+        "branch": "if",
+        "nStat": 8
+      },
+      "previous": {
+        "seed": 95990295,
+        "sockets": 1,
+        "maxed": 5,
+        "endpointDeficit": 19
+      }
+    },
+    "unique:3:14:0": {
+      "name": "RT XQC-4910",
+      "maxSockets": 2,
+      "statBounds": [
+        20,
+        6,
+        40,
+        2,
+        15
+      ],
+      "seed": 821492,
+      "sockets": 2,
+      "maxed": 5,
+      "total": 5,
+      "endpointDeficit": 0,
+      "searchedThrough": 60000000,
+      "measured": {
+        "branch": "else",
+        "nStat": 5
+      },
+      "previous": {
+        "seed": 384313,
+        "sockets": 1,
+        "maxed": 4,
+        "endpointDeficit": 7
+      }
+    },
+    "unique:3:14:12": {
+      "name": "Crystal Infused Pistol",
+      "maxSockets": 3,
+      "statBounds": [
+        10,
+        3,
+        120,
+        3
+      ],
+      "seed": 314470,
+      "sockets": 3,
+      "maxed": 4,
+      "total": 4,
+      "endpointDeficit": 0,
+      "searchedThrough": 60000000,
+      "measured": {
+        "branch": "if",
+        "nStat": 4
+      },
+      "previous": {
+        "seed": 121204,
+        "sockets": 2,
+        "maxed": 2,
+        "endpointDeficit": 6
+      }
+    },
+    "unique:6:0:7": {
+      "name": "Wall of the Legion",
+      "maxSockets": 2,
+      "statBounds": [
+        20,
+        50,
+        30
+      ],
+      "seed": 375940,
+      "sockets": 2,
+      "maxed": 3,
+      "total": 3,
+      "endpointDeficit": 0,
+      "searchedThrough": 60000000,
+      "measured": {
+        "branch": "else",
+        "nStat": 3
+      },
+      "previous": {
+        "seed": 395284,
+        "sockets": 1,
+        "maxed": 2,
+        "endpointDeficit": 2
+      }
+    },
+    "unique:3:14:9": {
+      "name": "Marine's Buddy",
+      "maxSockets": 5,
+      "statBounds": [
+        6,
+        55,
+        4,
+        15,
+        10,
+        10
+      ],
+      "seed": 4677950,
+      "sockets": 5,
+      "maxed": 6,
+      "total": 6,
+      "endpointDeficit": 0,
+      "searchedThrough": 60000000,
+      "measured": {
+        "branch": "if",
+        "nStat": 6
+      },
+      "previous": {
+        "seed": 1196628,
+        "sockets": 1,
+        "maxed": 6,
+        "endpointDeficit": 0
+      }
+    },
+    "unique:1:0:75": {
+      "name": "Odin's Battlearmor",
+      "maxSockets": 4,
+      "statBounds": [
+        10,
+        30,
+        5,
+        30,
+        10,
+        10
+      ],
+      "seed": 4677950,
+      "sockets": 4,
+      "maxed": 6,
+      "total": 6,
+      "endpointDeficit": 0,
+      "searchedThrough": 60000000,
+      "measured": {
+        "branch": "if",
+        "nStat": 6
+      },
+      "previous": {
+        "seed": 3888156,
+        "sockets": 3,
+        "maxed": 5,
+        "endpointDeficit": 1
+      }
+    },
+    "unique:1:0:70": {
+      "name": "Sand Manipulator's Kalasiris",
+      "maxSockets": 4,
+      "statBounds": [
+        30,
+        30,
+        5,
+        2,
+        15,
+        40
+      ],
+      "seed": 14693503,
+      "sockets": 4,
+      "maxed": 6,
+      "total": 6,
+      "endpointDeficit": 0,
+      "searchedThrough": 60000000,
+      "measured": {
+        "branch": "if",
+        "nStat": 6
+      },
+      "previous": {
+        "seed": 4739285,
+        "sockets": 2,
+        "maxed": 5,
+        "endpointDeficit": 3
+      }
+    },
+    "unique:3:4:6": {
+      "name": "Gem King's Cleaver",
+      "maxSockets": 2,
+      "statBounds": [
+        8
+      ],
+      "seed": 288208,
+      "sockets": 2,
+      "maxed": 1,
+      "total": 1,
+      "endpointDeficit": 0,
+      "searchedThrough": 60000000,
+      "measured": {
+        "branch": "else",
+        "nStat": 1
+      },
+      "previous": {
+        "seed": 288196,
+        "sockets": 1,
+        "maxed": 1,
+        "endpointDeficit": 0
+      }
+    },
+    "unique:3:14:14": {
+      "name": "Dreadnought",
+      "maxSockets": 2,
+      "statBounds": [
+        20,
+        12,
+        100
+      ],
+      "seed": 846782,
+      "sockets": 2,
+      "maxed": 3,
+      "total": 3,
+      "endpointDeficit": 0,
+      "searchedThrough": 60000000,
+      "measured": {
+        "branch": "else",
+        "nStat": 3
+      },
+      "previous": {
+        "seed": 335071,
+        "sockets": 1,
+        "maxed": 1,
+        "endpointDeficit": 2
+      }
+    },
+    "unique:3:14:13": {
+      "name": "F4-Tactical Rifle",
+      "maxSockets": 2,
+      "statBounds": [
+        20,
+        6,
+        40,
+        2,
+        20,
+        20
+      ],
+      "seed": 3429797,
+      "sockets": 2,
+      "maxed": 6,
+      "total": 6,
+      "endpointDeficit": 0,
+      "searchedThrough": 60000000,
+      "measured": {
+        "branch": "else",
+        "nStat": 6
+      },
+      "previous": {
+        "seed": 5930156,
+        "sockets": 1,
+        "maxed": 4,
+        "endpointDeficit": 9
+      }
+    },
+    "unique:3:14:7": {
+      "name": "Chills of War",
+      "maxSockets": 2,
+      "statBounds": [
+        25,
+        4,
+        125,
+        4,
+        4,
+        10
+      ],
+      "seed": 4715579,
+      "sockets": 2,
+      "maxed": 6,
+      "total": 6,
+      "endpointDeficit": 0,
+      "searchedThrough": 60000000,
+      "measured": {
+        "branch": "else",
+        "nStat": 6
+      },
+      "previous": {
+        "seed": 1196628,
+        "sockets": 1,
+        "maxed": 4,
+        "endpointDeficit": 8
+      }
+    },
+    "unique:1:0:18": {
+      "name": "Death Lord's Bone Armor",
+      "maxSockets": 4,
+      "statBounds": [
+        120,
+        30,
+        30,
+        10,
+        10
+      ],
+      "seed": 416809,
+      "sockets": 4,
+      "maxed": 4,
+      "total": 5,
+      "endpointDeficit": 1,
+      "searchedThrough": 60000000,
+      "measured": {
+        "branch": "if",
+        "nStat": 5
+      },
+      "previous": {
+        "seed": 4316545,
+        "sockets": 3,
+        "maxed": 2,
+        "endpointDeficit": 3
+      }
+    },
+    "unique:3:1:1": {
+      "name": "Jade Warrior's Gladius",
+      "maxSockets": 4,
+      "statBounds": [
+        20,
+        6,
+        55,
+        5
+      ],
+      "seed": 371161,
+      "sockets": 4,
+      "maxed": 4,
+      "total": 4,
+      "endpointDeficit": 0,
+      "searchedThrough": 60000000,
+      "measured": {
+        "branch": "if",
+        "nStat": 4
+      },
+      "previous": {
+        "seed": 259579,
+        "sockets": 2,
+        "maxed": 2,
+        "endpointDeficit": 7
+      }
+    },
+    "unique:3:13:17": {
+      "name": "Arrow of Niflheim",
+      "maxSockets": 3,
+      "statBounds": [
+        30,
+        15,
+        7,
+        2,
+        2,
+        12,
+        200,
+        10
+      ],
+      "seed": 12958641,
+      "sockets": 3,
+      "maxed": 7,
+      "total": 8,
+      "endpointDeficit": 7,
+      "searchedThrough": 60000000,
+      "measured": {
+        "branch": "if",
+        "nStat": 8
+      },
+      "previous": {
+        "seed": 19487361,
+        "sockets": 1,
+        "maxed": 5,
+        "endpointDeficit": 75
+      }
+    },
+    "unique:3:7:4": {
+      "name": "The Annihilator",
+      "maxSockets": 5,
+      "statBounds": [
+        10,
+        10,
+        5,
+        20,
+        2
+      ],
+      "seed": 377470,
+      "sockets": 5,
+      "maxed": 5,
+      "total": 5,
+      "endpointDeficit": 0,
+      "searchedThrough": 60000000,
+      "measured": {
+        "branch": "if",
+        "nStat": 5
+      },
+      "previous": {
+        "seed": 227083,
+        "sockets": 3,
+        "maxed": 3,
+        "endpointDeficit": 2
+      }
+    },
+    "unique:1:0:14": {
+      "name": "Grandwizard's Robe",
+      "maxSockets": 4,
+      "statBounds": [
+        30,
+        5,
+        1,
+        20
+      ],
+      "seed": 391429,
+      "sockets": 4,
+      "maxed": 4,
+      "total": 4,
+      "endpointDeficit": 0,
+      "searchedThrough": 60000000,
+      "measured": {
+        "branch": "if",
+        "nStat": 4
+      },
+      "previous": {
+        "seed": 371206,
+        "sockets": 1,
+        "maxed": 2,
+        "endpointDeficit": 4
+      }
+    },
+    "unique:1:0:76": {
+      "name": "Ironclad Protector",
+      "maxSockets": 4,
+      "statBounds": [
+        8,
+        6,
+        6,
+        5,
+        15,
+        40
+      ],
+      "seed": 2488068,
+      "sockets": 4,
+      "maxed": 6,
+      "total": 6,
+      "endpointDeficit": 0,
+      "searchedThrough": 60000000,
+      "measured": {
+        "branch": "if",
+        "nStat": 6
+      },
+      "previous": {
+        "seed": 410545,
+        "sockets": 1,
+        "maxed": 4,
+        "endpointDeficit": 6
+      }
+    },
+    "unique:3:16:5": {
+      "name": "Wargod's Wrath",
+      "maxSockets": 2,
+      "statBounds": [
+        4,
+        60,
+        10,
+        8
+      ],
+      "seed": 219226,
+      "sockets": 2,
+      "maxed": 4,
+      "total": 4,
+      "endpointDeficit": 0,
+      "searchedThrough": 60000000,
+      "measured": {
+        "branch": "else",
+        "nStat": 4
+      },
+      "previous": {
+        "seed": 189862,
+        "sockets": 1,
+        "maxed": 4,
+        "endpointDeficit": 0
+      }
+    },
+    "unique:1:0:46": {
+      "name": "Plunderer's Jacket",
+      "maxSockets": 4,
+      "statBounds": [
+        20,
+        8,
+        30,
+        2,
+        40,
+        10
+      ],
+      "seed": 3429797,
+      "sockets": 4,
+      "maxed": 6,
+      "total": 6,
+      "endpointDeficit": 0,
+      "searchedThrough": 60000000,
+      "measured": {
+        "branch": "if",
+        "nStat": 6
+      },
+      "previous": {
+        "seed": 3888156,
+        "sockets": 3,
+        "maxed": 5,
+        "endpointDeficit": 1
+      }
+    },
+    "unique:3:13:14": {
+      "name": "Astral Projector",
+      "maxSockets": 3,
+      "statBounds": [
+        25,
+        15,
+        3,
+        12,
+        1,
+        75,
+        6,
+        30,
+        10,
+        4
+      ],
+      "seed": 14660425,
+      "sockets": 3,
+      "maxed": 8,
+      "total": 10,
+      "endpointDeficit": 4,
+      "searchedThrough": 60000000,
+      "measured": {
+        "branch": "if",
+        "nStat": 10
+      },
+      "previous": {
+        "seed": 3013546,
+        "sockets": 1,
+        "maxed": 5,
+        "endpointDeficit": 27
+      }
+    },
+    "unique:1:0:55": {
+      "name": "Giant Thorned Lizard Skin",
+      "maxSockets": 4,
+      "statBounds": [
+        15,
+        15,
+        15,
+        15,
+        15,
+        30,
+        431,
+        75
+      ],
+      "seed": 19905025,
+      "sockets": 4,
+      "maxed": 6,
+      "total": 8,
+      "endpointDeficit": 17,
+      "searchedThrough": 60000000,
+      "measured": {
+        "branch": "if",
+        "nStat": 8
+      },
+      "previous": {
+        "seed": 3888156,
+        "sockets": 3,
+        "maxed": 5,
+        "endpointDeficit": 73
+      }
+    },
+    "unique:3:16:3": {
+      "name": "Imperial Glaive",
+      "maxSockets": 2,
+      "statBounds": [
+        20,
+        10,
+        5,
+        140,
+        20,
+        10
+      ],
+      "seed": 9862409,
+      "sockets": 2,
+      "maxed": 5,
+      "total": 6,
+      "endpointDeficit": 1,
+      "searchedThrough": 60000000,
+      "measured": {
+        "branch": "else",
+        "nStat": 6
+      },
+      "previous": {
+        "seed": 1196628,
+        "sockets": 1,
+        "maxed": 4,
+        "endpointDeficit": 9
+      }
+    },
+    "unique:3:13:16": {
+      "name": "Monsoon",
+      "maxSockets": 3,
+      "statBounds": [
+        2,
+        12,
+        200,
+        15,
+        10,
+        7,
+        10
+      ],
+      "seed": 18531901,
+      "sockets": 3,
+      "maxed": 6,
+      "total": 7,
+      "endpointDeficit": 2,
+      "searchedThrough": 60000000,
+      "measured": {
+        "branch": "if",
+        "nStat": 7
+      },
+      "previous": {
+        "seed": 12923247,
+        "sockets": 2,
+        "maxed": 5,
+        "endpointDeficit": 5
+      }
+    },
+    "unique:1:0:41": {
+      "name": "Shield Bearer's Plated Armor",
+      "maxSockets": 4,
+      "statBounds": [
+        30,
+        30,
+        15
+      ],
+      "seed": 408970,
+      "sockets": 4,
+      "maxed": 3,
+      "total": 3,
+      "endpointDeficit": 0,
+      "searchedThrough": 60000000,
+      "measured": {
+        "branch": "if",
+        "nStat": 3
+      },
+      "previous": {
+        "seed": 391156,
+        "sockets": 3,
+        "maxed": 3,
+        "endpointDeficit": 0
+      }
+    },
+    "unique:1:0:42": {
+      "name": "Juggernaut's Glorious Plate",
+      "maxSockets": 4,
+      "statBounds": [
+        30,
+        60
+      ],
+      "seed": 391138,
+      "sockets": 4,
+      "maxed": 2,
+      "total": 2,
+      "endpointDeficit": 0,
+      "searchedThrough": 60000000,
+      "measured": {
+        "branch": "if",
+        "nStat": 2
+      },
+      "previous": {
+        "seed": 411559,
+        "sockets": 1,
+        "maxed": 1,
+        "endpointDeficit": 1
+      }
+    },
+    "unique:3:3:19": {
+      "name": "Luci's Day",
+      "maxSockets": 2,
+      "statBounds": [
+        40,
+        3,
+        9,
+        75,
+        15,
+        20,
+        10
+      ],
+      "seed": 3888156,
+      "sockets": 2,
+      "maxed": 6,
+      "total": 7,
+      "endpointDeficit": 1,
+      "searchedThrough": 60000000,
+      "measured": {
+        "branch": "else",
+        "nStat": 7
+      },
+      "previous": {
+        "seed": 61014333,
+        "sockets": 1,
+        "maxed": 3,
+        "endpointDeficit": 19
+      }
+    },
+    "unique:3:6:6": {
+      "name": "War God's Lance",
+      "maxSockets": 3,
+      "statBounds": [
+        4,
+        60,
+        20
+      ],
+      "seed": 190930,
+      "sockets": 3,
+      "maxed": 3,
+      "total": 3,
+      "endpointDeficit": 0,
+      "searchedThrough": 60000000,
+      "measured": {
+        "branch": "if",
+        "nStat": 3
+      },
+      "previous": {
+        "seed": 180955,
+        "sockets": 2,
+        "maxed": 3,
+        "endpointDeficit": 0
+      }
+    },
+    "unique:3:6:8": {
+      "name": "Golden God's Gladius",
+      "maxSockets": 3,
+      "statBounds": [
+        5,
+        20,
+        3,
+        5,
+        5,
+        4
+      ],
+      "seed": 377470,
+      "sockets": 3,
+      "maxed": 6,
+      "total": 6,
+      "endpointDeficit": 0,
+      "searchedThrough": 60000000,
+      "measured": {
+        "branch": "if",
+        "nStat": 6
+      },
+      "previous": {
+        "seed": 259579,
+        "sockets": 2,
+        "maxed": 6,
+        "endpointDeficit": 0
+      }
+    },
+    "unique:0:0:33": {
+      "name": "Blood-letter's Crown",
+      "maxSockets": 2,
+      "statBounds": [
+        12,
+        50
+      ],
+      "seed": 332962,
+      "sockets": 2,
+      "maxed": 2,
+      "total": 2,
+      "endpointDeficit": 0,
+      "searchedThrough": 60000000,
+      "measured": {
+        "branch": "else",
+        "nStat": 2
+      },
+      "previous": {
+        "seed": 407296,
+        "sockets": 1,
+        "maxed": 1,
+        "endpointDeficit": 3
+      }
+    },
+    "unique:0:0:25": {
+      "name": "Judge, Jury & Executioner",
+      "maxSockets": 2,
+      "statBounds": [
+        8,
+        25,
+        25
+      ],
+      "seed": 289468,
+      "sockets": 2,
+      "maxed": 3,
+      "total": 3,
+      "endpointDeficit": 0,
+      "searchedThrough": 60000000,
+      "measured": {
+        "branch": "else",
+        "nStat": 3
+      },
+      "previous": {
+        "seed": 383770,
+        "sockets": 1,
+        "maxed": 2,
+        "endpointDeficit": 2
+      }
+    },
+    "unique:2:0:31": {
+      "name": "Battle Worn Boots",
+      "maxSockets": 2,
+      "statBounds": [
+        12,
+        40,
+        15,
+        15,
+        7
+      ],
+      "seed": 416809,
+      "sockets": 2,
+      "maxed": 5,
+      "total": 5,
+      "endpointDeficit": 0,
+      "searchedThrough": 60000000,
+      "measured": {
+        "branch": "else",
+        "nStat": 5
+      },
+      "previous": {
+        "seed": 1721980,
+        "sockets": 1,
+        "maxed": 4,
+        "endpointDeficit": 1
+      }
+    },
+    "unique:2:0:22": {
+      "name": "Bone Conjurer's Marchers",
+      "maxSockets": 2,
+      "statBounds": [
+        14,
+        10,
+        30,
+        12
+      ],
+      "seed": 348151,
+      "sockets": 2,
+      "maxed": 4,
+      "total": 4,
+      "endpointDeficit": 0,
+      "searchedThrough": 60000000,
+      "measured": {
+        "branch": "else",
+        "nStat": 4
+      },
+      "previous": {
+        "seed": 323512,
+        "sockets": 1,
+        "maxed": 2,
+        "endpointDeficit": 2
+      }
+    },
+    "unique:2:0:73": {
+      "name": "Scorching Roamers",
+      "maxSockets": 2,
+      "statBounds": [
+        28,
+        8,
+        18,
+        2,
+        15,
+        45,
+        10
+      ],
+      "seed": 3888156,
+      "sockets": 2,
+      "maxed": 6,
+      "total": 7,
+      "endpointDeficit": 1,
+      "searchedThrough": 60000000,
+      "measured": {
+        "branch": "else",
+        "nStat": 7
+      },
+      "previous": {
+        "seed": 88780570,
+        "sockets": 1,
+        "maxed": 5,
+        "endpointDeficit": 5
+      }
+    },
+    "unique:10:0:101": {
+      "name": "Parasitic Heart",
+      "maxSockets": 2,
+      "statBounds": [
+        35,
+        35,
+        2
+      ],
+      "seed": 397411,
+      "sockets": 2,
+      "maxed": 3,
+      "total": 3,
+      "endpointDeficit": 0,
+      "searchedThrough": 60000000,
+      "measured": {
+        "branch": "else",
+        "nStat": 3
+      },
+      "previous": {
+        "seed": 396886,
+        "sockets": 1,
+        "maxed": 3,
+        "endpointDeficit": 0
+      }
+    },
+    "unique:2:0:51": {
+      "name": "Pla-Yer's Choice",
+      "maxSockets": 3,
+      "statBounds": [
+        4,
+        19,
+        39,
+        19
+      ],
+      "seed": 348151,
+      "sockets": 3,
+      "maxed": 4,
+      "total": 4,
+      "endpointDeficit": 0,
+      "searchedThrough": 60000000,
+      "measured": {
+        "branch": "if",
+        "nStat": 4
+      },
+      "previous": {
+        "seed": 408907,
+        "sockets": 2,
+        "maxed": 3,
+        "endpointDeficit": 5
+      }
+    },
+    "unique:2:0:72": {
+      "name": "Chilling Roamers",
+      "maxSockets": 2,
+      "statBounds": [
+        28,
+        8,
+        18,
+        2,
+        15,
+        45,
+        10
+      ],
+      "seed": 3888156,
+      "sockets": 2,
+      "maxed": 6,
+      "total": 7,
+      "endpointDeficit": 1,
+      "searchedThrough": 60000000,
+      "measured": {
+        "branch": "else",
+        "nStat": 7
+      },
+      "previous": {
+        "seed": 88780570,
+        "sockets": 1,
+        "maxed": 5,
+        "endpointDeficit": 5
+      }
+    },
+    "unique:4:0:5": {
+      "name": "Anubis' Mighty Hands",
+      "maxSockets": 2,
+      "statBounds": [
+        12,
+        1,
+        25,
+        10
+      ],
+      "seed": 334465,
+      "sockets": 2,
+      "maxed": 4,
+      "total": 4,
+      "endpointDeficit": 0,
+      "searchedThrough": 60000000,
+      "measured": {
+        "branch": "else",
+        "nStat": 4
+      },
+      "previous": {
+        "seed": 382657,
+        "sockets": 1,
+        "maxed": 2,
+        "endpointDeficit": 6
+      }
+    },
+    "unique:0:0:43": {
+      "name": "Guise of the Dead",
+      "maxSockets": 2,
+      "statBounds": [
+        40,
+        12,
+        1,
+        40,
+        10,
+        10,
+        4,
+        4,
+        10
+      ],
+      "seed": 46751502,
+      "sockets": 2,
+      "maxed": 8,
+      "total": 9,
+      "endpointDeficit": 6,
+      "searchedThrough": 60000000,
+      "measured": {
+        "branch": "else",
+        "nStat": 9
+      },
+      "previous": {
+        "seed": 58453137,
+        "sockets": 1,
+        "maxed": 7,
+        "endpointDeficit": 6
+      }
+    },
+    "unique:0:0:72": {
+      "name": "Juda's Broken Halo",
+      "maxSockets": 4,
+      "statBounds": [
+        10,
+        12,
+        1,
+        10,
+        5
+      ],
+      "seed": 317158,
+      "sockets": 4,
+      "maxed": 5,
+      "total": 5,
+      "endpointDeficit": 0,
+      "searchedThrough": 60000000,
+      "measured": {
+        "branch": "if",
+        "nStat": 5
+      },
+      "previous": {
+        "seed": 320779,
+        "sockets": 3,
+        "maxed": 3,
+        "endpointDeficit": 2
+      }
+    },
+    "unique:4:0:38": {
+      "name": "Einar's Padded Gauntlets",
+      "maxSockets": 2,
+      "statBounds": [
+        60,
+        12,
+        30,
+        12
+      ],
+      "seed": 1286214,
+      "sockets": 2,
+      "maxed": 4,
+      "total": 4,
+      "endpointDeficit": 0,
+      "searchedThrough": 60000000,
+      "measured": {
+        "branch": "else",
+        "nStat": 4
+      },
+      "previous": {
+        "seed": 1260561,
+        "sockets": 1,
+        "maxed": 3,
+        "endpointDeficit": 1
+      }
+    },
+    "unique:2:0:2": {
+      "name": "Tribal Boots",
+      "maxSockets": 2,
+      "statBounds": [
+        8,
+        20,
+        5,
+        20
+      ],
+      "seed": 308812,
+      "sockets": 2,
+      "maxed": 4,
+      "total": 4,
+      "endpointDeficit": 0,
+      "searchedThrough": 60000000,
+      "measured": {
+        "branch": "else",
+        "nStat": 4
+      },
+      "previous": {
+        "seed": 375751,
+        "sockets": 1,
+        "maxed": 3,
+        "endpointDeficit": 2
+      }
+    },
+    "unique:2:0:26": {
+      "name": "Juggernaut's Victory Marchers",
+      "maxSockets": 2,
+      "statBounds": [
+        8,
+        14,
+        10,
+        30,
+        5
+      ],
+      "seed": 416809,
+      "sockets": 2,
+      "maxed": 5,
+      "total": 5,
+      "endpointDeficit": 0,
+      "searchedThrough": 60000000,
+      "measured": {
+        "branch": "else",
+        "nStat": 5
+      },
+      "previous": {
+        "seed": 1196628,
+        "sockets": 1,
+        "maxed": 4,
+        "endpointDeficit": 1
+      }
+    },
+    "unique:4:0:46": {
+      "name": "Thorned Wristguards",
+      "maxSockets": 2,
+      "statBounds": [
+        8,
+        10,
+        10,
+        10
+      ],
+      "seed": 296185,
+      "sockets": 2,
+      "maxed": 4,
+      "total": 4,
+      "endpointDeficit": 0,
+      "searchedThrough": 60000000,
+      "measured": {
+        "branch": "else",
+        "nStat": 4
+      },
+      "previous": {
+        "seed": 323512,
+        "sockets": 1,
+        "maxed": 4,
+        "endpointDeficit": 0
+      }
+    },
+    "unique:10:0:81": {
+      "name": "Dragon's Heart",
+      "maxSockets": 2,
+      "statBounds": [
+        4
+      ],
+      "seed": 172696,
+      "sockets": 2,
+      "maxed": 1,
+      "total": 1,
+      "endpointDeficit": 0,
+      "searchedThrough": 60000000,
+      "measured": {
+        "branch": "else",
+        "nStat": 1
+      },
+      "previous": {
+        "seed": 172693,
+        "sockets": 1,
+        "maxed": 1,
+        "endpointDeficit": 0
+      }
+    },
+    "unique:0:0:16": {
+      "name": "Death Lord's Crown",
+      "maxSockets": 2,
+      "statBounds": [
+        12,
+        1,
+        50
+      ],
+      "seed": 335980,
+      "sockets": 2,
+      "maxed": 3,
+      "total": 3,
+      "endpointDeficit": 0,
+      "searchedThrough": 60000000,
+      "measured": {
+        "branch": "else",
+        "nStat": 3
+      },
+      "previous": {
+        "seed": 407314,
+        "sockets": 1,
+        "maxed": 2,
+        "endpointDeficit": 12
+      }
+    },
+    "unique:0:0:23": {
+      "name": "Aztec Crown",
+      "maxSockets": 2,
+      "statBounds": [
+        20,
+        7,
+        12,
+        50
+      ],
+      "seed": 845198,
+      "sockets": 2,
+      "maxed": 4,
+      "total": 4,
+      "endpointDeficit": 0,
+      "searchedThrough": 60000000,
+      "measured": {
+        "branch": "else",
+        "nStat": 4
+      },
+      "previous": {
+        "seed": 407893,
+        "sockets": 1,
+        "maxed": 2,
+        "endpointDeficit": 3
+      }
+    },
+    "unique:3:5:1": {
+      "name": "Molten Paw",
+      "maxSockets": 2,
+      "statBounds": [
+        5,
+        15,
+        5,
+        80
+      ],
+      "seed": 315610,
+      "sockets": 2,
+      "maxed": 4,
+      "total": 4,
+      "endpointDeficit": 0,
+      "searchedThrough": 60000000,
+      "measured": {
+        "branch": "else",
+        "nStat": 4
+      },
+      "previous": {
+        "seed": 259579,
+        "sockets": 1,
+        "maxed": 3,
+        "endpointDeficit": 1
+      }
+    },
+    "unique:4:0:13": {
+      "name": "Lancers Gauntlets",
+      "maxSockets": 2,
+      "statBounds": [
+        6,
+        15,
+        2,
+        20,
+        5
+      ],
+      "seed": 259579,
+      "sockets": 2,
+      "maxed": 5,
+      "total": 5,
+      "endpointDeficit": 0,
+      "searchedThrough": 60000000,
+      "measured": {
+        "branch": "else",
+        "nStat": 5
+      },
+      "previous": {
+        "seed": 375751,
+        "sockets": 1,
+        "maxed": 3,
+        "endpointDeficit": 3
+      }
+    },
+    "unique:2:0:56": {
+      "name": "Enigma's Riftwalkers",
+      "maxSockets": 2,
+      "statBounds": [
+        10,
+        8,
+        20,
+        4
+      ],
+      "seed": 314470,
+      "sockets": 2,
+      "maxed": 4,
+      "total": 4,
+      "endpointDeficit": 0,
+      "searchedThrough": 60000000,
+      "measured": {
+        "branch": "else",
+        "nStat": 4
+      },
+      "previous": {
+        "seed": 375751,
+        "sockets": 1,
+        "maxed": 3,
+        "endpointDeficit": 1
+      }
+    },
+    "unique:10:0:35": {
+      "name": "Cold Giant's Charm",
+      "maxSockets": 2,
+      "statBounds": [
+        15,
+        13,
+        7
+      ],
+      "seed": 351817,
+      "sockets": 2,
+      "maxed": 3,
+      "total": 3,
+      "endpointDeficit": 0,
+      "searchedThrough": 60000000,
+      "measured": {
+        "branch": "else",
+        "nStat": 3
+      },
+      "previous": {
+        "seed": 351754,
+        "sockets": 1,
+        "maxed": 3,
+        "endpointDeficit": 0
+      }
+    },
+    "unique:4:0:25": {
+      "name": "Brawler's Fighting Mitts",
+      "maxSockets": 2,
+      "statBounds": [
+        12,
+        1,
+        3,
+        10,
+        10
+      ],
+      "seed": 339247,
+      "sockets": 2,
+      "maxed": 5,
+      "total": 5,
+      "endpointDeficit": 0,
+      "searchedThrough": 60000000,
+      "measured": {
+        "branch": "else",
+        "nStat": 5
+      },
+      "previous": {
+        "seed": 319249,
+        "sockets": 1,
+        "maxed": 3,
+        "endpointDeficit": 5
+      }
+    },
+    "unique:2:0:10": {
+      "name": "Death Lord's Marchers",
+      "maxSockets": 2,
+      "statBounds": [
+        8,
+        14,
+        6,
+        2,
+        10,
+        30
+      ],
+      "seed": 738269,
+      "sockets": 2,
+      "maxed": 6,
+      "total": 6,
+      "endpointDeficit": 0,
+      "searchedThrough": 60000000,
+      "measured": {
+        "branch": "else",
+        "nStat": 6
+      },
+      "previous": {
+        "seed": 1196628,
+        "sockets": 1,
+        "maxed": 6,
+        "endpointDeficit": 0
+      }
+    },
+    "unique:2:0:71": {
+      "name": "Venom Roamers",
+      "maxSockets": 2,
+      "statBounds": [
+        28,
+        8,
+        18,
+        2,
+        15,
+        45,
+        10
+      ],
+      "seed": 3888156,
+      "sockets": 2,
+      "maxed": 6,
+      "total": 7,
+      "endpointDeficit": 1,
+      "searchedThrough": 60000000,
+      "measured": {
+        "branch": "else",
+        "nStat": 7
+      },
+      "previous": {
+        "seed": 88780570,
+        "sockets": 1,
+        "maxed": 5,
+        "endpointDeficit": 5
+      }
+    },
+    "unique:3:16:2": {
+      "name": "Mimir's Corrupted Axe",
+      "maxSockets": 2,
+      "statBounds": [
+        4,
+        14,
+        60,
+        8,
+        140,
+        25
+      ],
+      "seed": 3888156,
+      "sockets": 2,
+      "maxed": 5,
+      "total": 6,
+      "endpointDeficit": 2,
+      "searchedThrough": 60000000,
+      "measured": {
+        "branch": "else",
+        "nStat": 6
+      },
+      "previous": {
+        "seed": 1196628,
+        "sockets": 1,
+        "maxed": 4,
+        "endpointDeficit": 5
+      }
+    },
+    "unique:4:0:14": {
+      "name": "Devil's Grasp",
+      "maxSockets": 2,
+      "statBounds": [
+        10,
+        6,
+        8,
+        10,
+        5
+      ],
+      "seed": 338131,
+      "sockets": 2,
+      "maxed": 5,
+      "total": 5,
+      "endpointDeficit": 0,
+      "searchedThrough": 60000000,
+      "measured": {
+        "branch": "else",
+        "nStat": 5
+      },
+      "previous": {
+        "seed": 314470,
+        "sockets": 1,
+        "maxed": 3,
+        "endpointDeficit": 5
+      }
+    },
+    "unique:2:0:32": {
+      "name": "Steadfast Marchers",
+      "maxSockets": 2,
+      "statBounds": [
+        14,
+        30,
+        8,
+        5,
+        3
+      ],
+      "seed": 407893,
+      "sockets": 2,
+      "maxed": 5,
+      "total": 5,
+      "endpointDeficit": 0,
+      "searchedThrough": 60000000,
+      "measured": {
+        "branch": "else",
+        "nStat": 5
+      },
+      "previous": {
+        "seed": 402598,
+        "sockets": 1,
+        "maxed": 3,
+        "endpointDeficit": 2
+      }
+    },
+    "unique:4:0:33": {
+      "name": "Wisdom's Hold",
+      "maxSockets": 2,
+      "statBounds": [
+        12,
+        10,
+        1,
+        10,
+        15
+      ],
+      "seed": 344974,
+      "sockets": 2,
+      "maxed": 5,
+      "total": 5,
+      "endpointDeficit": 0,
+      "searchedThrough": 60000000,
+      "measured": {
+        "branch": "else",
+        "nStat": 5
+      },
+      "previous": {
+        "seed": 329215,
+        "sockets": 1,
+        "maxed": 3,
+        "endpointDeficit": 2
+      }
+    },
+    "unique:0:0:19": {
+      "name": "Nomad's Sand Bandana",
+      "maxSockets": 2,
+      "statBounds": [
+        5,
+        12,
+        50,
+        3,
+        5
+      ],
+      "seed": 233845,
+      "sockets": 2,
+      "maxed": 5,
+      "total": 5,
+      "endpointDeficit": 0,
+      "searchedThrough": 60000000,
+      "measured": {
+        "branch": "else",
+        "nStat": 5
+      },
+      "previous": {
+        "seed": 413860,
+        "sockets": 1,
+        "maxed": 3,
+        "endpointDeficit": 10
+      }
+    },
+    "unique:4:0:65": {
+      "name": "Infected Grasp",
+      "maxSockets": 2,
+      "statBounds": [
+        10,
+        20,
+        15,
+        3,
+        15,
+        20,
+        15,
+        10
+      ],
+      "seed": 17234404,
+      "sockets": 2,
+      "maxed": 7,
+      "total": 8,
+      "endpointDeficit": 3,
+      "searchedThrough": 60000000,
+      "measured": {
+        "branch": "else",
+        "nStat": 8
+      },
+      "previous": {
+        "seed": 2587674,
+        "sockets": 1,
+        "maxed": 4,
+        "endpointDeficit": 24
+      }
+    },
+    "unique:10:0:103": {
+      "name": "Jar of Parasites",
+      "maxSockets": 2,
+      "statBounds": [
+        90,
+        1
+      ],
+      "seed": 418306,
+      "sockets": 2,
+      "maxed": 2,
+      "total": 2,
+      "endpointDeficit": 0,
+      "searchedThrough": 60000000,
+      "measured": {
+        "branch": "else",
+        "nStat": 2
+      },
+      "previous": {
+        "seed": 418294,
+        "sockets": 1,
+        "maxed": 2,
+        "endpointDeficit": 0
+      }
+    },
+    "unique:2:0:7": {
+      "name": "Zeus' Battle Boots",
+      "maxSockets": 2,
+      "statBounds": [
+        15,
+        8,
+        12,
+        20,
+        10,
+        30
+      ],
+      "seed": 44577706,
+      "sockets": 2,
+      "maxed": 6,
+      "total": 6,
+      "endpointDeficit": 0,
+      "searchedThrough": 60000000,
+      "measured": {
+        "branch": "else",
+        "nStat": 6
+      },
+      "previous": {
+        "seed": 1196628,
+        "sockets": 1,
+        "maxed": 4,
+        "endpointDeficit": 2
+      }
+    },
+    "unique:0:0:2": {
+      "name": "Demon Warlord's Helm",
+      "maxSockets": 2,
+      "statBounds": [
+        12,
+        50,
+        5
+      ],
+      "seed": 333478,
+      "sockets": 2,
+      "maxed": 3,
+      "total": 3,
+      "endpointDeficit": 0,
+      "searchedThrough": 60000000,
+      "measured": {
+        "branch": "else",
+        "nStat": 3
+      },
+      "previous": {
+        "seed": 407242,
+        "sockets": 1,
+        "maxed": 2,
+        "endpointDeficit": 5
+      }
+    },
+    "unique:2:0:24": {
+      "name": "Blood-letter's Plated Boots",
+      "maxSockets": 2,
+      "statBounds": [
+        14,
+        10,
+        30,
+        5,
+        4,
+        12
+      ],
+      "seed": 5983559,
+      "sockets": 2,
+      "maxed": 6,
+      "total": 6,
+      "endpointDeficit": 0,
+      "searchedThrough": 60000000,
+      "measured": {
+        "branch": "else",
+        "nStat": 6
+      },
+      "previous": {
+        "seed": 1196628,
+        "sockets": 1,
+        "maxed": 4,
+        "endpointDeficit": 2
+      }
+    },
+    "unique:4:0:17": {
+      "name": "Conjurer Mitts",
+      "maxSockets": 2,
+      "statBounds": [
+        8,
+        1,
+        10,
+        15,
+        70,
+        70
+      ],
+      "seed": 3408302,
+      "sockets": 2,
+      "maxed": 5,
+      "total": 6,
+      "endpointDeficit": 1,
+      "searchedThrough": 60000000,
+      "measured": {
+        "branch": "else",
+        "nStat": 6
+      },
+      "previous": {
+        "seed": 808040,
+        "sockets": 1,
+        "maxed": 3,
+        "endpointDeficit": 45
+      }
+    },
+    "unique:0:0:35": {
+      "name": "Shield Bearer's Crown",
+      "maxSockets": 2,
+      "statBounds": [
+        12,
+        3,
+        50
+      ],
+      "seed": 335995,
+      "sockets": 2,
+      "maxed": 3,
+      "total": 3,
+      "endpointDeficit": 0,
+      "searchedThrough": 60000000,
+      "measured": {
+        "branch": "else",
+        "nStat": 3
+      },
+      "previous": {
+        "seed": 407314,
+        "sockets": 1,
+        "maxed": 2,
+        "endpointDeficit": 12
+      }
+    },
+    "unique:4:0:9": {
+      "name": "Nomad's Sand Mitts",
+      "maxSockets": 2,
+      "statBounds": [
+        6,
+        25,
+        5
+      ],
+      "seed": 247015,
+      "sockets": 2,
+      "maxed": 3,
+      "total": 3,
+      "endpointDeficit": 0,
+      "searchedThrough": 60000000,
+      "measured": {
+        "branch": "else",
+        "nStat": 3
+      },
+      "previous": {
+        "seed": 382603,
+        "sockets": 1,
+        "maxed": 2,
+        "endpointDeficit": 2
+      }
+    },
+    "unique:0:0:27": {
+      "name": "Ancient Avenger",
+      "maxSockets": 2,
+      "statBounds": [
+        12,
+        50
+      ],
+      "seed": 332962,
+      "sockets": 2,
+      "maxed": 2,
+      "total": 2,
+      "endpointDeficit": 0,
+      "searchedThrough": 60000000,
+      "measured": {
+        "branch": "else",
+        "nStat": 2
+      },
+      "previous": {
+        "seed": 407296,
+        "sockets": 1,
+        "maxed": 1,
+        "endpointDeficit": 3
+      }
+    },
+    "unique:2:0:4": {
+      "name": "Mevius' Mighty Marchers",
+      "maxSockets": 2,
+      "statBounds": [
+        14,
+        10,
+        30,
+        5,
+        7
+      ],
+      "seed": 377470,
+      "sockets": 2,
+      "maxed": 5,
+      "total": 5,
+      "endpointDeficit": 0,
+      "searchedThrough": 60000000,
+      "measured": {
+        "branch": "else",
+        "nStat": 5
+      },
+      "previous": {
+        "seed": 1196628,
+        "sockets": 1,
+        "maxed": 3,
+        "endpointDeficit": 2
+      }
+    },
+    "unique:2:0:25": {
+      "name": "Shield Bearer's Greaves",
+      "maxSockets": 2,
+      "statBounds": [
+        14,
+        10,
+        30,
+        10,
+        10
+      ],
+      "seed": 377470,
+      "sockets": 2,
+      "maxed": 5,
+      "total": 5,
+      "endpointDeficit": 0,
+      "searchedThrough": 60000000,
+      "measured": {
+        "branch": "else",
+        "nStat": 5
+      },
+      "previous": {
+        "seed": 1196628,
+        "sockets": 1,
+        "maxed": 3,
+        "endpointDeficit": 2
+      }
+    },
+    "unique:2:0:70": {
+      "name": "Thunder Roamers",
+      "maxSockets": 2,
+      "statBounds": [
+        28,
+        8,
+        18,
+        2,
+        15,
+        45,
+        10
+      ],
+      "seed": 3888156,
+      "sockets": 2,
+      "maxed": 6,
+      "total": 7,
+      "endpointDeficit": 1,
+      "searchedThrough": 60000000,
+      "measured": {
+        "branch": "else",
+        "nStat": 7
+      },
+      "previous": {
+        "seed": 88780570,
+        "sockets": 1,
+        "maxed": 5,
+        "endpointDeficit": 5
+      }
+    },
+    "unique:2:0:20": {
+      "name": "Mos'Arathim Marchers",
+      "maxSockets": 2,
+      "statBounds": [
+        8,
+        20
+      ],
+      "seed": 288355,
+      "sockets": 2,
+      "maxed": 2,
+      "total": 2,
+      "endpointDeficit": 0,
+      "searchedThrough": 60000000,
+      "measured": {
+        "branch": "else",
+        "nStat": 2
+      },
+      "previous": {
+        "seed": 370699,
+        "sockets": 1,
+        "maxed": 2,
+        "endpointDeficit": 0
+      }
+    },
+    "unique:3:5:2": {
+      "name": "Hemorrhage",
+      "maxSockets": 3,
+      "statBounds": [
+        10,
+        15,
+        3,
+        80
+      ],
+      "seed": 315610,
+      "sockets": 3,
+      "maxed": 4,
+      "total": 4,
+      "endpointDeficit": 0,
+      "searchedThrough": 60000000,
+      "measured": {
+        "branch": "if",
+        "nStat": 4
+      },
+      "previous": {
+        "seed": 121204,
+        "sockets": 2,
+        "maxed": 2,
+        "endpointDeficit": 3
+      }
+    },
+    "unique:0:0:46": {
+      "name": "Tenebris' Grievance",
+      "maxSockets": 2,
+      "statBounds": [
+        20,
+        1,
+        35,
+        40,
+        5,
+        15,
+        150
+      ],
+      "seed": 28151114,
+      "sockets": 2,
+      "maxed": 6,
+      "total": 7,
+      "endpointDeficit": 11,
+      "searchedThrough": 60000000,
+      "measured": {
+        "branch": "else",
+        "nStat": 7
+      },
+      "previous": {
+        "seed": 88780570,
+        "sockets": 1,
+        "maxed": 5,
+        "endpointDeficit": 49
+      }
+    },
+    "unique:4:0:39": {
+      "name": "Rapidcaster Mitts",
+      "maxSockets": 2,
+      "statBounds": [
+        5,
+        2,
+        7,
+        15,
+        2,
+        7
+      ],
+      "seed": 221527,
+      "sockets": 2,
+      "maxed": 6,
+      "total": 6,
+      "endpointDeficit": 0,
+      "searchedThrough": 60000000,
+      "measured": {
+        "branch": "else",
+        "nStat": 6
+      },
+      "previous": {
+        "seed": 351691,
+        "sockets": 1,
+        "maxed": 3,
+        "endpointDeficit": 7
+      }
+    },
+    "unique:2:0:78": {
+      "name": "Adamant Roamers",
+      "maxSockets": 2,
+      "statBounds": [
+        80,
+        8,
+        15,
+        50,
+        4,
+        25
+      ],
+      "seed": 858884,
+      "sockets": 2,
+      "maxed": 5,
+      "total": 6,
+      "endpointDeficit": 1,
+      "searchedThrough": 60000000,
+      "measured": {
+        "branch": "else",
+        "nStat": 6
+      },
+      "previous": {
+        "seed": 88780570,
+        "sockets": 1,
+        "maxed": 5,
+        "endpointDeficit": 1
+      }
+    },
+    "unique:4:0:35": {
+      "name": "Battle Caster's Gauntlets",
+      "maxSockets": 2,
+      "statBounds": [
+        10,
+        12,
+        15,
+        10,
+        30
+      ],
+      "seed": 1633933,
+      "sockets": 2,
+      "maxed": 5,
+      "total": 5,
+      "endpointDeficit": 0,
+      "searchedThrough": 60000000,
+      "measured": {
+        "branch": "else",
+        "nStat": 5
+      },
+      "previous": {
+        "seed": 391156,
+        "sockets": 1,
+        "maxed": 4,
+        "endpointDeficit": 11
+      }
+    },
+    "unique:0:0:50": {
+      "name": "The Grand Champion",
+      "maxSockets": 2,
+      "statBounds": [
+        20,
+        15,
+        15,
+        15,
+        35
+      ],
+      "seed": 3888156,
+      "sockets": 2,
+      "maxed": 5,
+      "total": 5,
+      "endpointDeficit": 0,
+      "searchedThrough": 60000000,
+      "measured": {
+        "branch": "else",
+        "nStat": 5
+      },
+      "previous": {
+        "seed": 3004051,
+        "sockets": 1,
+        "maxed": 5,
+        "endpointDeficit": 0
+      }
+    },
+    "unique:2:0:55": {
+      "name": "Mystic Soles",
+      "maxSockets": 2,
+      "statBounds": [
+        8,
+        5,
+        25,
+        2,
+        10,
+        15
+      ],
+      "seed": 738269,
+      "sockets": 2,
+      "maxed": 6,
+      "total": 6,
+      "endpointDeficit": 0,
+      "searchedThrough": 60000000,
+      "measured": {
+        "branch": "else",
+        "nStat": 6
+      },
+      "previous": {
+        "seed": 1692616,
+        "sockets": 1,
+        "maxed": 5,
+        "endpointDeficit": 1
+      }
+    },
+    "unique:2:0:63": {
+      "name": "Thunder Caller's Treads",
+      "maxSockets": 2,
+      "statBounds": [
+        4,
+        14,
+        5,
+        3,
+        30,
+        10
+      ],
+      "seed": 738269,
+      "sockets": 2,
+      "maxed": 6,
+      "total": 6,
+      "endpointDeficit": 0,
+      "searchedThrough": 60000000,
+      "measured": {
+        "branch": "else",
+        "nStat": 6
+      },
+      "previous": {
+        "seed": 845198,
+        "sockets": 1,
+        "maxed": 4,
+        "endpointDeficit": 3
+      }
+    },
+    "unique:2:0:40": {
+      "name": "Grand Wizard's Silk Shoes",
+      "maxSockets": 2,
+      "statBounds": [
+        12,
+        10,
+        2,
+        30,
+        10,
+        20
+      ],
+      "seed": 3888156,
+      "sockets": 2,
+      "maxed": 6,
+      "total": 6,
+      "endpointDeficit": 0,
+      "searchedThrough": 60000000,
+      "measured": {
+        "branch": "else",
+        "nStat": 6
+      },
+      "previous": {
+        "seed": 3432440,
+        "sockets": 1,
+        "maxed": 4,
+        "endpointDeficit": 6
+      }
+    },
+    "unique:0:0:84": {
+      "name": "Crown of Doom",
+      "maxSockets": 2,
+      "statBounds": [
+        100,
+        100,
+        10,
+        10,
+        10,
+        10
+      ],
+      "seed": 17303869,
+      "sockets": 2,
+      "maxed": 5,
+      "total": 6,
+      "endpointDeficit": 1,
+      "searchedThrough": 60000000,
+      "measured": {
+        "branch": "else",
+        "nStat": 6
+      },
+      "previous": {
+        "seed": 11258843,
+        "sockets": 1,
+        "maxed": 5,
+        "endpointDeficit": 1
+      }
+    },
+    "unique:0:0:36": {
+      "name": "Juggernaut's Siege Helm",
+      "maxSockets": 2,
+      "statBounds": [
+        12,
+        3,
+        40
+      ],
+      "seed": 335995,
+      "sockets": 2,
+      "maxed": 3,
+      "total": 3,
+      "endpointDeficit": 0,
+      "searchedThrough": 60000000,
+      "measured": {
+        "branch": "else",
+        "nStat": 3
+      },
+      "previous": {
+        "seed": 401005,
+        "sockets": 1,
+        "maxed": 2,
+        "endpointDeficit": 9
+      }
+    },
+    "unique:2:0:15": {
+      "name": "Gladiator's Battle Sandals",
+      "maxSockets": 2,
+      "statBounds": [
+        14,
+        10,
+        10,
+        30,
+        5,
+        5
+      ],
+      "seed": 3888156,
+      "sockets": 2,
+      "maxed": 6,
+      "total": 6,
+      "endpointDeficit": 0,
+      "searchedThrough": 60000000,
+      "measured": {
+        "branch": "else",
+        "nStat": 6
+      },
+      "previous": {
+        "seed": 1196628,
+        "sockets": 1,
+        "maxed": 4,
+        "endpointDeficit": 2
+      }
+    },
+    "unique:0:0:9": {
+      "name": "Genji's Battle Helmet",
+      "maxSockets": 2,
+      "statBounds": [
+        12,
+        50,
+        10,
+        70,
+        5
+      ],
+      "seed": 1633933,
+      "sockets": 2,
+      "maxed": 5,
+      "total": 5,
+      "endpointDeficit": 0,
+      "searchedThrough": 60000000,
+      "measured": {
+        "branch": "else",
+        "nStat": 5
+      },
+      "previous": {
+        "seed": 2587674,
+        "sockets": 1,
+        "maxed": 3,
+        "endpointDeficit": 5
+      }
+    },
+    "unique:0:0:5": {
+      "name": "Helm of Dominator",
+      "maxSockets": 2,
+      "statBounds": [
+        12,
+        15,
+        5,
+        40,
+        5,
+        2
+      ],
+      "seed": 2136764,
+      "sockets": 2,
+      "maxed": 6,
+      "total": 6,
+      "endpointDeficit": 0,
+      "searchedThrough": 60000000,
+      "measured": {
+        "branch": "else",
+        "nStat": 6
+      },
+      "previous": {
+        "seed": 2596419,
+        "sockets": 1,
+        "maxed": 4,
+        "endpointDeficit": 3
+      }
+    },
+    "unique:0:0:4": {
+      "name": "Sky Crusader Helm",
+      "maxSockets": 2,
+      "statBounds": [
+        8,
+        5,
+        25
+      ],
+      "seed": 289468,
+      "sockets": 2,
+      "maxed": 3,
+      "total": 3,
+      "endpointDeficit": 0,
+      "searchedThrough": 60000000,
+      "measured": {
+        "branch": "else",
+        "nStat": 3
+      },
+      "previous": {
+        "seed": 382603,
+        "sockets": 1,
+        "maxed": 2,
+        "endpointDeficit": 2
+      }
+    },
+    "unique:4:0:32": {
+      "name": "Battle Worn Gauntlets",
+      "maxSockets": 2,
+      "statBounds": [
+        14,
+        6,
+        30,
+        3,
+        10
+      ],
+      "seed": 349219,
+      "sockets": 2,
+      "maxed": 5,
+      "total": 5,
+      "endpointDeficit": 0,
+      "searchedThrough": 60000000,
+      "measured": {
+        "branch": "else",
+        "nStat": 5
+      },
+      "previous": {
+        "seed": 405115,
+        "sockets": 1,
+        "maxed": 5,
+        "endpointDeficit": 0
+      }
+    },
+    "unique:0:0:73": {
+      "name": "Solar Prophet's Crown",
+      "maxSockets": 2,
+      "statBounds": [
+        16,
+        4,
+        1,
+        50,
+        5,
+        6
+      ],
+      "seed": 360562,
+      "sockets": 2,
+      "maxed": 6,
+      "total": 6,
+      "endpointDeficit": 0,
+      "searchedThrough": 60000000,
+      "measured": {
+        "branch": "else",
+        "nStat": 6
+      },
+      "previous": {
+        "seed": 424585,
+        "sockets": 1,
+        "maxed": 4,
+        "endpointDeficit": 3
+      }
+    },
+    "unique:5:0:61": {
+      "name": "Amulet of Colosseum",
+      "maxSockets": 2,
+      "statBounds": [
+        2,
+        7,
+        10,
+        5
+      ],
+      "seed": 3187,
+      "sockets": 2,
+      "maxed": 4,
+      "total": 4,
+      "endpointDeficit": 0,
+      "searchedThrough": 60000000,
+      "measured": {
+        "branch": "else",
+        "nStat": 4
+      },
+      "previous": {
+        "seed": 270487,
+        "sockets": 1,
+        "maxed": 4,
+        "endpointDeficit": 0
+      }
+    },
+    "unique:4:0:3": {
+      "name": "Warmaster's Tribal Paws",
+      "maxSockets": 2,
+      "statBounds": [
+        8,
+        15,
+        2,
+        6,
+        10
+      ],
+      "seed": 321394,
+      "sockets": 2,
+      "maxed": 5,
+      "total": 5,
+      "endpointDeficit": 0,
+      "searchedThrough": 60000000,
+      "measured": {
+        "branch": "else",
+        "nStat": 5
+      },
+      "previous": {
+        "seed": 351817,
+        "sockets": 1,
+        "maxed": 4,
+        "endpointDeficit": 4
+      }
+    },
+    "unique:0:0:14": {
+      "name": "Redneck's Cap",
+      "maxSockets": 2,
+      "statBounds": [
+        12,
+        50,
+        10,
+        100
+      ],
+      "seed": 417868,
+      "sockets": 2,
+      "maxed": 4,
+      "total": 4,
+      "endpointDeficit": 0,
+      "searchedThrough": 60000000,
+      "measured": {
+        "branch": "else",
+        "nStat": 4
+      },
+      "previous": {
+        "seed": 1289880,
+        "sockets": 1,
+        "maxed": 2,
+        "endpointDeficit": 8
+      }
+    },
+    "unique:3:16:0": {
+      "name": "Wakayka's Tomahawk",
+      "maxSockets": 3,
+      "statBounds": [
+        25,
+        4,
+        160,
+        30
+      ],
+      "seed": 1702864,
+      "sockets": 3,
+      "maxed": 4,
+      "total": 4,
+      "endpointDeficit": 0,
+      "searchedThrough": 60000000,
+      "measured": {
+        "branch": "if",
+        "nStat": 4
+      },
+      "previous": {
+        "seed": 293134,
+        "sockets": 1,
+        "maxed": 3,
+        "endpointDeficit": 2
+      }
+    },
+    "unique:0:0:7": {
+      "name": "Uabel's Helmet",
+      "maxSockets": 2,
+      "statBounds": [
+        12,
+        35
+      ],
+      "seed": 332962,
+      "sockets": 2,
+      "maxed": 2,
+      "total": 2,
+      "endpointDeficit": 0,
+      "searchedThrough": 60000000,
+      "measured": {
+        "branch": "else",
+        "nStat": 2
+      },
+      "previous": {
+        "seed": 396814,
+        "sockets": 1,
+        "maxed": 1,
+        "endpointDeficit": 2
+      }
+    },
+    "unique:2:0:46": {
+      "name": "Ymir's Freezing Boots",
+      "maxSockets": 2,
+      "statBounds": [
+        14,
+        30
+      ],
+      "seed": 346033,
+      "sockets": 2,
+      "maxed": 2,
+      "total": 2,
+      "endpointDeficit": 0,
+      "searchedThrough": 60000000,
+      "measured": {
+        "branch": "else",
+        "nStat": 2
+      },
+      "previous": {
+        "seed": 391057,
+        "sockets": 1,
+        "maxed": 1,
+        "endpointDeficit": 2
+      }
+    },
+    "unique:0:0:34": {
+      "name": "Venom's Skull",
+      "maxSockets": 2,
+      "statBounds": [
+        12,
+        50
+      ],
+      "seed": 332962,
+      "sockets": 2,
+      "maxed": 2,
+      "total": 2,
+      "endpointDeficit": 0,
+      "searchedThrough": 60000000,
+      "measured": {
+        "branch": "else",
+        "nStat": 2
+      },
+      "previous": {
+        "seed": 407296,
+        "sockets": 1,
+        "maxed": 1,
+        "endpointDeficit": 3
+      }
+    },
+    "unique:4:0:10": {
+      "name": "Marksman's Hunting Gloves",
+      "maxSockets": 2,
+      "statBounds": [
+        6,
+        25,
+        7
+      ],
+      "seed": 247015,
+      "sockets": 2,
+      "maxed": 3,
+      "total": 3,
+      "endpointDeficit": 0,
+      "searchedThrough": 60000000,
+      "measured": {
+        "branch": "else",
+        "nStat": 3
+      },
+      "previous": {
+        "seed": 382603,
+        "sockets": 1,
+        "maxed": 2,
+        "endpointDeficit": 2
+      }
+    },
+    "unique:3:11:4": {
+      "name": "Zealot's Book of Prophecy",
+      "maxSockets": 2,
+      "statBounds": [
+        40,
+        10,
+        10,
+        5,
+        5
+      ],
+      "seed": 410545,
+      "sockets": 2,
+      "maxed": 5,
+      "total": 5,
+      "endpointDeficit": 0,
+      "searchedThrough": 60000000,
+      "measured": {
+        "branch": "else",
+        "nStat": 5
+      },
+      "previous": {
+        "seed": 283159,
+        "sockets": 1,
+        "maxed": 4,
+        "endpointDeficit": 4
+      }
+    },
+    "unique:10:0:102": {
+      "name": "Ghost Armada",
+      "maxSockets": 2,
+      "statBounds": [
+        2,
+        35,
+        25,
+        10
+      ],
+      "seed": 26848,
+      "sockets": 2,
+      "maxed": 4,
+      "total": 4,
+      "endpointDeficit": 0,
+      "searchedThrough": 60000000,
+      "measured": {
+        "branch": "else",
+        "nStat": 4
+      },
+      "previous": {
+        "seed": 384313,
+        "sockets": 1,
+        "maxed": 3,
+        "endpointDeficit": 4
+      }
+    },
+    "unique:2:0:12": {
+      "name": "Boots of Blood",
+      "maxSockets": 2,
+      "statBounds": [
+        8,
+        20,
+        10,
+        2
+      ],
+      "seed": 304630,
+      "sockets": 2,
+      "maxed": 4,
+      "total": 4,
+      "endpointDeficit": 0,
+      "searchedThrough": 60000000,
+      "measured": {
+        "branch": "else",
+        "nStat": 4
+      },
+      "previous": {
+        "seed": 371116,
+        "sockets": 1,
+        "maxed": 2,
+        "endpointDeficit": 4
+      }
+    },
+    "unique:4:0:15": {
+      "name": "Gloves of Wilderness",
+      "maxSockets": 2,
+      "statBounds": [
+        10,
+        10,
+        6,
+        10
+      ],
+      "seed": 318262,
+      "sockets": 2,
+      "maxed": 4,
+      "total": 4,
+      "endpointDeficit": 0,
+      "searchedThrough": 60000000,
+      "measured": {
+        "branch": "else",
+        "nStat": 4
+      },
+      "previous": {
+        "seed": 314596,
+        "sockets": 1,
+        "maxed": 4,
+        "endpointDeficit": 0
+      }
+    },
+    "unique:10:0:11": {
+      "name": "Satan's Chalice",
+      "maxSockets": 2,
+      "statBounds": [
+        30,
+        2,
+        10
+      ],
+      "seed": 390724,
+      "sockets": 2,
+      "maxed": 3,
+      "total": 3,
+      "endpointDeficit": 0,
+      "searchedThrough": 60000000,
+      "measured": {
+        "branch": "else",
+        "nStat": 3
+      },
+      "previous": {
+        "seed": 314596,
+        "sockets": 1,
+        "maxed": 1,
+        "endpointDeficit": 3
+      }
+    },
+    "unique:4:0:23": {
+      "name": "Champion's Fighting Gloves",
+      "maxSockets": 2,
+      "statBounds": [
+        12,
+        40,
+        5
+      ],
+      "seed": 333478,
+      "sockets": 2,
+      "maxed": 3,
+      "total": 3,
+      "endpointDeficit": 0,
+      "searchedThrough": 60000000,
+      "measured": {
+        "branch": "else",
+        "nStat": 3
+      },
+      "previous": {
+        "seed": 400933,
+        "sockets": 1,
+        "maxed": 2,
+        "endpointDeficit": 4
+      }
+    },
+    "unique:0:0:40": {
+      "name": "Battle Worn Visor",
+      "maxSockets": 2,
+      "statBounds": [
+        12,
+        30
+      ],
+      "seed": 332935,
+      "sockets": 2,
+      "maxed": 2,
+      "total": 2,
+      "endpointDeficit": 0,
+      "searchedThrough": 60000000,
+      "measured": {
+        "branch": "else",
+        "nStat": 2
+      },
+      "previous": {
+        "seed": 391048,
+        "sockets": 1,
+        "maxed": 1,
+        "endpointDeficit": 2
+      }
+    },
+    "unique:0:0:45": {
+      "name": "Crown of the North",
+      "maxSockets": 2,
+      "statBounds": [
+        8,
+        20,
+        10,
+        15,
+        2,
+        6,
+        50,
+        25
+      ],
+      "seed": 15910066,
+      "sockets": 2,
+      "maxed": 7,
+      "total": 8,
+      "endpointDeficit": 2,
+      "searchedThrough": 60000000,
+      "measured": {
+        "branch": "else",
+        "nStat": 8
+      },
+      "previous": {
+        "seed": 74040861,
+        "sockets": 1,
+        "maxed": 6,
+        "endpointDeficit": 14
+      }
+    },
+    "unique:0:0:74": {
+      "name": "Lunar Prophet's Tiara",
+      "maxSockets": 2,
+      "statBounds": [
+        16,
+        4,
+        1,
+        50,
+        5,
+        6
+      ],
+      "seed": 360562,
+      "sockets": 2,
+      "maxed": 6,
+      "total": 6,
+      "endpointDeficit": 0,
+      "searchedThrough": 60000000,
+      "measured": {
+        "branch": "else",
+        "nStat": 6
+      },
+      "previous": {
+        "seed": 424585,
+        "sockets": 1,
+        "maxed": 4,
+        "endpointDeficit": 3
+      }
+    },
+    "unique:4:0:0": {
+      "name": "Shadow's Grasp",
+      "maxSockets": 2,
+      "statBounds": [
+        12,
+        8,
+        20,
+        15
+      ],
+      "seed": 334465,
+      "sockets": 2,
+      "maxed": 4,
+      "total": 4,
+      "endpointDeficit": 0,
+      "searchedThrough": 60000000,
+      "measured": {
+        "branch": "else",
+        "nStat": 4
+      },
+      "previous": {
+        "seed": 351808,
+        "sockets": 1,
+        "maxed": 2,
+        "endpointDeficit": 14
+      }
+    },
+    "unique:0:0:38": {
+      "name": "Valkyrie's Winged Helm",
+      "maxSockets": 2,
+      "statBounds": [
+        12,
+        1,
+        40,
+        100
+      ],
+      "seed": 334465,
+      "sockets": 2,
+      "maxed": 4,
+      "total": 4,
+      "endpointDeficit": 0,
+      "searchedThrough": 60000000,
+      "measured": {
+        "branch": "else",
+        "nStat": 4
+      },
+      "previous": {
+        "seed": 405304,
+        "sockets": 1,
+        "maxed": 2,
+        "endpointDeficit": 47
+      }
+    },
+    "unique:2:0:35": {
+      "name": "Satan's Molten Steps",
+      "maxSockets": 2,
+      "statBounds": [
+        75,
+        14,
+        14,
+        10,
+        15,
+        30
+      ],
+      "seed": 3888156,
+      "sockets": 2,
+      "maxed": 5,
+      "total": 6,
+      "endpointDeficit": 1,
+      "searchedThrough": 60000000,
+      "measured": {
+        "branch": "else",
+        "nStat": 6
+      },
+      "previous": {
+        "seed": 12923247,
+        "sockets": 1,
+        "maxed": 4,
+        "endpointDeficit": 5
+      }
+    },
+    "unique:2:0:75": {
+      "name": "Brutal Roamers",
+      "maxSockets": 2,
+      "statBounds": [
+        28,
+        8,
+        18,
+        2,
+        15,
+        45,
+        10
+      ],
+      "seed": 3888156,
+      "sockets": 2,
+      "maxed": 6,
+      "total": 7,
+      "endpointDeficit": 1,
+      "searchedThrough": 60000000,
+      "measured": {
+        "branch": "else",
+        "nStat": 7
+      },
+      "previous": {
+        "seed": 88780570,
+        "sockets": 1,
+        "maxed": 5,
+        "endpointDeficit": 5
+      }
+    },
+    "unique:4:0:12": {
+      "name": "Dante's Mitts",
+      "maxSockets": 2,
+      "statBounds": [
+        8,
+        6,
+        20,
+        5
+      ],
+      "seed": 304495,
+      "sockets": 2,
+      "maxed": 4,
+      "total": 4,
+      "endpointDeficit": 0,
+      "searchedThrough": 60000000,
+      "measured": {
+        "branch": "else",
+        "nStat": 4
+      },
+      "previous": {
+        "seed": 371098,
+        "sockets": 1,
+        "maxed": 2,
+        "endpointDeficit": 5
+      }
+    },
+    "unique:3:5:7": {
+      "name": "Spirit Walker's Guide",
+      "maxSockets": 2,
+      "statBounds": [
+        13,
+        4,
+        40
+      ],
+      "seed": 340774,
+      "sockets": 2,
+      "maxed": 3,
+      "total": 3,
+      "endpointDeficit": 0,
+      "searchedThrough": 60000000,
+      "measured": {
+        "branch": "else",
+        "nStat": 3
+      },
+      "previous": {
+        "seed": 174646,
+        "sockets": 1,
+        "maxed": 1,
+        "endpointDeficit": 3
+      }
+    },
+    "unique:3:5:6": {
+      "name": "Earth Shaper's Talons",
+      "maxSockets": 2,
+      "statBounds": [
+        10,
+        15,
+        6,
+        2
+      ],
+      "seed": 314605,
+      "sockets": 2,
+      "maxed": 4,
+      "total": 4,
+      "endpointDeficit": 0,
+      "searchedThrough": 60000000,
+      "measured": {
+        "branch": "else",
+        "nStat": 4
+      },
+      "previous": {
+        "seed": 247531,
+        "sockets": 1,
+        "maxed": 3,
+        "endpointDeficit": 1
+      }
+    },
+    "unique:3:5:4": {
+      "name": "Elemental Claws",
+      "maxSockets": 3,
+      "statBounds": [
+        7,
+        6,
+        6,
+        6,
+        6,
+        5,
+        90
+      ],
+      "seed": 3888156,
+      "sockets": 3,
+      "maxed": 7,
+      "total": 7,
+      "endpointDeficit": 0,
+      "searchedThrough": 60000000,
+      "measured": {
+        "branch": "if",
+        "nStat": 7
+      },
+      "previous": {
+        "seed": 12471752,
+        "sockets": 1,
+        "maxed": 6,
+        "endpointDeficit": 5
+      }
+    },
+    "unique:4:0:8": {
+      "name": "Thor's Battle Gloves",
+      "maxSockets": 2,
+      "statBounds": [
+        6,
+        10,
+        2,
+        1,
+        25
+      ],
+      "seed": 249613,
+      "sockets": 2,
+      "maxed": 5,
+      "total": 5,
+      "endpointDeficit": 0,
+      "searchedThrough": 60000000,
+      "measured": {
+        "branch": "else",
+        "nStat": 5
+      },
+      "previous": {
+        "seed": 384187,
+        "sockets": 1,
+        "maxed": 3,
+        "endpointDeficit": 2
+      }
+    },
+    "unique:2:0:5": {
+      "name": "Molten Boots",
+      "maxSockets": 2,
+      "statBounds": [
+        6,
+        8,
+        10,
+        3,
+        20
+      ],
+      "seed": 252256,
+      "sockets": 2,
+      "maxed": 5,
+      "total": 5,
+      "endpointDeficit": 0,
+      "searchedThrough": 60000000,
+      "measured": {
+        "branch": "else",
+        "nStat": 5
+      },
+      "previous": {
+        "seed": 375751,
+        "sockets": 1,
+        "maxed": 3,
+        "endpointDeficit": 5
+      }
+    },
+    "unique:4:0:34": {
+      "name": "Imbued Mage Gloves",
+      "maxSockets": 2,
+      "statBounds": [
+        3,
+        10,
+        13,
+        10,
+        8,
+        20
+      ],
+      "seed": 3888156,
+      "sockets": 2,
+      "maxed": 6,
+      "total": 6,
+      "endpointDeficit": 0,
+      "searchedThrough": 60000000,
+      "measured": {
+        "branch": "else",
+        "nStat": 6
+      },
+      "previous": {
+        "seed": 314470,
+        "sockets": 1,
+        "maxed": 2,
+        "endpointDeficit": 23
+      }
+    },
+    "unique:0:0:17": {
+      "name": "Thor's Battle Cap",
+      "maxSockets": 2,
+      "statBounds": [
+        7,
+        12,
+        1,
+        50,
+        5
+      ],
+      "seed": 321394,
+      "sockets": 2,
+      "maxed": 5,
+      "total": 5,
+      "endpointDeficit": 0,
+      "searchedThrough": 60000000,
+      "measured": {
+        "branch": "else",
+        "nStat": 5
+      },
+      "previous": {
+        "seed": 407848,
+        "sockets": 1,
+        "maxed": 3,
+        "endpointDeficit": 4
+      }
+    },
+    "unique:6:0:48": {
+      "name": "Thunderstruck Deflector",
+      "maxSockets": 5,
+      "statBounds": [
+        750,
+        5,
+        18,
+        10,
+        10,
+        10,
+        5
+      ],
+      "seed": 3897525,
+      "sockets": 5,
+      "maxed": 6,
+      "total": 7,
+      "endpointDeficit": 1,
+      "searchedThrough": 60000000,
+      "measured": {
+        "branch": "if",
+        "nStat": 7
+      },
+      "previous": {
+        "seed": 63111501,
+        "sockets": 1,
+        "maxed": 6,
+        "endpointDeficit": 322
+      }
+    },
+    "unique:2:0:30": {
+      "name": "Plunderer's Deck Marchers",
+      "maxSockets": 2,
+      "statBounds": [
+        5,
+        14,
+        10,
+        30
+      ],
+      "seed": 270532,
+      "sockets": 2,
+      "maxed": 4,
+      "total": 4,
+      "endpointDeficit": 0,
+      "searchedThrough": 60000000,
+      "measured": {
+        "branch": "else",
+        "nStat": 4
+      },
+      "previous": {
+        "seed": 314596,
+        "sockets": 1,
+        "maxed": 2,
+        "endpointDeficit": 2
+      }
+    },
+    "unique:2:0:9": {
+      "name": "Pirate Captain's Boots",
+      "maxSockets": 2,
+      "statBounds": [
+        34,
+        15,
+        14,
+        1,
+        10,
+        130
+      ],
+      "seed": 10812022,
+      "sockets": 2,
+      "maxed": 5,
+      "total": 6,
+      "endpointDeficit": 1,
+      "searchedThrough": 60000000,
+      "measured": {
+        "branch": "if",
+        "nStat": 6
+      },
+      "previous": {
+        "seed": 2949079,
+        "sockets": 1,
+        "maxed": 4,
+        "endpointDeficit": 60
+      }
+    },
+    "unique:0:0:32": {
+      "name": "Lumberjack's Safety Helm",
+      "maxSockets": 2,
+      "statBounds": [
+        12,
+        50
+      ],
+      "seed": 332962,
+      "sockets": 2,
+      "maxed": 2,
+      "total": 2,
+      "endpointDeficit": 0,
+      "searchedThrough": 60000000,
+      "measured": {
+        "branch": "else",
+        "nStat": 2
+      },
+      "previous": {
+        "seed": 407296,
+        "sockets": 1,
+        "maxed": 1,
+        "endpointDeficit": 3
+      }
+    },
+    "unique:4:0:4": {
+      "name": "Death's Grasp",
+      "maxSockets": 2,
+      "statBounds": [
+        10,
+        10,
+        12,
+        40,
+        10
+      ],
+      "seed": 1261575,
+      "sockets": 2,
+      "maxed": 5,
+      "total": 5,
+      "endpointDeficit": 0,
+      "searchedThrough": 60000000,
+      "measured": {
+        "branch": "else",
+        "nStat": 5
+      },
+      "previous": {
+        "seed": 403123,
+        "sockets": 1,
+        "maxed": 4,
+        "endpointDeficit": 8
+      }
+    },
+    "unique:0:0:18": {
+      "name": "Viking's Sacred Helmet",
+      "maxSockets": 2,
+      "statBounds": [
+        12,
+        50,
+        3
+      ],
+      "seed": 333478,
+      "sockets": 2,
+      "maxed": 3,
+      "total": 3,
+      "endpointDeficit": 0,
+      "searchedThrough": 60000000,
+      "measured": {
+        "branch": "else",
+        "nStat": 3
+      },
+      "previous": {
+        "seed": 407296,
+        "sockets": 1,
+        "maxed": 1,
+        "endpointDeficit": 5
+      }
+    },
+    "unique:2:0:67": {
+      "name": "Rocket Boots",
+      "maxSockets": 2,
+      "statBounds": [
+        8,
+        2,
+        20,
+        20
+      ],
+      "seed": 308812,
+      "sockets": 2,
+      "maxed": 4,
+      "total": 4,
+      "endpointDeficit": 0,
+      "searchedThrough": 60000000,
+      "measured": {
+        "branch": "else",
+        "nStat": 4
+      },
+      "previous": {
+        "seed": 371206,
+        "sockets": 1,
+        "maxed": 3,
+        "endpointDeficit": 3
+      }
+    },
+    "unique:2:0:38": {
+      "name": "Whisper Walker's Feiyue",
+      "maxSockets": 2,
+      "statBounds": [
+        12,
+        13,
+        1,
+        30,
+        3
+      ],
+      "seed": 346033,
+      "sockets": 2,
+      "maxed": 5,
+      "total": 5,
+      "endpointDeficit": 0,
+      "searchedThrough": 60000000,
+      "measured": {
+        "branch": "else",
+        "nStat": 5
+      },
+      "previous": {
+        "seed": 391156,
+        "sockets": 1,
+        "maxed": 3,
+        "endpointDeficit": 2
+      }
+    },
+    "unique:5:0:42": {
+      "name": "Earth Goliath's Protection",
+      "maxSockets": 2,
+      "statBounds": [
+        3,
+        5,
+        10,
+        10
+      ],
+      "seed": 121204,
+      "sockets": 2,
+      "maxed": 4,
+      "total": 4,
+      "endpointDeficit": 0,
+      "searchedThrough": 60000000,
+      "measured": {
+        "branch": "else",
+        "nStat": 4
+      },
+      "previous": {
+        "seed": 314596,
+        "sockets": 1,
+        "maxed": 3,
+        "endpointDeficit": 1
+      }
+    },
+    "unique:8:0:54": {
+      "name": "Sandmagi's Sash",
+      "maxSockets": 2,
+      "statBounds": [
+        12,
+        1,
+        25,
+        15,
+        5
+      ],
+      "seed": 338131,
+      "sockets": 2,
+      "maxed": 5,
+      "total": 5,
+      "endpointDeficit": 0,
+      "searchedThrough": 60000000,
+      "measured": {
+        "branch": "else",
+        "nStat": 5
+      },
+      "previous": {
+        "seed": 384313,
+        "sockets": 1,
+        "maxed": 4,
+        "endpointDeficit": 4
+      }
+    },
+    "unique:10:0:42": {
+      "name": "Adventurer's Quiver",
+      "maxSockets": 2,
+      "statBounds": [
+        10,
+        8
+      ],
+      "seed": 314488,
+      "sockets": 2,
+      "maxed": 2,
+      "total": 2,
+      "endpointDeficit": 0,
+      "searchedThrough": 60000000,
+      "measured": {
+        "branch": "else",
+        "nStat": 2
+      },
+      "previous": {
+        "seed": 314461,
+        "sockets": 1,
+        "maxed": 2,
+        "endpointDeficit": 0
+      }
+    },
+    "unique:8:0:28": {
+      "name": "Cingulum of Shifting Destiny",
+      "maxSockets": 2,
+      "statBounds": [
+        12,
+        1,
+        25,
+        15,
+        2
+      ],
+      "seed": 338131,
+      "sockets": 2,
+      "maxed": 5,
+      "total": 5,
+      "endpointDeficit": 0,
+      "searchedThrough": 60000000,
+      "measured": {
+        "branch": "else",
+        "nStat": 5
+      },
+      "previous": {
+        "seed": 382657,
+        "sockets": 1,
+        "maxed": 2,
+        "endpointDeficit": 10
+      }
+    },
+    "unique:8:0:8": {
+      "name": "Commander's Sash",
+      "maxSockets": 2,
+      "statBounds": [
+        16,
+        5,
+        5,
+        35,
+        5,
+        5,
+        2,
+        2
+      ],
+      "seed": 18582172,
+      "sockets": 2,
+      "maxed": 8,
+      "total": 8,
+      "endpointDeficit": 0,
+      "searchedThrough": 60000000,
+      "measured": {
+        "branch": "else",
+        "nStat": 8
+      },
+      "previous": {
+        "seed": 430243,
+        "sockets": 1,
+        "maxed": 6,
+        "endpointDeficit": 6
+      }
+    },
+    "unique:8:0:26": {
+      "name": "Ashen Belt",
+      "maxSockets": 2,
+      "statBounds": [
+        15,
+        12,
+        15,
+        25
+      ],
+      "seed": 403123,
+      "sockets": 2,
+      "maxed": 4,
+      "total": 4,
+      "endpointDeficit": 0,
+      "searchedThrough": 60000000,
+      "measured": {
+        "branch": "else",
+        "nStat": 4
+      },
+      "previous": {
+        "seed": 382711,
+        "sockets": 1,
+        "maxed": 3,
+        "endpointDeficit": 18
+      }
+    },
+    "unique:5:0:32": {
+      "name": "Kallik's Fury",
+      "maxSockets": 2,
+      "statBounds": [
+        25,
+        6,
+        10
+      ],
+      "seed": 383779,
+      "sockets": 2,
+      "maxed": 3,
+      "total": 3,
+      "endpointDeficit": 0,
+      "searchedThrough": 60000000,
+      "measured": {
+        "branch": "else",
+        "nStat": 3
+      },
+      "previous": {
+        "seed": 314578,
+        "sockets": 1,
+        "maxed": 1,
+        "endpointDeficit": 8
+      }
+    },
+    "unique:8:0:0": {
+      "name": "Tundra Warrior's Girdle",
+      "maxSockets": 2,
+      "statBounds": [
+        12,
+        1,
+        10,
+        15,
+        20,
+        20,
+        50
+      ],
+      "seed": 3888156,
+      "sockets": 2,
+      "maxed": 7,
+      "total": 7,
+      "endpointDeficit": 0,
+      "searchedThrough": 60000000,
+      "measured": {
+        "branch": "else",
+        "nStat": 7
+      },
+      "previous": {
+        "seed": 10754419,
+        "sockets": 1,
+        "maxed": 4,
+        "endpointDeficit": 46
+      }
+    },
+    "unique:3:2:4": {
+      "name": "Sand Dagger",
+      "maxSockets": 3,
+      "statBounds": [
+        40,
+        4,
+        30,
+        3,
+        7,
+        100
+      ],
+      "seed": 8226265,
+      "sockets": 3,
+      "maxed": 6,
+      "total": 6,
+      "endpointDeficit": 0,
+      "searchedThrough": 60000000,
+      "measured": {
+        "branch": "if",
+        "nStat": 6
+      },
+      "previous": {
+        "seed": 1196628,
+        "sockets": 1,
+        "maxed": 4,
+        "endpointDeficit": 4
+      }
+    },
+    "unique:5:0:22": {
+      "name": "Pyramid Pendant",
+      "maxSockets": 2,
+      "statBounds": [
+        10,
+        10,
+        10
+      ],
+      "seed": 315121,
+      "sockets": 2,
+      "maxed": 3,
+      "total": 3,
+      "endpointDeficit": 0,
+      "searchedThrough": 60000000,
+      "measured": {
+        "branch": "else",
+        "nStat": 3
+      },
+      "previous": {
+        "seed": 314605,
+        "sockets": 1,
+        "maxed": 3,
+        "endpointDeficit": 0
+      }
+    },
+    "unique:5:0:50": {
+      "name": "Insignia of the Hunter",
+      "maxSockets": 2,
+      "statBounds": [
+        22,
+        1,
+        10
+      ],
+      "seed": 376213,
+      "sockets": 2,
+      "maxed": 3,
+      "total": 3,
+      "endpointDeficit": 0,
+      "searchedThrough": 60000000,
+      "measured": {
+        "branch": "else",
+        "nStat": 3
+      },
+      "previous": {
+        "seed": 314596,
+        "sockets": 1,
+        "maxed": 1,
+        "endpointDeficit": 3
+      }
+    },
+    "unique:8:0:10": {
+      "name": "Belt of War",
+      "maxSockets": 2,
+      "statBounds": [
+        2,
+        15,
+        20,
+        2,
+        5
+      ],
+      "seed": 589,
+      "sockets": 2,
+      "maxed": 5,
+      "total": 5,
+      "endpointDeficit": 0,
+      "searchedThrough": 60000000,
+      "measured": {
+        "branch": "else",
+        "nStat": 5
+      },
+      "previous": {
+        "seed": 351817,
+        "sockets": 1,
+        "maxed": 4,
+        "endpointDeficit": 2
+      }
+    },
+    "unique:3:15:3": {
+      "name": "Spirit Urn",
+      "maxSockets": 2,
+      "statBounds": [
+        4,
+        5,
+        10
+      ],
+      "seed": 173389,
+      "sockets": 2,
+      "maxed": 3,
+      "total": 3,
+      "endpointDeficit": 0,
+      "searchedThrough": 60000000,
+      "measured": {
+        "branch": "else",
+        "nStat": 3
+      },
+      "previous": {
+        "seed": 172873,
+        "sockets": 1,
+        "maxed": 3,
+        "endpointDeficit": 0
+      }
+    },
+    "unique:5:0:21": {
+      "name": "Eye of Horus",
+      "maxSockets": 2,
+      "statBounds": [
+        1,
+        20,
+        15
+      ],
+      "seed": 127,
+      "sockets": 2,
+      "maxed": 3,
+      "total": 3,
+      "endpointDeficit": 0,
+      "searchedThrough": 60000000,
+      "measured": {
+        "branch": "else",
+        "nStat": 3
+      },
+      "previous": {
+        "seed": 73,
+        "sockets": 1,
+        "maxed": 3,
+        "endpointDeficit": 0
+      }
+    },
+    "unique:3:15:2": {
+      "name": "Demon Blood Flask",
+      "maxSockets": 2,
+      "statBounds": [
+        1,
+        7,
+        50
+      ],
+      "seed": 127,
+      "sockets": 2,
+      "maxed": 3,
+      "total": 3,
+      "endpointDeficit": 0,
+      "searchedThrough": 60000000,
+      "measured": {
+        "branch": "else",
+        "nStat": 3
+      },
+      "previous": {
+        "seed": 271636,
+        "sockets": 1,
+        "maxed": 2,
+        "endpointDeficit": 24
+      }
+    },
+    "unique:5:0:66": {
+      "name": "Eagle's Claw",
+      "maxSockets": 2,
+      "statBounds": [
+        6,
+        10,
+        25,
+        20,
+        5,
+        8,
+        8
+      ],
+      "seed": 3888156,
+      "sockets": 2,
+      "maxed": 6,
+      "total": 7,
+      "endpointDeficit": 1,
+      "searchedThrough": 60000000,
+      "measured": {
+        "branch": "if",
+        "nStat": 7
+      },
+      "previous": {
+        "seed": 383254,
+        "sockets": 1,
+        "maxed": 3,
+        "endpointDeficit": 12
+      }
+    },
+    "unique:5:0:75": {
+      "name": "Grimtide\u00b4s Necklace",
+      "maxSockets": 2,
+      "statBounds": [
+        120,
+        15,
+        50
+      ],
+      "seed": 863066,
+      "sockets": 2,
+      "maxed": 3,
+      "total": 3,
+      "endpointDeficit": 0,
+      "searchedThrough": 60000000,
+      "measured": {
+        "branch": "else",
+        "nStat": 3
+      },
+      "previous": {
+        "seed": 407314,
+        "sockets": 1,
+        "maxed": 1,
+        "endpointDeficit": 14
+      }
+    },
+    "unique:3:2:3": {
+      "name": "Darkness",
+      "maxSockets": 3,
+      "statBounds": [
+        4,
+        30,
+        25
+      ],
+      "seed": 183553,
+      "sockets": 3,
+      "maxed": 3,
+      "total": 3,
+      "endpointDeficit": 0,
+      "searchedThrough": 60000000,
+      "measured": {
+        "branch": "if",
+        "nStat": 3
+      },
+      "previous": {
+        "seed": 174646,
+        "sockets": 1,
+        "maxed": 3,
+        "endpointDeficit": 0
+      }
+    },
+    "unique:8:0:7": {
+      "name": "Heavy Duty",
+      "maxSockets": 2,
+      "statBounds": [
+        8,
+        25,
+        20,
+        5,
+        125
+      ],
+      "seed": 1254252,
+      "sockets": 2,
+      "maxed": 5,
+      "total": 5,
+      "endpointDeficit": 0,
+      "searchedThrough": 60000000,
+      "measured": {
+        "branch": "else",
+        "nStat": 5
+      },
+      "previous": {
+        "seed": 375751,
+        "sockets": 1,
+        "maxed": 3,
+        "endpointDeficit": 28
+      }
+    },
+    "unique:5:0:1": {
+      "name": "High Demon's Necklace",
+      "maxSockets": 2,
+      "statBounds": [
+        1,
+        4,
+        3
+      ],
+      "seed": 64,
+      "sockets": 2,
+      "maxed": 3,
+      "total": 3,
+      "endpointDeficit": 0,
+      "searchedThrough": 60000000,
+      "measured": {
+        "branch": "else",
+        "nStat": 3
+      },
+      "previous": {
+        "seed": 107764,
+        "sockets": 1,
+        "maxed": 2,
+        "endpointDeficit": 1
+      }
+    },
+    "unique:5:0:10": {
+      "name": "Treasure Pendant",
+      "maxSockets": 2,
+      "statBounds": [
+        20,
+        3,
+        25,
+        8
+      ],
+      "seed": 377743,
+      "sockets": 2,
+      "maxed": 4,
+      "total": 4,
+      "endpointDeficit": 0,
+      "searchedThrough": 60000000,
+      "measured": {
+        "branch": "else",
+        "nStat": 4
+      },
+      "previous": {
+        "seed": 375751,
+        "sockets": 1,
+        "maxed": 4,
+        "endpointDeficit": 0
+      }
+    },
+    "unique:3:2:2": {
+      "name": "Icy Shank",
+      "maxSockets": 3,
+      "statBounds": [
+        8,
+        10,
+        10,
+        4,
+        30
+      ],
+      "seed": 816947,
+      "sockets": 3,
+      "maxed": 5,
+      "total": 5,
+      "endpointDeficit": 0,
+      "searchedThrough": 60000000,
+      "measured": {
+        "branch": "if",
+        "nStat": 5
+      },
+      "previous": {
+        "seed": 312523,
+        "sockets": 1,
+        "maxed": 5,
+        "endpointDeficit": 0
+      }
+    },
+    "unique:5:0:72": {
+      "name": "Fractal of Existence",
+      "maxSockets": 2,
+      "statBounds": [
+        20,
+        2,
+        2,
+        2,
+        20
+      ],
+      "seed": 376693,
+      "sockets": 2,
+      "maxed": 5,
+      "total": 5,
+      "endpointDeficit": 0,
+      "searchedThrough": 60000000,
+      "measured": {
+        "branch": "else",
+        "nStat": 5
+      },
+      "previous": {
+        "seed": 371206,
+        "sockets": 1,
+        "maxed": 4,
+        "endpointDeficit": 3
+      }
+    },
+    "unique:3:10:5": {
+      "name": "Crystal Infused Wand",
+      "maxSockets": 3,
+      "statBounds": [
+        7,
+        3,
+        3
+      ],
+      "seed": 270370,
+      "sockets": 3,
+      "maxed": 3,
+      "total": 3,
+      "endpointDeficit": 0,
+      "searchedThrough": 60000000,
+      "measured": {
+        "branch": "if",
+        "nStat": 3
+      },
+      "previous": {
+        "seed": 107872,
+        "sockets": 1,
+        "maxed": 2,
+        "endpointDeficit": 1
+      }
+    },
+    "unique:8:0:32": {
+      "name": "Gaze of the Void",
+      "maxSockets": 2,
+      "statBounds": [
+        10,
+        10,
+        12,
+        10,
+        1,
+        25
+      ],
+      "seed": 750887,
+      "sockets": 2,
+      "maxed": 6,
+      "total": 6,
+      "endpointDeficit": 0,
+      "searchedThrough": 60000000,
+      "measured": {
+        "branch": "else",
+        "nStat": 6
+      },
+      "previous": {
+        "seed": 1261575,
+        "sockets": 1,
+        "maxed": 5,
+        "endpointDeficit": 6
+      }
+    },
+    "unique:8:0:33": {
+      "name": "Pitfighter's Razor Belt",
+      "maxSockets": 2,
+      "statBounds": [
+        8,
+        20,
+        20
+      ],
+      "seed": 289468,
+      "sockets": 2,
+      "maxed": 3,
+      "total": 3,
+      "endpointDeficit": 0,
+      "searchedThrough": 60000000,
+      "measured": {
+        "branch": "else",
+        "nStat": 3
+      },
+      "previous": {
+        "seed": 371206,
+        "sockets": 1,
+        "maxed": 3,
+        "endpointDeficit": 0
+      }
+    },
+    "unique:5:0:26": {
+      "name": "Juggernaut's Emblem",
+      "maxSockets": 2,
+      "statBounds": [
+        4,
+        1,
+        4,
+        20
+      ],
+      "seed": 176176,
+      "sockets": 2,
+      "maxed": 4,
+      "total": 4,
+      "endpointDeficit": 0,
+      "searchedThrough": 60000000,
+      "measured": {
+        "branch": "else",
+        "nStat": 4
+      },
+      "previous": {
+        "seed": 172738,
+        "sockets": 1,
+        "maxed": 3,
+        "endpointDeficit": 20
+      }
+    },
+    "unique:8:0:3": {
+      "name": "Tribal Belt",
+      "maxSockets": 2,
+      "statBounds": [
+        12,
+        15,
+        25,
+        5,
+        25
+      ],
+      "seed": 1254252,
+      "sockets": 2,
+      "maxed": 5,
+      "total": 5,
+      "endpointDeficit": 0,
+      "searchedThrough": 60000000,
+      "measured": {
+        "branch": "else",
+        "nStat": 5
+      },
+      "previous": {
+        "seed": 1708375,
+        "sockets": 1,
+        "maxed": 3,
+        "endpointDeficit": 4
+      }
+    },
+    "unique:8:0:21": {
+      "name": "Sash of the Magi",
+      "maxSockets": 2,
+      "statBounds": [
+        10,
+        16,
+        10,
+        10,
+        6,
+        25
+      ],
+      "seed": 3888156,
+      "sockets": 2,
+      "maxed": 6,
+      "total": 6,
+      "endpointDeficit": 0,
+      "searchedThrough": 60000000,
+      "measured": {
+        "branch": "else",
+        "nStat": 6
+      },
+      "previous": {
+        "seed": 1196628,
+        "sockets": 1,
+        "maxed": 6,
+        "endpointDeficit": 0
+      }
+    },
+    "unique:5:0:14": {
+      "name": "Elder's Heart",
+      "maxSockets": 2,
+      "statBounds": [
+        10,
+        999
+      ],
+      "seed": 320398,
+      "sockets": 2,
+      "maxed": 2,
+      "total": 2,
+      "endpointDeficit": 0,
+      "searchedThrough": 60000000,
+      "measured": {
+        "branch": "else",
+        "nStat": 2
+      },
+      "previous": {
+        "seed": 315157,
+        "sockets": 1,
+        "maxed": 2,
+        "endpointDeficit": 0
+      }
+    },
+    "unique:5:0:11": {
+      "name": "Ritual Pendant",
+      "maxSockets": 2,
+      "statBounds": [
+        1,
+        11,
+        35
+      ],
+      "seed": 127,
+      "sockets": 2,
+      "maxed": 3,
+      "total": 3,
+      "endpointDeficit": 0,
+      "searchedThrough": 60000000,
+      "measured": {
+        "branch": "else",
+        "nStat": 3
+      },
+      "previous": {
+        "seed": 396805,
+        "sockets": 1,
+        "maxed": 2,
+        "endpointDeficit": 2
+      }
+    },
+    "unique:3:2:5": {
+      "name": "Thunder Dagger",
+      "maxSockets": 3,
+      "statBounds": [
+        10,
+        15,
+        10,
+        4,
+        30,
+        10
+      ],
+      "seed": 3888156,
+      "sockets": 3,
+      "maxed": 6,
+      "total": 6,
+      "endpointDeficit": 0,
+      "searchedThrough": 60000000,
+      "measured": {
+        "branch": "if",
+        "nStat": 6
+      },
+      "previous": {
+        "seed": 1196628,
+        "sockets": 1,
+        "maxed": 6,
+        "endpointDeficit": 0
+      }
+    },
+    "unique:5:0:49": {
+      "name": "Ymir's Frozen Tear",
+      "maxSockets": 2,
+      "statBounds": [
+        10,
+        4,
+        4
+      ],
+      "seed": 314470,
+      "sockets": 2,
+      "maxed": 3,
+      "total": 3,
+      "endpointDeficit": 0,
+      "searchedThrough": 60000000,
+      "measured": {
+        "branch": "else",
+        "nStat": 3
+      },
+      "previous": {
+        "seed": 172801,
+        "sockets": 1,
+        "maxed": 1,
+        "endpointDeficit": 6
+      }
+    },
+    "unique:3:2:6": {
+      "name": "Riftmaster's Dirge",
+      "maxSockets": 2,
+      "statBounds": [
+        20,
+        28,
+        15,
+        1,
+        8,
+        30,
+        40
+      ],
+      "seed": 10333836,
+      "sockets": 2,
+      "maxed": 6,
+      "total": 7,
+      "endpointDeficit": 1,
+      "searchedThrough": 60000000,
+      "measured": {
+        "branch": "else",
+        "nStat": 7
+      },
+      "previous": {
+        "seed": 88780570,
+        "sockets": 1,
+        "maxed": 5,
+        "endpointDeficit": 14
+      }
+    },
+    "unique:8:0:17": {
+      "name": "Earth Shaper's Belt",
+      "maxSockets": 2,
+      "statBounds": [
+        16,
+        30,
+        7,
+        15,
+        15,
+        7
+      ],
+      "seed": 10754398,
+      "sockets": 2,
+      "maxed": 6,
+      "total": 6,
+      "endpointDeficit": 0,
+      "searchedThrough": 60000000,
+      "measured": {
+        "branch": "else",
+        "nStat": 6
+      },
+      "previous": {
+        "seed": 1721980,
+        "sockets": 1,
+        "maxed": 4,
+        "endpointDeficit": 8
+      }
+    },
+    "unique:8:0:27": {
+      "name": "Combat Duty Belt",
+      "maxSockets": 2,
+      "statBounds": [
+        14,
+        12,
+        2,
+        25,
+        20,
+        5
+      ],
+      "seed": 2536278,
+      "sockets": 2,
+      "maxed": 6,
+      "total": 6,
+      "endpointDeficit": 0,
+      "searchedThrough": 60000000,
+      "measured": {
+        "branch": "else",
+        "nStat": 6
+      },
+      "previous": {
+        "seed": 394162,
+        "sockets": 1,
+        "maxed": 2,
+        "endpointDeficit": 7
+      }
+    },
+    "unique:5:0:36": {
+      "name": "Coldfire Amulet",
+      "maxSockets": 2,
+      "statBounds": [
+        22,
+        1,
+        1,
+        10
+      ],
+      "seed": 376240,
+      "sockets": 2,
+      "maxed": 4,
+      "total": 4,
+      "endpointDeficit": 0,
+      "searchedThrough": 60000000,
+      "measured": {
+        "branch": "else",
+        "nStat": 4
+      },
+      "previous": {
+        "seed": 376159,
+        "sockets": 1,
+        "maxed": 3,
+        "endpointDeficit": 1
+      }
+    },
+    "unique:3:15:0": {
+      "name": "Cobra Blood Vial",
+      "maxSockets": 2,
+      "statBounds": [
+        10,
+        5,
+        10,
+        1,
+        7
+      ],
+      "seed": 325966,
+      "sockets": 2,
+      "maxed": 5,
+      "total": 5,
+      "endpointDeficit": 0,
+      "searchedThrough": 60000000,
+      "measured": {
+        "branch": "else",
+        "nStat": 5
+      },
+      "previous": {
+        "seed": 270487,
+        "sockets": 1,
+        "maxed": 3,
+        "endpointDeficit": 3
+      }
+    },
+    "unique:3:10:12": {
+      "name": "Witch's Wand",
+      "maxSockets": 2,
+      "statBounds": [
+        2,
+        10,
+        50,
+        10
+      ],
+      "seed": 3187,
+      "sockets": 2,
+      "maxed": 4,
+      "total": 4,
+      "endpointDeficit": 0,
+      "searchedThrough": 60000000,
+      "measured": {
+        "branch": "else",
+        "nStat": 4
+      },
+      "previous": {
+        "seed": 320779,
+        "sockets": 1,
+        "maxed": 3,
+        "endpointDeficit": 1
+      }
+    },
+    "unique:5:0:29": {
+      "name": "Venom's Necklace",
+      "maxSockets": 2,
+      "statBounds": [
+        22,
+        10
+      ],
+      "seed": 376366,
+      "sockets": 2,
+      "maxed": 2,
+      "total": 2,
+      "endpointDeficit": 0,
+      "searchedThrough": 60000000,
+      "measured": {
+        "branch": "else",
+        "nStat": 2
+      },
+      "previous": {
+        "seed": 376348,
+        "sockets": 1,
+        "maxed": 2,
+        "endpointDeficit": 0
+      }
+    },
+    "unique:8:0:36": {
+      "name": "USB's Cord",
+      "maxSockets": 2,
+      "statBounds": [
+        2
+      ],
+      "seed": 4,
+      "sockets": 2,
+      "maxed": 1,
+      "total": 1,
+      "endpointDeficit": 0,
+      "searchedThrough": 60000000,
+      "measured": {
+        "branch": "else",
+        "nStat": 1
+      },
+      "previous": {
+        "seed": 1,
+        "sockets": 1,
+        "maxed": 1,
+        "endpointDeficit": 0
+      }
+    },
+    "unique:5:0:18": {
+      "name": "Spirit Pendant",
+      "maxSockets": 2,
+      "statBounds": [
+        1,
+        10
+      ],
+      "seed": 10,
+      "sockets": 2,
+      "maxed": 2,
+      "total": 2,
+      "endpointDeficit": 0,
+      "searchedThrough": 60000000,
+      "measured": {
+        "branch": "else",
+        "nStat": 2
+      },
+      "previous": {
+        "seed": 1,
+        "sockets": 1,
+        "maxed": 2,
+        "endpointDeficit": 0
+      }
+    },
+    "unique:8:0:31": {
+      "name": "Warbosses' Trophy Belt",
+      "maxSockets": 2,
+      "statBounds": [
+        12,
+        25,
+        10
+      ],
+      "seed": 333994,
+      "sockets": 2,
+      "maxed": 3,
+      "total": 3,
+      "endpointDeficit": 0,
+      "searchedThrough": 60000000,
+      "measured": {
+        "branch": "else",
+        "nStat": 3
+      },
+      "previous": {
+        "seed": 382657,
+        "sockets": 1,
+        "maxed": 2,
+        "endpointDeficit": 1
+      }
+    },
+    "unique:8:0:29": {
+      "name": "Brute's Cord ",
+      "maxSockets": 2,
+      "statBounds": [
+        7,
+        8,
+        20,
+        5
+      ],
+      "seed": 273184,
+      "sockets": 2,
+      "maxed": 4,
+      "total": 4,
+      "endpointDeficit": 0,
+      "searchedThrough": 60000000,
+      "measured": {
+        "branch": "else",
+        "nStat": 4
+      },
+      "previous": {
+        "seed": 371515,
+        "sockets": 1,
+        "maxed": 2,
+        "endpointDeficit": 3
+      }
+    },
+    "unique:8:0:24": {
+      "name": "Tether of Anguish",
+      "maxSockets": 2,
+      "statBounds": [
+        10,
+        5,
+        12,
+        20,
+        10,
+        8
+      ],
+      "seed": 377470,
+      "sockets": 2,
+      "maxed": 6,
+      "total": 6,
+      "endpointDeficit": 0,
+      "searchedThrough": 60000000,
+      "measured": {
+        "branch": "else",
+        "nStat": 6
+      },
+      "previous": {
+        "seed": 1196628,
+        "sockets": 1,
+        "maxed": 5,
+        "endpointDeficit": 1
+      }
+    },
+    "unique:7:0:37": {
+      "name": "Destroyer\u2019s End",
+      "maxSockets": 2,
+      "statBounds": [
+        1,
+        80,
+        100,
+        5
+      ],
+      "seed": 26848,
+      "sockets": 2,
+      "maxed": 4,
+      "total": 4,
+      "endpointDeficit": 0,
+      "searchedThrough": 60000000,
+      "measured": {
+        "branch": "else",
+        "nStat": 4
+      },
+      "previous": {
+        "seed": 419752,
+        "sockets": 1,
+        "maxed": 1,
+        "endpointDeficit": 32
+      }
+    },
+    "unique:5:0:43": {
+      "name": "Claw of the Bloodthirsty",
+      "maxSockets": 2,
+      "statBounds": [
+        15,
+        15,
+        4,
+        15
+      ],
+      "seed": 352876,
+      "sockets": 2,
+      "maxed": 4,
+      "total": 4,
+      "endpointDeficit": 0,
+      "searchedThrough": 60000000,
+      "measured": {
+        "branch": "else",
+        "nStat": 4
+      },
+      "previous": {
+        "seed": 351538,
+        "sockets": 1,
+        "maxed": 1,
+        "endpointDeficit": 14
+      }
+    },
+    "unique:7:0:32": {
+      "name": "Merlock's Halo",
+      "maxSockets": 2,
+      "statBounds": [
+        7,
+        10,
+        50
+      ],
+      "seed": 273184,
+      "sockets": 2,
+      "maxed": 3,
+      "total": 3,
+      "endpointDeficit": 0,
+      "searchedThrough": 60000000,
+      "measured": {
+        "branch": "else",
+        "nStat": 3
+      },
+      "previous": {
+        "seed": 314605,
+        "sockets": 1,
+        "maxed": 2,
+        "endpointDeficit": 3
+      }
+    },
+    "unique:7:0:10": {
+      "name": "Elven Grace",
+      "maxSockets": 2,
+      "statBounds": [
+        1,
+        10,
+        15
+      ],
+      "seed": 127,
+      "sockets": 2,
+      "maxed": 3,
+      "total": 3,
+      "endpointDeficit": 0,
+      "searchedThrough": 60000000,
+      "measured": {
+        "branch": "else",
+        "nStat": 3
+      },
+      "previous": {
+        "seed": 351376,
+        "sockets": 1,
+        "maxed": 1,
+        "endpointDeficit": 4
+      }
+    },
+    "unique:7:0:22": {
+      "name": "Signet of Bifr\u00f6st",
+      "maxSockets": 2,
+      "statBounds": [
+        10
+      ],
+      "seed": 314452,
+      "sockets": 2,
+      "maxed": 1,
+      "total": 1,
+      "endpointDeficit": 0,
+      "searchedThrough": 60000000,
+      "measured": {
+        "branch": "else",
+        "nStat": 1
+      },
+      "previous": {
+        "seed": 314446,
+        "sockets": 1,
+        "maxed": 1,
+        "endpointDeficit": 0
+      }
+    },
+    "unique:7:0:24": {
+      "name": "Apex Striker's Ring",
+      "maxSockets": 2,
+      "statBounds": [
+        15,
+        5
+      ],
+      "seed": 351592,
+      "sockets": 2,
+      "maxed": 2,
+      "total": 2,
+      "endpointDeficit": 0,
+      "searchedThrough": 60000000,
+      "measured": {
+        "branch": "else",
+        "nStat": 2
+      },
+      "previous": {
+        "seed": 351361,
+        "sockets": 1,
+        "maxed": 1,
+        "endpointDeficit": 3
+      }
+    },
+    "unique:7:0:35": {
+      "name": "Lunar Prophet's Band",
+      "maxSockets": 2,
+      "statBounds": [
+        7,
+        10,
+        2
+      ],
+      "seed": 270478,
+      "sockets": 2,
+      "maxed": 3,
+      "total": 3,
+      "endpointDeficit": 0,
+      "searchedThrough": 60000000,
+      "measured": {
+        "branch": "else",
+        "nStat": 3
+      },
+      "previous": {
+        "seed": 73,
+        "sockets": 1,
+        "maxed": 2,
+        "endpointDeficit": 2
+      }
+    },
+    "unique:7:0:34": {
+      "name": "Solar Prophet's Signet",
+      "maxSockets": 2,
+      "statBounds": [
+        7,
+        1,
+        8,
+        2
+      ],
+      "seed": 270463,
+      "sockets": 2,
+      "maxed": 4,
+      "total": 4,
+      "endpointDeficit": 0,
+      "searchedThrough": 60000000,
+      "measured": {
+        "branch": "else",
+        "nStat": 4
+      },
+      "previous": {
+        "seed": 270244,
+        "sockets": 1,
+        "maxed": 3,
+        "endpointDeficit": 1
+      }
+    },
+    "unique:5:0:30": {
+      "name": "Champion's Medal of Valor",
+      "maxSockets": 2,
+      "statBounds": [
+        15,
+        4,
+        15
+      ],
+      "seed": 351574,
+      "sockets": 2,
+      "maxed": 3,
+      "total": 3,
+      "endpointDeficit": 0,
+      "searchedThrough": 60000000,
+      "measured": {
+        "branch": "else",
+        "nStat": 3
+      },
+      "previous": {
+        "seed": 351754,
+        "sockets": 1,
+        "maxed": 2,
+        "endpointDeficit": 1
+      }
+    },
+    "unique:7:0:2": {
+      "name": "Dragonsteel Ring",
+      "maxSockets": 2,
+      "statBounds": [
+        5,
+        5,
+        10,
+        15
+      ],
+      "seed": 217462,
+      "sockets": 2,
+      "maxed": 4,
+      "total": 4,
+      "endpointDeficit": 0,
+      "searchedThrough": 60000000,
+      "measured": {
+        "branch": "else",
+        "nStat": 4
+      },
+      "previous": {
+        "seed": 216013,
+        "sockets": 1,
+        "maxed": 2,
+        "endpointDeficit": 9
+      }
+    },
+    "unique:7:0:25": {
+      "name": "Swiftsoul Band",
+      "maxSockets": 2,
+      "statBounds": [
+        2,
+        5
+      ],
+      "seed": 10,
+      "sockets": 2,
+      "maxed": 2,
+      "total": 2,
+      "endpointDeficit": 0,
+      "searchedThrough": 60000000,
+      "measured": {
+        "branch": "else",
+        "nStat": 2
+      },
+      "previous": {
+        "seed": 1,
+        "sockets": 1,
+        "maxed": 2,
+        "endpointDeficit": 0
+      }
+    },
+    "unique:7:0:0": {
+      "name": "Ra's Band",
+      "maxSockets": 2,
+      "statBounds": [
+        20,
+        20,
+        20,
+        20,
+        20,
+        10
+      ],
+      "seed": 3888156,
+      "sockets": 2,
+      "maxed": 6,
+      "total": 6,
+      "endpointDeficit": 0,
+      "searchedThrough": 60000000,
+      "measured": {
+        "branch": "else",
+        "nStat": 6
+      },
+      "previous": {
+        "seed": 314446,
+        "sockets": 1,
+        "maxed": 1,
+        "endpointDeficit": 17
+      }
+    },
+    "unique:7:0:44": {
+      "name": "Stormloop",
+      "maxSockets": 2,
+      "statBounds": [
+        15,
+        10,
+        2,
+        10
+      ],
+      "seed": 351817,
+      "sockets": 2,
+      "maxed": 4,
+      "total": 4,
+      "endpointDeficit": 0,
+      "searchedThrough": 60000000,
+      "measured": {
+        "branch": "else",
+        "nStat": 4
+      },
+      "previous": {
+        "seed": 351772,
+        "sockets": 1,
+        "maxed": 4,
+        "endpointDeficit": 0
+      }
+    },
+    "unique:7:0:27": {
+      "name": "Colossus Circle of Vitality",
+      "maxSockets": 2,
+      "statBounds": [
+        2,
+        2,
+        15
+      ],
+      "seed": 127,
+      "sockets": 2,
+      "maxed": 3,
+      "total": 3,
+      "endpointDeficit": 0,
+      "searchedThrough": 60000000,
+      "measured": {
+        "branch": "else",
+        "nStat": 3
+      },
+      "previous": {
+        "seed": 351367,
+        "sockets": 1,
+        "maxed": 2,
+        "endpointDeficit": 13
+      }
+    },
+    "unique:7:0:26": {
+      "name": "Soul Funneling Loop",
+      "maxSockets": 2,
+      "statBounds": [
+        2,
+        2
+      ],
+      "seed": 10,
+      "sockets": 2,
+      "maxed": 2,
+      "total": 2,
+      "endpointDeficit": 0,
+      "searchedThrough": 60000000,
+      "measured": {
+        "branch": "else",
+        "nStat": 2
+      },
+      "previous": {
+        "seed": 1,
+        "sockets": 1,
+        "maxed": 2,
+        "endpointDeficit": 0
+      }
+    },
+    "unique:7:0:23": {
+      "name": "Sung Lee's Unleashed Rage",
+      "maxSockets": 2,
+      "statBounds": [
+        28,
+        1,
+        2,
+        5,
+        10,
+        10
+      ],
+      "seed": 420703,
+      "sockets": 2,
+      "maxed": 6,
+      "total": 6,
+      "endpointDeficit": 0,
+      "searchedThrough": 60000000,
+      "measured": {
+        "branch": "else",
+        "nStat": 6
+      },
+      "previous": {
+        "seed": 314596,
+        "sockets": 1,
+        "maxed": 3,
+        "endpointDeficit": 18
+      }
+    },
+    "unique:7:0:41": {
+      "name": "Arcanis",
+      "maxSockets": 2,
+      "statBounds": [
+        15,
+        10,
+        2,
+        10
+      ],
+      "seed": 351817,
+      "sockets": 2,
+      "maxed": 4,
+      "total": 4,
+      "endpointDeficit": 0,
+      "searchedThrough": 60000000,
+      "measured": {
+        "branch": "else",
+        "nStat": 4
+      },
+      "previous": {
+        "seed": 351772,
+        "sockets": 1,
+        "maxed": 4,
+        "endpointDeficit": 0
+      }
+    },
+    "unique:7:0:31": {
+      "name": "Circle of Nature",
+      "maxSockets": 2,
+      "statBounds": [
+        29,
+        29,
+        29,
+        29
+      ],
+      "seed": 1286214,
+      "sockets": 2,
+      "maxed": 4,
+      "total": 4,
+      "endpointDeficit": 0,
+      "searchedThrough": 60000000,
+      "measured": {
+        "branch": "else",
+        "nStat": 4
+      },
+      "previous": {
+        "seed": 389260,
+        "sockets": 1,
+        "maxed": 1,
+        "endpointDeficit": 46
+      }
+    },
+    "unique:7:0:39": {
+      "name": "Hellfire Halo",
+      "maxSockets": 2,
+      "statBounds": [
+        15,
+        10,
+        2,
+        10
+      ],
+      "seed": 351817,
+      "sockets": 2,
+      "maxed": 4,
+      "total": 4,
+      "endpointDeficit": 0,
+      "searchedThrough": 60000000,
+      "measured": {
+        "branch": "else",
+        "nStat": 4
+      },
+      "previous": {
+        "seed": 351772,
+        "sockets": 1,
+        "maxed": 4,
+        "endpointDeficit": 0
+      }
+    },
+    "unique:7:0:38": {
+      "name": "Signet of Harbringer",
+      "maxSockets": 2,
+      "statBounds": [
+        15,
+        10,
+        2,
+        10
+      ],
+      "seed": 351817,
+      "sockets": 2,
+      "maxed": 4,
+      "total": 4,
+      "endpointDeficit": 0,
+      "searchedThrough": 60000000,
+      "measured": {
+        "branch": "else",
+        "nStat": 4
+      },
+      "previous": {
+        "seed": 351772,
+        "sockets": 1,
+        "maxed": 4,
+        "endpointDeficit": 0
+      }
+    },
+    "unique:7:0:42": {
+      "name": "Azazel's Despair",
+      "maxSockets": 2,
+      "statBounds": [
+        2
+      ],
+      "seed": 4,
+      "sockets": 2,
+      "maxed": 1,
+      "total": 1,
+      "endpointDeficit": 0,
+      "searchedThrough": 60000000,
+      "measured": {
+        "branch": "else",
+        "nStat": 1
+      },
+      "previous": {
+        "seed": 1,
+        "sockets": 1,
+        "maxed": 1,
+        "endpointDeficit": 0
+      }
+    },
+    "unique:7:0:40": {
+      "name": "Signet of Corruption",
+      "maxSockets": 2,
+      "statBounds": [
+        15,
+        10,
+        2,
+        10
+      ],
+      "seed": 351817,
+      "sockets": 2,
+      "maxed": 4,
+      "total": 4,
+      "endpointDeficit": 0,
+      "searchedThrough": 60000000,
+      "measured": {
+        "branch": "else",
+        "nStat": 4
+      },
+      "previous": {
+        "seed": 351772,
+        "sockets": 1,
+        "maxed": 4,
+        "endpointDeficit": 0
+      }
+    },
+    "unique:7:0:28": {
+      "name": "Viper's Seal of Corrosion",
+      "maxSockets": 2,
+      "statBounds": [
+        10
+      ],
+      "seed": 314452,
+      "sockets": 2,
+      "maxed": 1,
+      "total": 1,
+      "endpointDeficit": 0,
+      "searchedThrough": 60000000,
+      "measured": {
+        "branch": "else",
+        "nStat": 1
+      },
+      "previous": {
+        "seed": 314446,
+        "sockets": 1,
+        "maxed": 1,
+        "endpointDeficit": 0
+      }
+    },
+    "unique:7:0:61": {
+      "name": "Parasite Loop",
+      "maxSockets": 2,
+      "statBounds": [
+        10,
+        20,
+        1
+      ],
+      "seed": 314614,
+      "sockets": 2,
+      "maxed": 3,
+      "total": 3,
+      "endpointDeficit": 0,
+      "searchedThrough": 60000000,
+      "measured": {
+        "branch": "else",
+        "nStat": 3
+      },
+      "previous": {
+        "seed": 314560,
+        "sockets": 1,
+        "maxed": 3,
+        "endpointDeficit": 0
+      }
+    },
+    "unique:7:0:20": {
+      "name": "Templar's Faith",
+      "maxSockets": 2,
+      "statBounds": [
+        8
+      ],
+      "seed": 288208,
+      "sockets": 2,
+      "maxed": 1,
+      "total": 1,
+      "endpointDeficit": 0,
+      "searchedThrough": 60000000,
+      "measured": {
+        "branch": "else",
+        "nStat": 1
+      },
+      "previous": {
+        "seed": 288196,
+        "sockets": 1,
+        "maxed": 1,
+        "endpointDeficit": 0
+      }
+    },
+    "unique:5:0:9": {
+      "name": "Baby Log Necklace",
+      "maxSockets": 2,
+      "statBounds": [
+        15,
+        4,
+        5,
+        20
+      ],
+      "seed": 352876,
+      "sockets": 2,
+      "maxed": 4,
+      "total": 4,
+      "endpointDeficit": 0,
+      "searchedThrough": 60000000,
+      "measured": {
+        "branch": "else",
+        "nStat": 4
+      },
+      "previous": {
+        "seed": 351538,
+        "sockets": 1,
+        "maxed": 2,
+        "endpointDeficit": 14
+      }
+    },
+    "unique:10:0:58": {
+      "name": "Abomination's Heart",
+      "maxSockets": 2,
+      "statBounds": [
+        8,
+        2
+      ],
+      "seed": 288220,
+      "sockets": 2,
+      "maxed": 2,
+      "total": 2,
+      "endpointDeficit": 0,
+      "searchedThrough": 60000000,
+      "measured": {
+        "branch": "else",
+        "nStat": 2
+      },
+      "previous": {
+        "seed": 288202,
+        "sockets": 1,
+        "maxed": 2,
+        "endpointDeficit": 0
+      }
+    },
+    "unique:10:0:54": {
+      "name": "Rotten Pumpkin",
+      "maxSockets": 2,
+      "statBounds": [
+        44,
+        10,
+        10,
+        2
+      ],
+      "seed": 405250,
+      "sockets": 2,
+      "maxed": 4,
+      "total": 4,
+      "endpointDeficit": 0,
+      "searchedThrough": 60000000,
+      "measured": {
+        "branch": "else",
+        "nStat": 4
+      },
+      "previous": {
+        "seed": 404191,
+        "sockets": 1,
+        "maxed": 4,
+        "endpointDeficit": 0
+      }
+    }
+  },
+  "generated": "2026-09-01"
+}

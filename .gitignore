@@ -20,3 +20,7 @@ Thumbs.db
 
 # Local dev
 *.log
+_backups/
+_socket_search_all.json
+hs_socket_seeds.json.bak_*
+CHATGPT_PROMPT_socket_table.md

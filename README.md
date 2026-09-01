@@ -8,9 +8,9 @@ A local/offline save editor for **Hero Siege** (Pixel Prone Games). Manage items
 
 Single file, no install, no Python needed. Just run it.
 
-## What's new in v2.11.1
+## What's new in v2.11.4
 
-- Hero Siege **7.0.6 support** for 5,059 verified Max/Best roll profiles and
+- Hero Siege **7.0.5 support** for 5,059 verified Max/Best roll profiles and
   exact numeric tooltips.
 - **Detailed item tooltips**, side-by-side Vault comparison, and searchable
   Vault-only custom names.
@@ -18,16 +18,19 @@ Single file, no install, no Python needed. Just run it.
   return them automatically or to a selected tab.
 - One-click fill buttons for the **Unique, Material, and Socket** stash tabs.
 - Choose the class skill when creating **Torch of Shadows**.
-- **Poison Ivy** now keeps its correct four-socket capacity, and Add Socket
-  works on supported items.
+- Every item covered by the 267-address measured socket table is created with
+  its native maximum active: for example **Poison Ivy** gets four and **St.
+  Ahto's Diamond Hands** gets three. The editor now selects the real definition
+  `a` roll used by the game instead of writing unrelated synthetic socket
+  fields.
 - Small Charms use native random rolls. The confusing Grade labels were
   removed.
 
-Loaded Dice and Overloaded Dice skill selection stays disabled on 7.0.6 until
-their separate target tables are verified. Other supported editing features are
-ready.
+Steam updates and ForgePact/Aurie-patched executables no longer disable
+Max/Best, Torch, Dice, or exact-tooltip features just because the EXE hash
+changed. The bundled profile databases still validate their own contents.
 
-See [the v2.11.1 release notes](RELEASE_NOTES_v2.11.1.md) for the short summary.
+See [the v2.11.4 release notes](RELEASE_NOTES_v2.11.4.md) for the short summary.
 
 ## Previously added in v2.8.2
 
@@ -97,8 +100,8 @@ See [the v2.8.0 release notes](RELEASE_NOTES_v2.8.0.md) and the
   by name, class, or ID.
 - Move through the full Shared Stash while holding an item: use the mouse wheel
   or hold the pointer near the top/bottom edge to auto-scroll.
-- Safer cancelled drags, naturally ordered stash tabs, and strict game-build
-  checks so build-specific seeds are never applied to an unverified update.
+- Safer cancelled drags, naturally ordered stash tabs, and strict validation of
+  the bundled profile databases before any build-specific seed is applied.
 
 See [the v2.7.2 release notes](RELEASE_NOTES_v2.7.2.md) for the Perfect/Best
 Roll and Dice explanation.
@@ -131,16 +134,15 @@ Roll and Dice explanation.
   item preservation, idempotent transfers, automatic recovery, a pre-mutation
   database backup, Vault-only custom names, two-item comparison, and an exact
   source-tab chooser for bulk deposits
-- Build-verified numeric tooltip — hover saved equipment to see replayed native
+- Numeric tooltip — hover saved equipment to see replayed native
   stat values and level requirements; unsupported paths are explicitly shown
   as a safe catalog preview rather than fabricated values
 - Verified Dice skill targeting — choose any of the 432 skill IDs for **Loaded
   Dice** or any of the 222 game-valid sub-skill IDs for **Overloaded Dice**.
   The editor writes only the item's native RNG seed; it never injects a
   synthetic skill field into the save
-- Installed-build attestation — build-specific Perfect/Best and Dice seeds are
-  enabled only when Steam's installed `Hero_Siege.exe` matches the clean,
-  proven Season 10 SHA-256; an update or ambiguous install disables them safely
+- Mod/update-friendly operation — a Steam patch or ForgePact/Aurie modification
+  to `Hero_Siege.exe` does not disable Perfect/Best, Torch, Dice, or tooltips
 - Complete verified equipment-roll database — 423 normal addresses, all 921
   current unique **equipment** addresses, and 3,715 equipment runeword/base
   combinations (the other 23 current unique identities are consumable flasks,
@@ -255,8 +257,8 @@ The repo contains the Python source (`hs_item_editor_gui.py`) and the data files
   pattern instead of guessing which bytes or items to discard
 - Roll seeds are verified per exact item address because the game advances its
   RNG through definition stats, generated-stat pools, hidden calls, late
-  sockets, and special tails. Existing socket metadata and rune payloads are
-  preserved; anything outside the proven equipment scope is left unchanged
+  sockets, and special tails. Actual `s1..s6` rune payloads are preserved;
+  anything outside the proven equipment scope is left unchanged
   instead of receiving a fake universal "Perfect" seed
 - The editor rechecks the installed executable identity before build-specific
   seed writes. If Hero Siege updates, regenerate and re-audit the databases for

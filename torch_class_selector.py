@@ -3,9 +3,10 @@
 Torch of Shadows serializes its definition CPR seed in save field ``a``.  The
 game consumes four variable-stat rolls, eight inactive generated-pool draws,
 then derives stat 21 (the class used by ``All Talents``) from the thirteenth
-draw.  The table below contains one independently replayed seed for every
-native class.  Every seed also places all four variable definition stats at
-their maximum endpoint.
+draw.  The following draw decides its 1-2 socket count.  The table below
+contains one independently replayed seed for every native class. Every seed
+selects that class, places all four variable definition stats at their maximum
+endpoint, and rolls the native maximum of two sockets.
 
 This selector is deliberately separate from the Loaded/Overloaded Dice
 database.  Its instruction path has been matched only on the two executable
@@ -27,12 +28,12 @@ TORCH_ADDRESS = ("unique", 10, 0, 23)
 SEASON_10_705_EXE_SHA256 = (
     "438BF4848688C5BE52AC15F26F02B46DA620D90587C28E766A9CEA190F3A7DE4"
 )
-SEASON_10_706_EXE_SHA256 = (
+SEASON_10_COMPATIBLE_EXE_SHA256 = (
     "2034FAD4096BE6DE1147E4FF61B942A706673A9567B10C3013C6393ED0686486"
 )
 SUPPORTED_EXE_SHA256 = frozenset({
     SEASON_10_705_EXE_SHA256,
-    SEASON_10_706_EXE_SHA256,
+    SEASON_10_COMPATIBLE_EXE_SHA256,
 })
 
 SEED_START = 1
@@ -74,34 +75,35 @@ CLASS_NAMES = {
     24: "Prophet",
 }
 
-# First seeds found in 1..353944 that satisfy both invariants:
+# First seeds found in 1..368554 that satisfy all three invariants:
 #   core roll deltas == [10, 2, 10, 2]
 #   stat 21 == requested class ID
+#   socket draw == 1, i.e. 2/2 sockets
 CLASS_SEEDS = {
-    1: 332_503,
+    1: 348_787,
     2: 315_484,
-    3: 314_878,
+    3: 337_525,
     4: 331_867,
     5: 320_779,
-    6: 315_529,
-    7: 315_892,
-    8: 320_482,
-    9: 314_824,
-    10: 324_193,
+    6: 322_906,
+    7: 321_550,
+    8: 323_134,
+    9: 318_181,
+    10: 340_531,
     11: 321_187,
     12: 323_512,
     13: 315_757,
     14: 325_558,
-    15: 316_825,
-    16: 353_944,
-    17: 325_504,
+    15: 341_410,
+    16: 365_911,
+    17: 339_244,
     18: 319_195,
-    19: 348_151,
+    19: 368_554,
     20: 316_189,
     21: 317_476,
-    22: 314_470,
+    22: 326_164,
     23: 316_771,
-    24: 319_423,
+    24: 336_592,
 }
 
 
@@ -114,6 +116,7 @@ class TorchRollReplay:
     seed: int
     variable_rolls: tuple[int, int, int, int]
     class_id: int
+    socket_count: int
 
     @property
     def all_variable_stats_max(self) -> bool:
@@ -180,10 +183,12 @@ def replay_torch_seed(seed: int | float) -> TorchRollReplay:
     for _ in range(8):
         state = _next_state(state)
     state, class_roll = _draw(state, 23)
+    state, socket_roll = _draw(state, 1)
     return TorchRollReplay(
         seed=seed_int,
         variable_rolls=(values[0], values[1], values[2], values[3]),
         class_id=class_roll + 1,
+        socket_count=socket_roll + 1,
     )
 
 
@@ -235,6 +240,10 @@ def _validate_embedded_targets() -> None:
         if not replay.all_variable_stats_max:
             raise TorchClassValidationError(
                 f"Torch seed {seed} does not keep all four variable stats MAX"
+            )
+        if replay.socket_count != 2:
+            raise TorchClassValidationError(
+                f"Torch seed {seed} does not roll the native maximum sockets"
             )
 
 
@@ -288,6 +297,7 @@ class TorchClassDatabase:
                 "supportedExeSha256": sorted(SUPPORTED_EXE_SHA256),
                 "maxedVariableStats": 4,
                 "variableStatCount": 4,
+                "maxSockets": 2,
             })
         return result
 
@@ -300,6 +310,7 @@ class TorchClassDatabase:
             "profileId": TORCH_PROFILE_ID,
             "name": "Torch of Shadows",
             "targetKind": "class",
+            "maxSockets": 2,
             "available": available,
             "message": runtime_error or self.status.message,
         }
@@ -351,7 +362,7 @@ __all__ = [
     "CLASS_NAMES",
     "CLASS_SEEDS",
     "SEASON_10_705_EXE_SHA256",
-    "SEASON_10_706_EXE_SHA256",
+    "SEASON_10_COMPATIBLE_EXE_SHA256",
     "SUPPORTED_EXE_SHA256",
     "TORCH_ADDRESS",
     "TORCH_PROFILE_ID",

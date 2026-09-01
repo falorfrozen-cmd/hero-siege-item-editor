@@ -21,6 +21,7 @@ required_data = (
     "hs_runewords.json",
     "hs_sets.json",
     "hs_perfect_roll_profiles.json",
+    "hs_socket_seeds.json",
     "hs_dice_skill_targets.json",
     "hs_tooltip_roll_models.json",
 )
