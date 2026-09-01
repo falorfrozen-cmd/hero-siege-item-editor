@@ -97,12 +97,18 @@ present it must be finite.
 
 ## SQLite model
 
-`infinite_vault.py` owns schema version 2.
+`infinite_vault.py` owns schema version 5. Opening schema 2, 3, or 4 creates a
+consistent `.bak` first and migrates sequentially; a newer schema is rejected.
 
 - `collections`: unlimited, Unicode-normalized, case-insensitively unique
   names.
 - `items`: exact `raw_json`, SHA-256, source key/location, searchable text,
-  collection, and one of `deposit_pending`, `available`, or `reserved`.
+  collection, optional Vault-only custom name, nullable `page_index`,
+  `layout_x`, and `layout_y`, and one of `deposit_pending`, `available`, or `reserved`. Layout
+  columns are metadata only; native `raw_json` and its hash never change when
+  the user rearranges a grid.
+- `transfer_batches`: one parent journal for atomic multi-item deposits and
+  withdrawals. Child `transfers` are never committed independently.
 - `transfers`: durable two-phase journal. It records direction, stable
   `request_id`, canonical request hash, item ID, exact raw JSON, source and
   destination tab/key/position, expected whole-stash before/after hashes,
@@ -118,6 +124,23 @@ after the active `items` row is removed.
 Every SQLite mutation performs a consistent backup before `BEGIN IMMEDIATE`.
 The backup and mutation share the same inter-process OS lock. Schema creation
 and the default `Vault` collection are committed atomically.
+
+### Persistent grid and metadata undo
+
+Each collection uses 17×18 pages. The editor resolves true catalog dimensions,
+preserves every valid saved placement, and deterministically first-fit packs
+only missing/invalid positions. A drop is rejected when it is out of bounds,
+overlaps another rectangle, names a stale `updated_at`, or no longer belongs to
+the collection. Moving to another collection clears the previous page metadata
+so the destination can place it safely.
+
+Layout initialization, one-item drops, compacting, and multi-item collection
+moves each run as one backed-up SQLite transaction. The event log stores both
+previous and current metadata. Undo is deliberately limited to the latest
+un-undone custom-name, collection-move, or layout action and first proves that
+every affected item is still available and still equals the event's post-state.
+Game-save transfers are not metadata-undone; their journal and save backup are
+the recovery mechanism.
 
 ## Deposit algorithm: Shared Stash to Infinite Vault
 
@@ -199,10 +222,15 @@ never choose a second destination and duplicate the item.
 
 - `GET /api/vault/meta`: collection counts, total, game lock, recovery state.
 - `GET /api/vault/items`: paged available items with catalog display metadata.
+- `GET /api/vault/history`: append-only event history and latest safe undo preview.
 - `POST /api/vault/deposit`: shared-stash source, key, collection, request ID.
 - `POST /api/vault/withdraw`: vault item, shared-stash target, request ID.
 - `POST /api/vault/collections`: create, rename, delete-empty.
 - `POST /api/vault/item`: move an available item between collections.
+- `POST /api/vault/layout`: initialize, place, or compact persistent pages.
+- `POST /api/vault/selection-preview`: exact non-mutating plan for selected return.
+- `POST /api/vault/bulk`: complete or selected atomic stash transfer.
+- `POST /api/vault/undo`: state-checked latest metadata rollback.
 
 Collection management never edits a game save. Deposit and withdrawal always
 run under `SAVE_WRITE_LOCK` and refuse while the game is running.

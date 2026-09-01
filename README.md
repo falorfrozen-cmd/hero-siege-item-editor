@@ -16,6 +16,13 @@ Single file, no install, no Python needed. Just run it.
   Vault-only custom names.
 - Move all items or one selected Shared Stash tab into Infinite Vault, then
   return them automatically or to a selected tab.
+- Infinite Vault now uses the same 17×18 item grids, item sizing, collection
+  tabs, hover tooltips, and right-click interaction language as Shared Stash.
+  Grid positions persist; items can be drag-organized, multi-selected, moved or
+  returned atomically, compacted, and safely undone for metadata-only actions.
+- A side-by-side **Transfer Desk** makes Shared Stash ↔ Vault routing explicit.
+- **MAX / BEST THIS TAB** preflights and optimizes every eligible item in one
+  backed-up write. Simple Mode hides manual reroll/duplicate/stack controls.
 - One-click fill buttons for the **Unique, Material, and Socket** stash tabs.
 - Choose the class skill when creating **Torch of Shadows**.
 - Every item covered by the 267-address measured socket table is created with
@@ -132,8 +139,13 @@ Roll and Dice explanation.
 - Infinite Vault — unlimited named SQLite collections connected to every
   numbered, Material, and Socket Shared Stash grid, with search, paging, exact
   item preservation, idempotent transfers, automatic recovery, a pre-mutation
-  database backup, Vault-only custom names, two-item comparison, and an exact
-  source-tab chooser for bulk deposits
+  database backup, Vault-only custom names, persistent 17×18 page positions,
+  drag organization, multi-selection, two-item comparison, a side-by-side
+  Transfer Desk, exact source-tab bulk deposits, and state-checked metadata undo
+- Bulk Verified Rolls — preview and apply Exact MAX / Best Possible to one
+  Shared Stash tab, one visible character bag, or all equipped items in a
+  single write; explicit skill/class selectors are skipped and malformed items
+  cancel the complete batch
 - Numeric tooltip — hover saved equipment to see replayed native
   stat values and level requirements; unsupported paths are explicitly shown
   as a safe catalog preview rather than fabricated values
@@ -163,6 +175,8 @@ Your characters and stash are detected automatically (standard Windows save fold
 
 ### Controls
 
+- The editor starts in **Simple Mode**. Use the top mode button when you need
+  manual Random Reroll, Duplicate, or Edit Stack controls.
 - **Right-click supported equipment** → apply **EXACT MAX / BEST POSSIBLE**;
   fixed-stat equipment needs no roll action. The same menu also offers
   **Edit sockets**, **Reroll stats**, **Duplicate**, **Edit stack**, and **Delete**
@@ -174,9 +188,15 @@ Your characters and stash are detected automatically (standard Windows save fold
 - **Right-click an item in any numbered, Material, or Socket Shared Stash
   grid** → **Store in Infinite Vault**; use the Infinite Vault workspace to
   search, organize, and return it to any compatible grid
-- In **Infinite Vault**, use the pencil button to set or clear a searchable
-  Vault-only custom name. Select two items with the compare buttons, then choose
-  **Compare** for a side-by-side stat view
+- In **Infinite Vault**, open one collection and drag items between persistent
+  grid cells. Click any number of items for bulk move/return; selecting exactly
+  two also enables side-by-side **Compare**. Right-click sets a Vault-only name
+  or performs an individual action. **Transfer Items** is the single guided
+  entry point for both transfer directions. Less common collection, grid,
+  refresh, destination, and history actions live in the `…` menu
+- Use **MAX / BEST THIS TAB** in Shared Stash, **MAX / BEST VISIBLE BAG**, or
+  **MAX / BEST EQUIPPED** for a fail-closed batch preview. Skill/class selector
+  items are intentionally skipped so their identity is never chosen silently
 - While dragging through **Shared Stash**, use the mouse wheel; if the native
   browser drag suppresses wheel input, hold the pointer near the top or bottom
   edge for continuous auto-scroll. No save occurs until a valid drop
@@ -188,14 +208,10 @@ Your characters and stash are detected automatically (standard Windows save fold
   choose its green **Fill** button to add every missing catalog identity. Read
   and accept the confirmation; an automatic backup is created only when the
   stash actually changes
-- In **Infinite Vault**, choose **Move Shared Stash to Vault**, then select
-  either all item tabs or one exact numbered/Material/Socket/Unique source tab.
-  The preview names the scope before confirmation; unselected tabs are not
-  modified
-- To return everything from **Infinite Vault**, choose **Automatic** routing or
-  one exact numbered/Material/Socket/Unique destination. An exact special tab
-  accepts only its native item type, and the whole transfer is cancelled if any
-  item is incompatible or the selected tab has insufficient space
+- In **Infinite Vault**, choose **Transfer Items**, choose a direction and item
+  scope, then continue to the exact preview. Returning items also asks for
+  Automatic routing or one exact numbered/Material/Socket/Unique destination.
+  The whole transfer is cancelled if any item is incompatible or cannot fit
 - **Hover** a saved item to see its build-verified numeric tooltip. Green
   **EXACT NUMBERS** means every displayed numeric path was proven for the
   installed build; **SAFE PREVIEW** means at least one path could not be proven

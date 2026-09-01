@@ -977,8 +977,11 @@ class InfiniteVaultIntegrationTests(unittest.TestCase):
             "const vaultCompareItems=new Map()",
             "function openVaultCompare()",
             "async function editVaultCustomName(row)",
-            "data-vault-compare",
-            "data-vault-name",
+            "function packVaultGridPages(items,persistent=false)",
+            "function vaultGridPageHTML(page,index,persistent=false)",
+            "function showVaultCtx(x,y,row,el)",
+            "data-vault-collection",
+            "vault-grid-item",
             "registerPreviewModel(row.gameTooltip)",
             "Array.isArray(model.identities)",
             "Max endpoints",
@@ -989,7 +992,12 @@ class InfiniteVaultIntegrationTests(unittest.TestCase):
         self.assertIn(
             "e.target.closest('button,input,select,textarea')", html
         )
-        self.assertIn("esc(row.customName)", html)
+        self.assertIn("row.customName||row.name", html)
+        self.assertIn("VAULT_GRID_COLS=17,VAULT_GRID_ROWS=18", html)
+        self.assertIn("Drag to organize.", html)
+        self.assertIn("/api/vault/layout", html)
+        self.assertIn("/api/vault/selection-preview", html)
+        self.assertIn("action:'moveMany'", html)
         custom_name_ui = html.split(
             "async function editVaultCustomName(row){", 1
         )[1].split("async function withdrawVaultItem", 1)[0]
@@ -1000,9 +1008,91 @@ class InfiniteVaultIntegrationTests(unittest.TestCase):
         self.assertIn("CLEAR", custom_name_ui)
         vault_renderer = html.split("function renderVaultItems(payload){", 1)[1]
         vault_renderer = vault_renderer.split("async function withdrawVaultItem", 1)[0]
+        self.assertIn("packVaultGridPages(rows,vaultState.persistentLayout)", vault_renderer)
+        self.assertIn("item.oncontextmenu", vault_renderer)
+        self.assertIn("showVaultCtx", vault_renderer)
+        self.assertNotIn("vault-card", vault_renderer)
         self.assertNotIn("data-raw", vault_renderer)
         self.assertNotIn("data-roll", vault_renderer)
         self.assertNotIn("data-skill", vault_renderer)
+
+    def test_infinite_vault_keeps_the_primary_screen_simple(self):
+        html = editor.HTML
+        for marker in (
+            'class="vault-page-head"',
+            'id="vaultdesk"',
+            'TRANSFER ITEMS',
+            'class="vault-tools-menu"',
+            'id="vaultdeskscope"',
+            "open.hidden=rows.length!==2",
+        ):
+            self.assertIn(marker, html)
+        self.assertNotIn("Complete Stash Transfer", html)
+        self.assertNotIn('id="vaultbulkin"', html)
+        self.assertNotIn('id="vaultbulkout"', html)
+        self.assertNotIn("Database: ${esc(vaultMeta.databaseName", html)
+
+    def test_bulk_verified_roll_preview_and_apply_are_one_safe_write(self):
+        cap_key = "0-0-1700000000999-0"
+        cap = {
+            "pos": [0.0, 0.0],
+            "data": {"a": 1.0, "j": 0.0, "b": 0.0, "c": 0.0, "o": 1.0},
+        }
+        stash = self._read_stash()
+        stash["stash_tab_1"][cap_key] = cap
+        self._write_stash(stash)
+        target = {"type": "stash", "tab": "stash_tab_1"}
+
+        preview = editor.op_bulk_roll({"action": "preview", "target": target})
+        self.assertEqual(preview["changeCount"], 1)
+        self.assertEqual(preview["exactCount"], 1)
+        self.assertEqual(preview["skippedCount"], 1)  # Loaded Dice selector.
+        self.assertEqual(preview["blockedCount"], 0)
+        self.assertTrue(preview["canRun"])
+        before_original = json.loads(json.dumps(self.original_entry))
+        result = editor.op_bulk_roll({
+            "action": "apply", "target": target,
+            "previewToken": preview["previewToken"],
+        })
+        self._assert_ok(result)
+        self.assertEqual(result["changeCount"], 1)
+        changed = self._read_stash()["stash_tab_1"]
+        self.assertEqual(changed[SOURCE_KEY], before_original)
+        self.assertEqual(changed[cap_key]["data"]["a"], 172693)
+        self.assertTrue(result["backup"])
+
+    def test_bulk_verified_roll_rejects_stale_preview_without_write(self):
+        cap_key = "0-0-1700000000999-0"
+        stash = self._read_stash()
+        stash["stash_tab_1"][cap_key] = {
+            "pos": [0.0, 0.0],
+            "data": {"a": 1.0, "j": 0.0, "b": 0.0, "c": 0.0, "o": 1.0},
+        }
+        self._write_stash(stash)
+        target = {"type": "stash", "tab": "stash_tab_1"}
+        preview = editor.op_bulk_roll({"action": "preview", "target": target})
+        changed = self._read_stash()
+        changed["stash_tab_1"][cap_key]["data"]["a"] = 2.0
+        self._write_stash(changed)
+        before = self.stash_path.read_bytes()
+        backups = set(self.saves.glob("stash.hss.guibak_*"))
+        result = editor.op_bulk_roll({
+            "action": "apply", "target": target,
+            "previewToken": preview["previewToken"],
+        })
+        self.assertEqual(result.get("code"), "preview_stale")
+        self.assertEqual(self.stash_path.read_bytes(), before)
+        self.assertEqual(set(self.saves.glob("stash.hss.guibak_*")), backups)
+
+    def test_ui_exposes_simple_mode_and_bulk_roll_preflight(self):
+        html = editor.HTML
+        self.assertIn('id="mode-toggle"', html)
+        self.assertIn("function applyEditorMode()", html)
+        self.assertIn("advancedMode&&!isEq", html)
+        self.assertIn("MAX / BEST THIS TAB", html)
+        self.assertIn("MAX / BEST EQUIPPED", html)
+        self.assertIn("/api/roll/bulk", html)
+        self.assertIn("previewToken:preview.previewToken", html)
 
     def test_frozen_build_bundles_exact_tooltip_module_and_model(self):
         spec_text = (MODULE_DIR / "HeroSiegeItemEditor.spec").read_text(encoding="utf-8")
@@ -1332,10 +1422,12 @@ class InfiniteVaultIntegrationTests(unittest.TestCase):
         self.assertEqual(set(self.saves.glob("stash.hss.guibak_*")), backups_before)
         self.assertEqual(self._vault().count_items(status="all"), 0)
 
-    def test_bulk_ui_exposes_previewed_all_collection_transfer_controls(self):
+    def test_bulk_ui_keeps_both_previewed_transfer_directions_available(self):
         html = editor.HTML
-        self.assertIn("MOVE SHARED STASH → VAULT", html)
-        self.assertIn("RETURN ALL VAULT → SHARED STASH", html)
+        self.assertIn("Shared Stash → Vault", html)
+        self.assertIn("Vault → Shared Stash", html)
+        self.assertIn('id="vaultdeskin"', html)
+        self.assertIn('id="vaultdeskout"', html)
         self.assertIn("/api/vault/bulk-preview?", html)
         self.assertIn("/api/vault/bulk", html)
         self.assertIn("every available item in every collection", html)

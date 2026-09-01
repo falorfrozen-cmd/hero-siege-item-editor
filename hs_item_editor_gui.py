@@ -102,6 +102,8 @@ try:
     from infinite_vault import (
         InfiniteVault,
         MAX_TEXT_FIELD_LENGTH,
+        VAULT_GRID_COLUMNS,
+        VAULT_GRID_ROWS,
         VaultConflictError,
         VaultError,
         VaultNotFoundError,
@@ -114,6 +116,8 @@ except ModuleNotFoundError:
     from HSItemEditor.infinite_vault import (
         InfiniteVault,
         MAX_TEXT_FIELD_LENGTH,
+        VAULT_GRID_COLUMNS,
+        VAULT_GRID_ROWS,
         VaultConflictError,
         VaultError,
         VaultNotFoundError,
@@ -1387,11 +1391,18 @@ def _vault_item_payload(record, build_status: dict | None = None) -> dict:
         "w": item.get("w", 1),
         "h": item.get("h", 1),
         "stack": item.get("stack"),
+        "pageIndex": record.page_index,
+        "pos": (
+            [record.layout_x, record.layout_y]
+            if record.layout_x is not None and record.layout_y is not None
+            else None
+        ),
         "gameTooltip": game_tooltip,
         "fingerprint": game_tooltip.get("fingerprint"),
         "sourceLabel": _vault_source_display(record.source),
         "sourceItemKey": record.source_item_key,
         "createdAt": record.created_at,
+        "updatedAt": record.updated_at,
     }
 
 
@@ -2312,6 +2323,7 @@ def _bulk_withdrawal_plan(
     records: list,
     journal_origins: dict[str, str],
     destination_tab: str = BULK_WITHDRAWAL_AUTO,
+    selection_scope: bool = False,
 ) -> dict:
     _bulk_validate_stash_document(document)
     destination_tab = _bulk_withdrawal_destination_tab(destination_tab)
@@ -2513,6 +2525,8 @@ def _bulk_withdrawal_plan(
     }
     if destination_tab != BULK_WITHDRAWAL_AUTO:
         intent["destinationTab"] = destination_tab
+    if selection_scope:
+        intent["scope"] = "selection"
     intent_hash = canonical_request_hash(intent)
     encoded_after = _bulk_encode_stash_document(work)
     return {
@@ -2558,6 +2572,7 @@ def _bulk_plan_locked(
     collection_id: int | None,
     source_tab: object = None,
     destination_tab: object = None,
+    item_ids: list[str] | None = None,
 ) -> dict:
     stash_path = SAVES / "stash.hss"
     stash_sha256 = _file_sha256(stash_path)
@@ -2583,8 +2598,16 @@ def _bulk_plan_locked(
         source_tab = None
         destination_tab = _bulk_withdrawal_destination_tab(destination_tab)
         records = store.list_all_available_items()
+        if item_ids is not None:
+            selected = set(item_ids)
+            records = [record for record in records if record.id in selected]
+            if {record.id for record in records} != selected:
+                raise VaultConflictError(
+                    "a selected Vault item moved or disappeared before preview"
+                )
         plan = _bulk_withdrawal_plan(
-            document, records, store.available_item_origin_tabs(), destination_tab
+            document, records, store.available_item_origin_tabs(), destination_tab,
+            selection_scope=item_ids is not None,
         ) if records else {
             "targets": [], "work": document,
             "encodedAfter": _bulk_encode_stash_document(document),
@@ -2592,6 +2615,7 @@ def _bulk_plan_locked(
                 "direction": "bulk_withdrawal", "items": [],
                 **({"destinationTab": destination_tab}
                    if destination_tab != BULK_WITHDRAWAL_AUTO else {}),
+                **({"scope": "selection"} if item_ids is not None else {}),
             }),
             "tabCounts": [], "itemCount": 0, "customNamedCount": 0,
             "destinationTab": destination_tab,
@@ -2619,6 +2643,7 @@ def _bulk_plan_locked(
             direction, stash_sha256, plan["intentHash"], plan["itemCount"],
             collection_id if direction == "stash-to-vault" else None,
         ),
+        "selection": item_ids is not None,
     })
     return plan
 
@@ -2641,7 +2666,65 @@ def _bulk_public_preview(plan: dict, *, game_is_running: bool) -> dict:
         "gameRunning": game_is_running,
         "canRun": bool(item_count and not game_is_running),
         "empty": item_count == 0,
+        "selection": bool(plan.get("selection")),
     }
+
+
+def _vault_selection_ids(value: object) -> list[str]:
+    if not isinstance(value, list):
+        raise VaultValidationError("selected Vault item ids must be a list")
+    if not value:
+        raise VaultValidationError("select at least one Vault item")
+    if len(value) > 500:
+        raise VaultValidationError("at most 500 Vault items can be selected at once")
+    result: list[str] = []
+    seen: set[str] = set()
+    for raw in value:
+        if not isinstance(raw, str) or not re.fullmatch(r"[0-9a-fA-F]{32}", raw):
+            raise VaultValidationError("a selected Vault item id is invalid")
+        item_id = raw.lower()
+        if item_id in seen:
+            raise VaultValidationError("selected Vault item ids contain a duplicate")
+        seen.add(item_id)
+        result.append(item_id)
+    return result
+
+
+def op_vault_selection_preview(body: dict) -> dict:
+    """Build a non-mutating atomic return plan for exactly the selected items."""
+
+    try:
+        item_ids = _vault_selection_ids(body.get("itemIds"))
+        destination_tab = _bulk_withdrawal_destination_tab(
+            body.get("destinationTab")
+        )
+    except VaultValidationError as exc:
+        return {"err": str(exc)}
+    peer_error = _active_peer_editor_error()
+    if peer_error:
+        return {"err": peer_error}
+    try:
+        with SAVE_WRITE_LOCK:
+            stash_path = SAVES / "stash.hss"
+            with _exclusive_save_file(stash_path):
+                peer_error = _active_peer_editor_error()
+                if peer_error:
+                    return {"err": peer_error}
+                running = game_running()
+                if not running:
+                    recovery = _reconcile_vault_transfers_locked(stash_path)
+                    if recovery.get("err"):
+                        return {"err": recovery["err"]}
+                    if recovery.get("pending") or recovery.get("conflicts"):
+                        return {
+                            "err": "An interrupted Infinite Vault transfer must be recovered first."
+                        }
+                plan = _bulk_plan_locked(
+                    "vault-to-stash", None, None, destination_tab, item_ids
+                )
+                return _bulk_public_preview(plan, game_is_running=running)
+    except (VaultError, OSError, ValueError, json.JSONDecodeError) as exc:
+        return {"err": f"Selected transfer preview failed: {exc}"}
 
 
 def vault_bulk_preview(query: dict) -> dict:
@@ -3013,9 +3096,202 @@ def vault_meta() -> dict:
     }
 
 
+def _vault_record_size(record) -> tuple[int, int]:
+    entry = record.decoded_item()
+    item = resolve(record.source_item_key or "0-0-0--1", entry.get("data", {}))
+    try:
+        width = int(item.get("w", 1))
+        height = int(item.get("h", 1))
+    except (TypeError, ValueError) as exc:
+        raise VaultValidationError("Vault item has invalid grid dimensions") from exc
+    if not 1 <= width <= VAULT_GRID_COLUMNS or not 1 <= height <= VAULT_GRID_ROWS:
+        raise VaultValidationError("Vault item does not fit the 17x18 grid model")
+    return width, height
+
+
+def _vault_layout_plan(
+    records, *, preserve_existing: bool = True
+) -> dict[str, tuple[int, int, int, int, int]]:
+    """Return deterministic, non-overlapping page/x/y/w/h placements."""
+
+    occupied: dict[int, set[tuple[int, int]]] = {}
+    planned: dict[str, tuple[int, int, int, int, int]] = {}
+    unplaced: list[tuple[object, int, int]] = []
+
+    def available(page: int, x: int, y: int, width: int, height: int) -> bool:
+        if (
+            page < 0 or x < 0 or y < 0
+            or x + width > VAULT_GRID_COLUMNS
+            or y + height > VAULT_GRID_ROWS
+        ):
+            return False
+        cells = occupied.setdefault(page, set())
+        return all(
+            (column, row) not in cells
+            for row in range(y, y + height)
+            for column in range(x, x + width)
+        )
+
+    def claim(
+        record, page: int, x: int, y: int, width: int, height: int
+    ) -> None:
+        occupied.setdefault(page, set()).update(
+            (column, row)
+            for row in range(y, y + height)
+            for column in range(x, x + width)
+        )
+        planned[record.id] = (page, x, y, width, height)
+
+    ordered = sorted(
+        records,
+        key=lambda record: (
+            record.page_index is None,
+            record.page_index if record.page_index is not None else 0,
+            record.layout_y if record.layout_y is not None else 0,
+            record.layout_x if record.layout_x is not None else 0,
+            record.created_at,
+            record.id,
+        ),
+    )
+    for record in ordered:
+        width, height = _vault_record_size(record)
+        if (
+            preserve_existing
+            and
+            record.page_index is not None
+            and record.layout_x is not None
+            and record.layout_y is not None
+            and available(
+                record.page_index, record.layout_x, record.layout_y, width, height
+            )
+        ):
+            claim(
+                record, record.page_index, record.layout_x, record.layout_y,
+                width, height,
+            )
+        else:
+            unplaced.append((record, width, height))
+
+    for record, width, height in unplaced:
+        page = 0
+        position: tuple[int, int] | None = None
+        while position is None:
+            for y in range(VAULT_GRID_ROWS - height + 1):
+                for x in range(VAULT_GRID_COLUMNS - width + 1):
+                    if available(page, x, y, width, height):
+                        position = (x, y)
+                        break
+                if position is not None:
+                    break
+            if position is None:
+                page += 1
+        claim(record, page, position[0], position[1], width, height)
+    return planned
+
+
+def _save_vault_layout_changes(store, collection_id: int, records, plan) -> int:
+    changes = [
+        {
+            "itemId": record.id,
+            "pageIndex": plan[record.id][0],
+            "x": plan[record.id][1],
+            "y": plan[record.id][2],
+        }
+        for record in records
+        if (
+            record.page_index,
+            record.layout_x,
+            record.layout_y,
+        ) != plan[record.id][:3]
+    ]
+    for start in range(0, len(changes), 500):
+        store.set_item_layouts(collection_id, changes[start:start + 500])
+    return len(changes)
+
+
+def op_vault_layout(body: dict) -> dict:
+    """Initialize or move persistent Vault grid metadata safely."""
+
+    try:
+        collection_id = int(body.get("collectionId"))
+    except (TypeError, ValueError):
+        return {"err": "A concrete Vault collection is required."}
+    action = body.get("action")
+    if action not in {"ensure", "place", "compact"}:
+        return {"err": "Unknown Vault layout action."}
+    try:
+        store = vault_store()
+        records = store.list_all_available_items(collection=collection_id)
+        plan = _vault_layout_plan(
+            records, preserve_existing=action != "compact"
+        )
+        initialized = _save_vault_layout_changes(
+            store, collection_id, records, plan
+        )
+        if action in {"ensure", "compact"}:
+            page_count = 1 + max((placement[0] for placement in plan.values()), default=-1)
+            return {
+                "ok": (
+                    "Vault grids compacted safely"
+                    if action == "compact" else "Vault layout is ready"
+                ),
+                "changed": initialized,
+                "pageCount": page_count,
+            }
+
+        # A first placement may also have initialized legacy rows. Reload the
+        # committed timestamps and coordinates so an old browser snapshot is
+        # rejected instead of being accepted against the pre-initialization
+        # records held above.
+        if initialized:
+            records = store.list_all_available_items(collection=collection_id)
+            plan = _vault_layout_plan(records)
+
+        item_id = body.get("itemId")
+        record = next((row for row in records if row.id == item_id), None)
+        if record is None:
+            return {"err": "The Vault item moved or disappeared. Refresh and try again."}
+        expected_updated_at = body.get("expectedUpdatedAt")
+        if expected_updated_at and expected_updated_at != record.updated_at:
+            return {"err": "The Vault item changed after it was displayed. Refresh and try again."}
+        values = (body.get("pageIndex"), body.get("x"), body.get("y"))
+        if any(isinstance(value, bool) or not isinstance(value, int) for value in values):
+            return {"err": "Vault page and cell coordinates must be integers."}
+        page_index, x, y = values
+        width, height = plan[record.id][3:]
+        if (
+            page_index < 0 or x < 0 or y < 0
+            or x + width > VAULT_GRID_COLUMNS
+            or y + height > VAULT_GRID_ROWS
+        ):
+            return {"err": "The item does not fit at that Vault position."}
+        for other_id, placement in plan.items():
+            if other_id == record.id or placement[0] != page_index:
+                continue
+            other_x, other_y, other_w, other_h = placement[1:]
+            if not (
+                x + width <= other_x or other_x + other_w <= x
+                or y + height <= other_y or other_y + other_h <= y
+            ):
+                return {"err": "That Vault cell is occupied."}
+        updated = store.set_item_layouts(collection_id, [{
+            "itemId": record.id,
+            "pageIndex": page_index,
+            "x": x,
+            "y": y,
+        }])[0]
+        return {
+            "ok": "Item moved inside Infinite Vault",
+            "item": _vault_item_payload(updated),
+            "initialized": initialized,
+        }
+    except VaultError as exc:
+        return {"err": str(exc)}
+
+
 def vault_items(query: dict) -> dict:
     try:
-        limit = max(1, min(200, int(query.get("limit", [120])[0])))
+        limit = max(1, min(500, int(query.get("limit", [500])[0])))
         offset = max(0, int(query.get("offset", [0])[0]))
     except (TypeError, ValueError):
         raise VaultValidationError("invalid vault pagination")
@@ -3052,6 +3328,7 @@ def vault_items(query: dict) -> dict:
         "offset": offset,
         "limit": limit,
         "hasMore": has_more,
+        "persistentLayout": collection is not None and not bool(search and search.strip()),
     }
 
 
@@ -3165,6 +3442,16 @@ def op_vault_item(body: dict) -> dict:
                 body.get("itemId"), int(body.get("collectionId"))
             )
             message = f"Moved to {row.collection_name}"
+        elif action == "moveMany":
+            rows = vault_store().move_items(
+                body.get("itemIds") or [], int(body.get("collectionId"))
+            )
+            destination = rows[0].collection_name
+            return {
+                "ok": f"Moved {len(rows)} selected items to {destination}",
+                "items": [_vault_item_payload(row) for row in rows],
+                "movedCount": len(rows),
+            }
         elif action == "setCustomName":
             row = vault_store().set_item_custom_name(
                 body.get("itemId"), body.get("customName")
@@ -3177,6 +3464,28 @@ def op_vault_item(body: dict) -> dict:
         else:
             return {"err": "unknown vault item action"}
         return {"ok": message, "item": _vault_item_payload(row)}
+    except (VaultError, TypeError, ValueError) as exc:
+        return {"err": str(exc)}
+
+
+def vault_history() -> dict:
+    try:
+        store = vault_store()
+        return {
+            "events": store.list_events(limit=50),
+            "undo": store.preview_metadata_undo(),
+        }
+    except VaultError as exc:
+        return {"err": str(exc)}
+
+
+def op_vault_undo(body: dict) -> dict:
+    try:
+        result = vault_store().undo_metadata_event(int(body.get("eventId")))
+        return {
+            "ok": f"Undid the last Vault metadata action for {result['itemCount']} item(s)",
+            "undo": result,
+        }
     except (VaultError, TypeError, ValueError) as exc:
         return {"err": str(exc)}
 
@@ -3483,6 +3792,7 @@ def op_vault_bulk(body: dict) -> dict:
         collection_id = None
         source_tab = None
         destination_tab = None
+        selection_ids = None
         if direction == "stash-to-vault":
             collection_id = int(body.get("collectionId"))
             source_tab = _bulk_deposit_source_tab(body.get("sourceTab"))
@@ -3498,6 +3808,8 @@ def op_vault_bulk(body: dict) -> dict:
             destination_tab = _bulk_withdrawal_destination_tab(
                 body.get("destinationTab")
             )
+            if body.get("itemIds") is not None:
+                selection_ids = _vault_selection_ids(body.get("itemIds"))
         expected_direction = "deposit" if direction == "stash-to-vault" else "withdrawal"
 
         with SAVE_WRITE_LOCK:
@@ -3565,7 +3877,8 @@ def op_vault_bulk(body: dict) -> dict:
                 if game_running():
                     return {"err": "Game started while the bulk transfer was waiting.", "code": "game_running"}
                 plan = _bulk_plan_locked(
-                    direction, collection_id, source_tab, destination_tab
+                    direction, collection_id, source_tab, destination_tab,
+                    selection_ids,
                 )
                 if plan["previewToken"] != preview_token.lower():
                     return {
@@ -3601,6 +3914,7 @@ def op_vault_bulk(body: dict) -> dict:
                             if plan.get("destinationTab") == BULK_WITHDRAWAL_AUTO
                             else plan.get("destinationTab")
                         ),
+                        selection=selection_ids is not None,
                     )
                 if batch.status != "prepared":
                     return _bulk_operation_result(batch)
@@ -4130,6 +4444,180 @@ def op_modify(body: dict) -> dict:
         baks = ctx.save_all()
         return {"ok": f"{it['name']}: duplicated", "backup": ", ".join(baks)}
     return {"err": "unknown action"}
+
+
+def _verified_roll_assessment(key: str, entry: dict, *, apply: bool) -> dict:
+    """Preflight or apply the same proven seed rules as one-item Perfect Roll."""
+
+    if not isinstance(entry, dict) or not isinstance(entry.get("data"), dict):
+        return {"status": "blocked", "name": key, "reason": "malformed item data"}
+    item = resolve(key, entry["data"])
+    name = str(item.get("name") or key)
+    if item.get("skillSelector"):
+        return {
+            "status": "skipped", "name": name,
+            "reason": "skill/class identity must be chosen explicitly",
+        }
+    profile = item.get("rollProfile")
+    if not profile:
+        return {
+            "status": "skipped", "name": name,
+            "reason": "no verified profile for this exact item address",
+        }
+    if profile.get("mode") == "fixed":
+        return {"status": "skipped", "name": name, "reason": "stats are fixed"}
+    field_seeds = effective_roll_field_seeds(profile)
+    data = entry["data"]
+    applicable = {
+        field: seed for field, seed in field_seeds.items()
+        if field != "s" or "s" in data
+    }
+    if not applicable:
+        return {
+            "status": "skipped", "name": name,
+            "reason": "no active verified seed field",
+        }
+    max_sockets = roll_profile_max_sockets(profile)
+    if max_sockets is not None:
+        excess = [
+            f"s{index}" for index in range(max_sockets + 1, 7)
+            if f"s{index}" in data
+        ]
+        if excess:
+            return {
+                "status": "blocked", "name": name,
+                "reason": (
+                    f"socket payload {', '.join(excess)} exceeds verified "
+                    f"maximum {max_sockets}"
+                ),
+            }
+        if data.get("zz") is not None and not isinstance(data.get("zz"), dict):
+            return {
+                "status": "blocked", "name": name,
+                "reason": "socket metadata is malformed",
+            }
+    socket_applied = (
+        max_sockets is None
+        or (
+            isinstance(data.get("zz"), dict)
+            and isinstance(data["zz"].get("sockets"), (int, float))
+            and not isinstance(data["zz"].get("sockets"), bool)
+            and float(data["zz"]["sockets"]) == float(max_sockets)
+        )
+    )
+    already = socket_applied and all(
+        isinstance(data.get(field), (int, float))
+        and not isinstance(data.get(field), bool)
+        and float(data[field]) == float(seed)
+        for field, seed in applicable.items()
+    )
+    mode = str(profile.get("mode") or "best")
+    if already:
+        return {
+            "status": "already", "name": name, "mode": mode,
+            "label": effective_roll_label(profile),
+        }
+    if apply:
+        data.update(applicable)
+        if max_sockets is not None:
+            data.setdefault("zz", {})["sockets"] = float(max_sockets)
+    return {
+        "status": "changed", "name": name, "mode": mode,
+        "label": effective_roll_label(profile),
+        "detail": effective_roll_detail(profile),
+    }
+
+
+def op_bulk_roll(body: dict) -> dict:
+    """Preview/apply verified MAX or Best Possible to one visible item container."""
+
+    if not isinstance(body, dict):
+        return {"err": "invalid bulk roll request"}
+    action = body.get("action")
+    if action not in {"preview", "apply"}:
+        return {"err": "bulk roll action must be preview or apply"}
+    if action == "apply" and game_running():
+        return {"err": "Game is running! Close it before changing item rolls."}
+    if not ROLL_DB.available:
+        return {"err": roll_database_message() + "; no items changed"}
+    target = body.get("target")
+    if not isinstance(target, dict):
+        return {"err": "invalid bulk roll target"}
+    ctx = FileCtx()
+    try:
+        items = ctx.items(target)
+    except (KeyError, TypeError, ValueError, OSError, json.JSONDecodeError) as exc:
+        return {"err": f"item container could not be read: {exc}"}
+    if not isinstance(items, dict):
+        return {"err": "item container is malformed; nothing changed"}
+
+    fingerprint = canonical_request_hash({
+        "kind": "bulk_verified_roll_preview",
+        "target": target,
+        "items": [
+            {
+                "key": str(key),
+                "sha256": hashlib.sha256(
+                    json.dumps(value, sort_keys=True, separators=(",", ":"), ensure_ascii=False).encode("utf-8")
+                ).hexdigest(),
+            }
+            for key, value in sorted(items.items())
+        ],
+    })
+    if action == "apply":
+        token = body.get("previewToken")
+        if not isinstance(token, str) or token.lower() != fingerprint:
+            return {
+                "err": "Items changed after preview. Review the new plan; nothing was changed.",
+                "code": "preview_stale",
+            }
+
+    assessments = [
+        _verified_roll_assessment(key, entry, apply=False)
+        for key, entry in sorted(items.items())
+    ]
+    blocked = [row for row in assessments if row["status"] == "blocked"]
+    changed = [row for row in assessments if row["status"] == "changed"]
+    already = [row for row in assessments if row["status"] == "already"]
+    skipped = [row for row in assessments if row["status"] == "skipped"]
+    exact_count = sum(row.get("mode") == "exact" for row in changed)
+    best_count = sum(row.get("mode") == "best" for row in changed)
+    base = {
+        "previewToken": fingerprint,
+        "totalCount": len(assessments),
+        "changeCount": len(changed),
+        "alreadyCount": len(already),
+        "skippedCount": len(skipped),
+        "blockedCount": len(blocked),
+        "exactCount": exact_count,
+        "bestCount": best_count,
+        "blocked": blocked[:20],
+        "skipped": skipped[:20],
+        "canRun": bool(changed and not blocked and not game_running()),
+    }
+    if action == "preview":
+        return base
+    if blocked:
+        return {
+            **base,
+            "err": "A blocked item was found during preflight; nothing was changed.",
+        }
+    if not changed:
+        return {**base, "ok": "Every actionable item is already optimized", "backup": ""}
+    for key, entry in sorted(items.items()):
+        _verified_roll_assessment(key, entry, apply=True)
+    try:
+        backups = ctx.save_all()
+    except (OSError, RuntimeError, ValueError) as exc:
+        return {"err": f"Bulk roll write was stopped safely: {exc}"}
+    return {
+        **base,
+        "ok": (
+            f"Optimized {len(changed)} items in one write "
+            f"({exact_count} Exact MAX, {best_count} Best Possible)"
+        ),
+        "backup": ", ".join(backups),
+    }
 
 
 def op_forge(body: dict) -> dict:
@@ -6190,6 +6678,8 @@ class H(BaseHTTPRequestHandler):
                 self._json(vault_items(parse_qs(u.query, keep_blank_values=True)))
             except Exception as exc:
                 self._json({"err": f"Infinite Vault query failed: {exc}"}, 500)
+        elif u.path == "/api/vault/history":
+            self._json(vault_history())
         elif u.path == "/api/sets":
             self._json(SETS)
         elif u.path == "/api/runewords":
@@ -6235,6 +6725,8 @@ class H(BaseHTTPRequestHandler):
             self._json(op_addmany(body))
         elif path == "/api/stash/fill":
             self._json(op_fill_stash(body))
+        elif path == "/api/roll/bulk":
+            self._json(op_bulk_roll(body))
         elif path == "/api/forge":
             self._json(op_forge(body))
         elif path == "/api/loadout":
@@ -6263,12 +6755,18 @@ class H(BaseHTTPRequestHandler):
             self._json(op_vault_withdraw(body))
         elif path == "/api/vault/bulk":
             self._json(op_vault_bulk(body))
+        elif path == "/api/vault/selection-preview":
+            self._json(op_vault_selection_preview(body))
         elif path == "/api/vault/batch/resolve":
             self._json(op_vault_resolve_batch(body))
         elif path == "/api/vault/collections":
             self._json(op_vault_collections(body))
         elif path == "/api/vault/item":
             self._json(op_vault_item(body))
+        elif path == "/api/vault/layout":
+            self._json(op_vault_layout(body))
+        elif path == "/api/vault/undo":
+            self._json(op_vault_undo(body))
         else:
             self._json({"err": "not found"}, 404)
 
@@ -6288,7 +6786,7 @@ class H(BaseHTTPRequestHandler):
         hss_recovery_route = path == "/api/health/recover"
         mutates_save = path in ordinary_save_routes or hss_recovery_route or (
             path == "/api/loadout" and body.get("action") == "apply"
-        )
+        ) or (path == "/api/roll/bulk" and body.get("action") == "apply")
         try:
             with SAVE_WRITE_LOCK:
                 peer_error = _active_peer_editor_error()
@@ -6457,6 +6955,7 @@ button.act:hover{background:#6f421a}
   --shadow:0 18px 45px rgba(0,0,0,.34);--soft:rgba(255,255,255,.035)
 }
 *{scrollbar-width:thin;scrollbar-color:#40516a #0a1019}
+body:not(.advanced-mode) .advanced-only{display:none!important}
 body{
   display:grid;grid-template-columns:264px minmax(560px,1fr) 410px;
   grid-template-rows:76px minmax(0,1fr);height:100vh;min-width:1040px;
@@ -6522,9 +7021,12 @@ input,select{background:#0b111a;color:#dfe7f0;border-color:#2d3b50;border-radius
 .finder-bar{display:grid;grid-template-columns:minmax(190px,1fr) minmax(105px,135px) minmax(105px,135px) auto;gap:8px;max-width:980px;margin-bottom:14px}.finder-bar input,.finder-bar select{height:39px;min-width:0}.finder-count{margin:4px 0 11px;color:#77869a;font-size:11px}.finder-list{display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:8px;max-width:980px}.found-card{display:grid;grid-template-columns:38px minmax(0,1fr) auto;gap:10px;align-items:center;min-height:61px;padding:9px 10px;border:1px solid #2b394d;border-radius:10px;background:linear-gradient(145deg,#141d29,#0d141e)}.found-card img{width:34px;height:34px;object-fit:contain;image-rendering:pixelated;filter:drop-shadow(0 4px 7px rgba(0,0,0,.5))}.found-icon{width:34px;height:34px;display:grid;place-items:center;border:1px solid #34445a;border-radius:7px;color:#66768b}.found-name{font-weight:750;font-size:12px}.found-loc{margin-top:2px;color:#718096;font-size:10px}.locate-btn{padding:6px 9px;border:1px solid #3b526c;border-radius:7px;background:#162436;color:#a8ddec;cursor:pointer;font-size:10px;font-weight:800}.locate-btn:hover{border-color:#55bad0;background:#1d3348;color:#e2f9ff}.found-empty{max-width:920px;padding:28px;border:1px dashed #334258;border-radius:12px;text-align:center;color:#718096}
 .found-pulse{position:relative!important;z-index:15!important;animation:foundPulse 1.2s ease-in-out 3;box-shadow:0 0 0 2px #53d7ef,0 0 24px rgba(83,215,239,.65)!important}@keyframes foundPulse{50%{filter:brightness(1.65);transform:scale(1.04)}}
 .vault-toolbar{display:grid;grid-template-columns:minmax(180px,1fr) minmax(150px,220px) minmax(130px,180px) auto;gap:9px;align-items:center;max-width:1120px;margin:0 0 13px}.vault-toolbar input,.vault-toolbar select{height:39px;min-width:0}.vault-manage{display:flex;gap:7px;flex-wrap:wrap;max-width:1120px;margin-bottom:13px}.vault-mini{min-height:33px;padding:6px 10px;border:1px solid #33465e;border-radius:7px;background:#142033;color:#b9d8e4;cursor:pointer;font-size:10px;font-weight:800}.vault-mini:hover{border-color:#55bad0;color:#effcff}.vault-mini.danger{color:#ff999d;border-color:#643b45}.vault-summary{display:flex;align-items:center;justify-content:space-between;gap:12px;max-width:1120px;margin:8px 0 12px;color:#8190a5;font-size:11px}.vault-compare-bar{position:sticky;top:-12px;z-index:12;display:flex;align-items:center;gap:8px;max-width:1120px;margin:0 0 12px;padding:9px 10px;border:1px solid rgba(241,184,75,.32);border-radius:9px;background:rgba(15,23,34,.96);box-shadow:0 8px 22px rgba(0,0,0,.28)}.vault-compare-bar[hidden]{display:none}.vault-compare-slots{flex:1;min-width:0;overflow:hidden;color:#9caabd;font-size:10px;white-space:nowrap;text-overflow:ellipsis}.vault-compare-slots b{color:#f1c86f}.vault-list{display:grid;grid-template-columns:repeat(auto-fill,minmax(265px,1fr));gap:10px;max-width:1120px}.vault-card{position:relative;display:grid;grid-template-columns:54px minmax(0,1fr);gap:11px;min-height:92px;padding:12px;border:1px solid #2e3f55;border-radius:11px;background:radial-gradient(circle at 0 0,rgba(54,200,232,.055),transparent 38%),linear-gradient(145deg,#151f2d,#0d151f);box-shadow:0 8px 22px rgba(0,0,0,.16);transition:border-color .14s,transform .14s}.vault-card:hover{border-color:#536f8d;transform:translateY(-1px)}.vault-card.compare-selected{border-color:#e0ad52;box-shadow:0 0 0 1px rgba(241,184,75,.32),0 9px 25px rgba(0,0,0,.3)}.vault-card img,.vault-card-icon{width:52px;height:52px;object-fit:contain;image-rendering:pixelated;filter:drop-shadow(0 5px 8px rgba(0,0,0,.55))}.vault-card-icon{display:grid;place-items:center;border:1px solid #354860;border-radius:9px;color:#6c7f96;font-size:20px}.vault-card-copy{min-width:0;padding-right:52px}.vault-alias{margin-bottom:2px;color:#f2c76b;font-size:12px;font-weight:850;line-height:1.2}.vault-name{font-weight:800;font-size:13px;line-height:1.2}.vault-alias+.vault-name{font-size:10px;font-weight:700}.vault-fingerprint{font-family:Consolas,monospace;color:#617086}.vault-card-tool{position:absolute;top:7px;width:25px;height:25px;padding:0;border:1px solid #3a4d65;border-radius:6px;background:#111b28;color:#90a5bb;cursor:pointer;font-size:11px;font-weight:850}.vault-card-tool:hover{border-color:#efbd60;color:#ffe1a0}.vault-card-tool.name{right:38px}.vault-card-tool.compare{right:7px}.vault-card-tool.compare.on{border-color:#efbd60;background:#503a18;color:#ffe3a5}.vault-meta{margin-top:4px;color:#718198;font-size:10px;line-height:1.45}.vault-actions{grid-column:1/-1;display:flex;gap:6px;justify-content:flex-end;margin-top:2px}.vault-return{padding:6px 9px;border:1px solid rgba(82,221,169,.38);border-radius:7px;background:rgba(37,172,125,.09);color:#85e7bf;cursor:pointer;font-size:10px;font-weight:800}.vault-return:hover{background:rgba(37,172,125,.16);border-color:#52dda9}.vault-return:disabled{opacity:.4;cursor:not-allowed}.vault-pager{display:flex;justify-content:center;gap:8px;max-width:1120px;margin:16px 0}.vault-empty{max-width:1120px;padding:38px 24px;border:1px dashed #34465d;border-radius:13px;text-align:center;color:#75869c}.vault-warning{max-width:1120px;margin-bottom:13px;padding:10px 13px;border:1px solid rgba(255,153,76,.35);border-radius:9px;background:rgba(255,132,45,.07);color:#ffb47d;font-size:11px}.unique-list{display:grid;grid-template-columns:repeat(auto-fill,minmax(190px,1fr));gap:7px;max-width:1120px;margin-bottom:16px}.unique-card{display:grid;grid-template-columns:34px minmax(0,1fr);gap:8px;align-items:center;min-height:54px;padding:8px;border:1px solid #2b3b50;border-radius:8px;background:#101923;cursor:pointer}.unique-card:hover{border-color:#526b88}.unique-card img{width:32px;height:32px;object-fit:contain;image-rendering:pixelated}.unique-card .muted{font-size:9px}
-.vault-bulk-panel{display:grid;grid-template-columns:minmax(0,1fr) auto auto;gap:12px;align-items:center;max-width:1120px;margin:0 0 13px;padding:12px 13px;border:1px solid rgba(54,200,232,.28);border-radius:11px;background:linear-gradient(145deg,rgba(24,55,75,.32),rgba(16,24,36,.88))}.vault-bulk-copy b{display:block;color:#dff8ff;font-size:12px}.vault-bulk-copy span{display:block;margin-top:2px;color:#7f91a7;font-size:10px}.vault-bulk-button{min-height:37px;padding:7px 11px;border:1px solid rgba(82,221,169,.45);border-radius:8px;background:rgba(37,172,125,.1);color:#8ce6bf;cursor:pointer;font-size:9px;font-weight:900;letter-spacing:.25px}.vault-bulk-button.out{border-color:rgba(241,184,75,.5);background:rgba(163,111,30,.1);color:#f3ce83}.vault-bulk-button:hover{filter:brightness(1.18)}.vault-bulk-button:disabled{opacity:.36;cursor:not-allowed;filter:none}.vault-bulk-preview{margin:12px 0;padding:11px;border:1px solid #33465c;border-radius:9px;background:#0c141f}.vault-bulk-preview strong{display:block;color:#f0f5fb;font-size:14px}.vault-bulk-tabs{display:flex;flex-wrap:wrap;gap:5px;margin-top:9px}.vault-bulk-tabs span{padding:4px 7px;border:1px solid #32445a;border-radius:999px;color:#9eb0c5;font-size:9px}.vault-bulk-note{margin-top:9px;color:#8c9caf;font-size:10px;line-height:1.5}.vault-bulk-note.warn{color:#ffb47d}.vault-bulk-actions{display:flex;gap:7px;margin-top:14px}.vault-bulk-confirm{background:#24543e!important;border-color:#4aa77c!important;color:#c7ffe8!important}.vault-bulk-confirm.out{background:#62461e!important;border-color:#b88337!important;color:#ffe2a5!important}.vault-bulk-confirm:disabled{opacity:.4;cursor:not-allowed}
-.stash-tab-head{display:flex;align-items:end;justify-content:space-between;gap:12px;max-width:1120px;margin-top:14px}.stash-tab-head h2{margin:0 0 6px}.stash-fill{min-height:31px;margin:0 0 6px;padding:6px 11px;border:1px solid rgba(82,221,169,.44);border-radius:8px;background:linear-gradient(180deg,rgba(38,126,91,.28),rgba(23,73,55,.3));color:#91ebc4;cursor:pointer;font-size:10px;font-weight:850;letter-spacing:.35px}.stash-fill:hover{border-color:#62e3b3;background:rgba(38,126,91,.38)}.stash-fill:disabled{opacity:.38;cursor:not-allowed}
+.vault-bulk-panel{display:grid;grid-template-columns:minmax(0,1fr) auto auto auto;gap:12px;align-items:center;max-width:1120px;margin:0 0 13px;padding:12px 13px;border:1px solid rgba(54,200,232,.28);border-radius:11px;background:linear-gradient(145deg,rgba(24,55,75,.32),rgba(16,24,36,.88))}.vault-bulk-copy b{display:block;color:#dff8ff;font-size:12px}.vault-bulk-copy span{display:block;margin-top:2px;color:#7f91a7;font-size:10px}.vault-bulk-button{min-height:37px;padding:7px 11px;border:1px solid rgba(82,221,169,.45);border-radius:8px;background:rgba(37,172,125,.1);color:#8ce6bf;cursor:pointer;font-size:9px;font-weight:900;letter-spacing:.25px}.vault-bulk-button.out{border-color:rgba(241,184,75,.5);background:rgba(163,111,30,.1);color:#f3ce83}.vault-bulk-button.desk{border-color:rgba(84,185,255,.5);background:rgba(45,112,164,.12);color:#a8ddff}.vault-bulk-button:hover{filter:brightness(1.18)}.vault-bulk-button:disabled{opacity:.36;cursor:not-allowed;filter:none}.vault-bulk-preview{margin:12px 0;padding:11px;border:1px solid #33465c;border-radius:9px;background:#0c141f}.vault-bulk-preview strong{display:block;color:#f0f5fb;font-size:14px}.vault-bulk-tabs{display:flex;flex-wrap:wrap;gap:5px;margin-top:9px}.vault-bulk-tabs span{padding:4px 7px;border:1px solid #32445a;border-radius:999px;color:#9eb0c5;font-size:9px}.vault-bulk-note{margin-top:9px;color:#8c9caf;font-size:10px;line-height:1.5}.vault-bulk-note.warn{color:#ffb47d}.vault-bulk-actions{display:flex;gap:7px;margin-top:14px}.vault-bulk-confirm{background:#24543e!important;border-color:#4aa77c!important;color:#c7ffe8!important}.vault-bulk-confirm.out{background:#62461e!important;border-color:#b88337!important;color:#ffe2a5!important}.vault-bulk-confirm:disabled{opacity:.4;cursor:not-allowed}.vault-desk-grid{display:grid;grid-template-columns:minmax(0,1fr) 42px minmax(0,1fr);gap:12px;align-items:stretch;margin-top:13px}.vault-desk-side{padding:13px;border:1px solid #30435a;border-radius:10px;background:#0b121c}.vault-desk-side h4{margin:0 0 4px;color:#eff5fb}.vault-desk-side p{min-height:31px;margin:0 0 11px;color:#7d8da2;font-size:10px}.vault-desk-side select{width:100%;min-height:38px}.vault-desk-arrow{display:grid;place-items:center;color:#69d7ef;font-size:24px;font-weight:900}.vault-desk-actions{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-top:12px}.vault-desk-actions button{margin:0}
+.stash-tab-head{display:flex;align-items:end;justify-content:space-between;gap:12px;max-width:1120px;margin-top:14px}.stash-tab-head h2{margin:0 0 6px}.stash-head-actions{display:flex;align-items:center;gap:6px}.stash-fill,.stash-roll{min-height:31px;margin:0 0 6px;padding:6px 11px;border:1px solid rgba(82,221,169,.44);border-radius:8px;background:linear-gradient(180deg,rgba(38,126,91,.28),rgba(23,73,55,.3));color:#91ebc4;cursor:pointer;font-size:10px;font-weight:850;letter-spacing:.35px}.stash-roll{border-color:rgba(241,184,75,.48);background:linear-gradient(180deg,rgba(137,91,26,.3),rgba(83,57,22,.3));color:#f3d18d}.stash-fill:hover{border-color:#62e3b3;background:rgba(38,126,91,.38)}.stash-roll:hover{border-color:#f1c66f;background:rgba(137,91,26,.42)}.stash-fill:disabled,.stash-roll:disabled{opacity:.38;cursor:not-allowed}
+.vault-collection-tabs{max-width:1120px;margin:0 0 13px}.vault-collection-tabs button{white-space:nowrap}.vault-collection-tabs button.vault-drop-target{border-color:#54e87a;color:#d9ffe5;box-shadow:0 0 0 2px rgba(84,232,122,.18)}.vault-toolbar.grid-mode{grid-template-columns:minmax(220px,1fr) minmax(190px,260px) auto}.vault-grid-pages{display:flex;flex-direction:column;gap:18px;max-width:1120px}.vault-grid-page{padding:12px 13px 14px;border:1px solid #2b3b50;border-radius:12px;background:linear-gradient(145deg,rgba(18,27,39,.94),rgba(10,16,25,.97));box-shadow:0 9px 24px rgba(0,0,0,.16)}.vault-grid-head{align-items:center;margin:0 0 8px}.vault-grid-head h2{font-size:14px!important;margin:0!important}.vault-grid-head span:last-child{color:#718198;font-size:9px}.vault-grid-scroll{max-width:100%;overflow-x:auto;padding:2px 2px 7px}.vault-grid{margin:0}.item.vault-grid-item{cursor:context-menu;outline:none}.item.vault-grid-item[draggable="true"]{cursor:grab}.item.vault-grid-item.vault-dragging{opacity:.38;cursor:grabbing}.item.vault-grid-item:focus-visible{z-index:8;box-shadow:0 0 0 2px #53d7ef,0 0 18px rgba(83,215,239,.45)}.item.vault-grid-item.compare-selected{z-index:7;border-color:#efbd60!important;box-shadow:0 0 0 2px rgba(241,184,75,.52),0 0 18px rgba(241,184,75,.26)}.item.vault-grid-item.busy{opacity:.45;pointer-events:none;filter:saturate(.4)}.vault-grid-mark{position:absolute;left:2px;top:2px;display:grid;place-items:center;width:12px;height:12px;border:1px solid rgba(241,184,75,.62);border-radius:50%;background:#37270f;color:#ffe09c;font-size:8px;font-weight:900;box-shadow:0 2px 5px rgba(0,0,0,.55)}.vault-grid-note{margin:8px 1px 0;color:#718198;font-size:9px}.vault-grid-note b{color:#9ab1c7}.vault-pager-info{display:flex;align-items:center;padding:0 8px;color:#77879b;font-size:10px}.vault-history-list{display:flex;flex-direction:column;gap:6px;max-height:390px;overflow:auto;margin-top:12px}.vault-history-row{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:10px;padding:9px 10px;border:1px solid #2d3d51;border-radius:8px;background:#0b121b}.vault-history-row b{display:block;color:#dce7f2;font-size:11px}.vault-history-row span{color:#738398;font-size:9px}.vault-undo-preview{margin:12px 0;padding:11px;border:1px solid rgba(241,184,75,.38);border-radius:9px;background:rgba(137,91,26,.1);color:#edca86;font-size:11px}#ctxmenu div.disabled{opacity:.4;cursor:not-allowed}#ctxmenu div.disabled:hover{background:transparent;color:inherit}
+.vault-page-head{display:flex;align-items:center;justify-content:space-between;gap:14px;max-width:1120px;margin:0 0 13px}.vault-page-head h2{margin:0!important}.vault-primary-actions{display:flex;align-items:center;gap:8px}.vault-transfer-button{min-height:38px;padding:8px 16px!important;border-color:rgba(84,185,255,.58)!important;background:linear-gradient(180deg,rgba(42,108,157,.38),rgba(25,67,102,.42))!important;color:#c5edff!important;font-size:10px!important}.vault-tools{position:relative}.vault-tools summary{display:grid;place-items:center;min-width:40px;min-height:38px;border:1px solid #34485f;border-radius:8px;background:#142033;color:#b9d8e4;cursor:pointer;font-size:17px;font-weight:900;letter-spacing:2px;list-style:none}.vault-tools summary::-webkit-details-marker{display:none}.vault-tools[open] summary,.vault-tools summary:hover{border-color:#55bad0;color:#effcff}.vault-tools-menu{position:absolute;right:0;top:44px;z-index:30;display:grid;gap:8px;width:min(310px,80vw);padding:11px;border:1px solid #3a4d65;border-radius:10px;background:#101722;box-shadow:0 20px 48px rgba(0,0,0,.55)}.vault-tools-menu label{display:grid;gap:5px;color:#8292a7;font-size:9px;font-weight:800;letter-spacing:.45px}.vault-tools-menu select{width:100%;height:36px}.vault-tool-row{display:grid;grid-template-columns:1fr 1fr;gap:7px}.vault-tool-row .vault-mini{width:100%}.vault-toolbar.grid-mode{grid-template-columns:minmax(220px,1fr);margin-bottom:5px}.vault-summary{margin:5px 0 11px}.vault-compare-bar{padding:8px 9px}.vault-compare-slots{font-size:11px}.vault-compare-clear{min-width:33px;padding:6px!important;font-size:13px!important}.vault-transfer-options{display:grid;grid-template-columns:1fr 1fr;gap:11px;margin-top:13px}.vault-transfer-card{display:flex;flex-direction:column;gap:9px;padding:13px;border:1px solid #30435a;border-radius:10px;background:#0b121c}.vault-transfer-card h4{margin:0;color:#eff5fb;font-size:13px}.vault-transfer-card p{min-height:30px;margin:0;color:#7d8da2;font-size:10px;line-height:1.45}.vault-transfer-card label{display:grid;gap:5px;color:#8292a7;font-size:9px;font-weight:800}.vault-transfer-card select{width:100%;min-height:38px}.vault-transfer-card button{width:100%;margin:2px 0 0}.vault-transfer-card .vault-transfer-spacer{flex:1}.vault-transfer-close{margin-top:11px;text-align:right}.vault-transfer-close button{margin:0}
 @media(max-width:1260px){body{grid-template-columns:232px minmax(500px,1fr) 350px}.top-actions{min-width:280px}.brand{min-width:195px}.version{max-width:175px}#mid{padding-left:17px;padding-right:17px}.finder-bar{grid-template-columns:1fr 1fr}.finder-bar #ofq,.finder-bar #ofgo{grid-column:1/-1}.access-grid{grid-template-columns:1fr}.vault-compare-grid{grid-template-columns:1fr}}
+@media(max-width:760px){.vault-page-head{align-items:flex-start}.vault-transfer-options{grid-template-columns:1fr}.vault-compare-bar{flex-wrap:wrap}.vault-compare-slots{flex-basis:100%}}
 </style></head><body>
 <header id="topbar">
   <div class="brand">
@@ -6534,6 +7036,7 @@ input,select{background:#0b111a;color:#dfe7f0;border-color:#2d3b50;border-radius
   <div class="top-health"><div id="status" role="status" aria-live="polite">CHECKING GAME STATE...</div></div>
   <div class="top-actions">
     <div class="version" id="version">SEASON 10</div>
+    <button type="button" class="iconbtn" id="mode-toggle" title="Show or hide technical and manual controls">SIMPLE MODE</button>
     <button type="button" class="iconbtn" id="catalog-toggle" title="Show or hide the item catalog" aria-controls="right" aria-expanded="true">CATALOG ◫</button>
   </div>
 </header>
@@ -6575,7 +7078,8 @@ input,select{background:#0b111a;color:#dfe7f0;border-color:#2d3b50;border-radius
 </aside>
 <script>
 let CAT=[], SETS_DB=[], RW_DB=[], chars=[], view=null, sel=null, curChar=null, charData=null, stashData=null, GAME_RUNNING=false;
-let vaultState={collectionId:'all',q:'',offset:0,limit:120,withdrawTab:'stash_tab_1',queryToken:0,highlightItem:null};
+let advancedMode=false;
+let vaultState={collectionId:'all',q:'',offset:0,limit:500,withdrawTab:'stash_tab_1',queryToken:0,highlightItem:null,persistentLayout:false};
 let vaultBulkBusy=false;
 let previewModels=new Map(),previewSequence=0;
 const vaultCompareItems=new Map();
@@ -6596,7 +7100,7 @@ const SLOTS={0:"Helmet",1:"Body Armor",2:"Boots",3:"Weapon I",4:"Gloves",5:"Amul
 const DIMS={inventory_tab:[15,6],inventory_charms:[3,11],inventory_key_tab:[15,6],inventory_material_tab:[15,6],inventory_socket_tab:[15,6],inventory_relic_tab:[15,6],inventory_tarot_tab:[15,6],inventory_vault_tab:[15,6],inventory_vault_active:[15,6],stash_tab:[17,18],material_tab:[17,18],socket_tab:[17,18],potions:[5,2],personal_stash:[17,18]};
 const BAG_LABELS={inventory_tab_0:"Main",inventory_tab_1:"Extra 1",inventory_tab_2:"Extra 2",inventory_tab_3:"Extra 3",inventory_tab_4:"Extra 4",inventory_socket_tab:"Runes & Gems",inventory_material_tab:"Materials",inventory_key_tab:"Keys",inventory_relic_tab:"Relics",inventory_tarot_tab:"Tarot",inventory_vault_tab:"Essence Vaults",inventory_vault_active_0:"Active Vault",inventory_charms:"Charms",personal_stash:"Personal Stash"};
 const CELL=26;
-const TIPBAR=`<div class="tipbar">&#128161; <b>Right-click any item</b> for: Store in Infinite Vault, Verified MAX / Best Roll, Dice skill target, compatible-item sockets, Random reroll, Duplicate, Edit stack, Delete &nbsp;&middot;&nbsp; <b>Verified item profiles are applied automatically when available</b> &nbsp;&middot;&nbsp; <b>Drag</b> items to move them or drop onto an equipment slot</div>`;
+function tipBarHTML(){return `<div class="tipbar">&#128161; <b>Right-click any item</b> for: Store in Infinite Vault, Verified MAX / Best Roll, skill target, compatible sockets and Delete${advancedMode?' · Random reroll, Duplicate and Edit stack':''} &nbsp;&middot;&nbsp; <b>Drag</b> items to move them or drop onto an equipment slot</div>`}
 const STASH_DRAG_TIP=`<div class="tipbar">&#8597; <b>Moving between stash tabs:</b> while holding an item, use the mouse wheel or keep the pointer near the top/bottom edge to auto-scroll. The item is saved only when dropped on a valid cell.</div>`;
 async function j(u,opt={}){
   const cfg={...opt};
@@ -6606,6 +7110,8 @@ async function j(u,opt={}){
   const r=await fetch(u,cfg);return r.json()
 }
 async function boot(){
+  try{advancedMode=localStorage.getItem('hsEditorMode')==='advanced'}catch(e){}
+  applyEditorMode();
   CAT=await j('/api/catalog'); SETS_DB=await j('/api/sets'); RW_DB=await j('/api/runewords');
   const fsetEl=document.getElementById('fset');
   SETS_DB.forEach(s=>{const o=document.createElement('option');o.value=s.set;o.textContent=s.name;fsetEl.appendChild(o)});
@@ -6670,7 +7176,12 @@ async function boot(){
     document.getElementById('catalog-toggle').textContent=closed?'CATALOG ▣':'CATALOG ◫';
     document.getElementById('catalog-toggle').setAttribute('aria-expanded',String(!closed));
   };
+  document.getElementById('mode-toggle').onclick=()=>{advancedMode=!advancedMode;try{localStorage.setItem('hsEditorMode',advancedMode?'advanced':'simple')}catch(e){}applyEditorMode();if(view==='stash')openStash();else if(view==='char')renderChar()};
   setupDnD(); setupTip();
+}
+function applyEditorMode(){
+  document.body.classList.toggle('advanced-mode',advancedMode);
+  const button=document.getElementById('mode-toggle');if(button){button.textContent=advancedMode?'ADVANCED MODE':'SIMPLE MODE';button.setAttribute('aria-pressed',String(advancedMode))}
 }
 function dims(tab){const b=tab.replace(/_\d+$/,'');return DIMS[b]||(b.startsWith('inventory_')?[15,6]:[17,18])}
 let gridReg={}, gridSeq=0;
@@ -6693,6 +7204,57 @@ function gridHTML(tab,items,delTarget){
 function uniqueListHTML(items,delTarget){
   if(!items.length)return '<div class="muted">This auto-sorted tab is empty.</div>';
   return `<div class="unique-list">${items.map(it=>`<div class="unique-card" data-item-preview data-preview-id="${attr(registerPreviewModel(it.gameTooltip))}" data-del='${attr(JSON.stringify(delTarget))}' data-key="${attr(it.key)}" data-cid="${it.cid??''}" data-rwcid="${it.rwcid??''}" data-socket-limit="${it.socketLimit??0}" data-socket-count="${it.socketCount??''}" data-roll="${attr(JSON.stringify(it.rollProfile||null))}" data-skill="${attr(JSON.stringify(it.skillSelector||null))}" data-raw='${attr(JSON.stringify(it.raw||{}))}'>${it.spr?`<img src="/icons/${attr(it.spr)}.png?v=2" loading="lazy">`:'<div class="found-icon">&#9671;</div>'}<div><div class="r-${attr(it.rar||'_')}">${esc(it.name)}</div><div class="muted">right-click for actions</div></div></div>`).join('')}</div>`;
+}
+const VAULT_GRID_COLS=17,VAULT_GRID_ROWS=18;
+function vaultGridSpot(page,w,h){
+  for(let y=0;y<=VAULT_GRID_ROWS-h;y++)for(let x=0;x<=VAULT_GRID_COLS-w;x++){
+    let free=true;
+    for(let yy=y;yy<y+h&&free;yy++)for(let xx=x;xx<x+w;xx++)if(page.occupied[yy][xx]){free=false;break}
+    if(free)return [x,y];
+  }
+  return null;
+}
+function packVaultGridPages(items,persistent=false){
+  const pages=[];
+  for(const row of items||[]){
+    const w=Math.max(1,Math.min(VAULT_GRID_COLS,Number.parseInt(row.w,10)||1));
+    const h=Math.max(1,Math.min(VAULT_GRID_ROWS,Number.parseInt(row.h,10)||1));
+    let page=null,pos=null;
+    const savedPage=Number.parseInt(row.pageIndex,10),savedPos=Array.isArray(row.pos)?row.pos.map(value=>Number.parseInt(value,10)):null;
+    if(persistent&&Number.isInteger(savedPage)&&savedPage>=0&&savedPos&&savedPos.length===2&&savedPos.every(Number.isInteger)){
+      while(pages.length<=savedPage)pages.push({pageIndex:pages.length,occupied:Array.from({length:VAULT_GRID_ROWS},()=>Array(VAULT_GRID_COLS).fill(false)),items:[]});
+      const candidate=pages[savedPage];
+      if(savedPos[0]>=0&&savedPos[1]>=0&&savedPos[0]+w<=VAULT_GRID_COLS&&savedPos[1]+h<=VAULT_GRID_ROWS){
+        let free=true;
+        for(let yy=savedPos[1];yy<savedPos[1]+h&&free;yy++)for(let xx=savedPos[0];xx<savedPos[0]+w;xx++)if(candidate.occupied[yy][xx]){free=false;break}
+        if(free){page=candidate;pos=savedPos}
+      }
+    }
+    if(!page)for(const candidate of pages){pos=vaultGridSpot(candidate,w,h);if(pos){page=candidate;break}}
+    if(!page){
+      page={pageIndex:pages.length,occupied:Array.from({length:VAULT_GRID_ROWS},()=>Array(VAULT_GRID_COLS).fill(false)),items:[]};
+      pages.push(page);pos=vaultGridSpot(page,w,h);
+    }
+    for(let yy=pos[1];yy<pos[1]+h;yy++)for(let xx=pos[0];xx<pos[0]+w;xx++)page.occupied[yy][xx]=true;
+    page.items.push({row,w,h,pos});
+  }
+  return pages;
+}
+function vaultGridPageHTML(page,index,persistent=false){
+  const pageIndex=Number.isInteger(page.pageIndex)?page.pageIndex:index;
+  let grid=`<div class="grid vault-grid" data-vault-page="${pageIndex}" style="width:${VAULT_GRID_COLS*CELL+2}px;height:${VAULT_GRID_ROWS*CELL+2}px">`;
+  for(let y=0;y<VAULT_GRID_ROWS;y++)for(let x=0;x<VAULT_GRID_COLS;x++)grid+=`<div class="cell" style="left:${x*CELL}px;top:${y*CELL}px;width:${CELL}px;height:${CELL}px"></div>`;
+  for(const packed of page.items){
+    const row=packed.row,rr=row.rar&&row.rar!=='?'?row.rar:'_',selected=vaultCompareItems.has(String(row.id));
+    const previewId=registerPreviewModel(row.gameTooltip),inner=row.spr?`<img src="/icons/${attr(row.spr)}.png?v=2" loading="lazy">`:esc(short(row.name));
+    const label=[row.customName||row.name,row.collectionName,row.clsName].filter(Boolean).join(' · ');
+    grid+=`<div class="item vault-grid-item b-${attr(rr)}${selected?' compare-selected':''}" tabindex="0" role="button" aria-label="${attr(label)}. Right-click for Vault actions." ${persistent?'draggable="true"':''} data-item-preview data-preview-id="${attr(previewId)}" data-vault-id="${attr(row.id)}" data-cid="${row.cid??''}" data-rwcid="${row.rwcid??''}" data-vault-page="${pageIndex}" data-x="${packed.pos[0]}" data-y="${packed.pos[1]}" data-w="${packed.w}" data-h="${packed.h}" data-updated-at="${attr(row.updatedAt||'')}" style="left:${packed.pos[0]*CELL}px;top:${packed.pos[1]*CELL}px;width:${packed.w*CELL-2}px;height:${packed.h*CELL-2}px">${inner}${row.customName?'<span class="vault-grid-mark" aria-hidden="true">N</span>':''}${row.stack?`<span class="stk">x${row.stack}</span>`:''}</div>`;
+  }
+  grid+='</div>';
+  const collections=[...new Set(page.items.map(item=>item.row.collectionName).filter(Boolean))];
+  const collectionLabel=!page.items.length?'Empty grid':collections.length===1?collections[0]:`${collections.length} collections`;
+  const guidance=persistent?'<b>Drag to organize.</b> Positions are saved automatically. Right-click for item actions.':'<b>Combined view.</b> Open one collection to arrange items by drag and drop.';
+  return `<section class="vault-grid-page"><div class="stash-tab-head vault-grid-head"><h2>Vault Grid ${pageIndex+1} <span class="muted">(${page.items.length})</span></h2><span>${esc(collectionLabel)}</span></div><div class="vault-grid-scroll">${grid}</div><div class="vault-grid-note">${guidance}</div></section>`;
 }
 function occFree(g,x,y,w,h,skipKey){
   if(x<0||y<0||x+w>g.cols||y+h>g.rows)return false;
@@ -6754,6 +7316,7 @@ function setupDnD(){
   document.addEventListener('dragend',finishDrag,true);
   mid.addEventListener('dragstart',e=>{
     const el=e.target.closest('.item,.dslot[draggable]'); if(!el)return;
+    if(el.classList.contains('vault-grid-item'))return;
     dragInfo={mode:'move',from:JSON.parse(el.dataset.del),key:el.dataset.key,w:+el.dataset.w,h:+el.dataset.h,cid:el.dataset.cid};
     e.dataTransfer.effectAllowed='move';
   });
@@ -7058,7 +7621,7 @@ function renderGameTooltip(model,options={}){
   });
   const exact=calc.numbersExact===true,quality=model.rollQuality&&typeof model.rollQuality==='object'?model.rollQuality:null;
   const seeds=model.seeds&&typeof model.seeds==='object'?Object.entries(model.seeds).map(([k,v])=>`${k}=${v}`).join(', '):'';
-  h+=`<div class="gtt-editor-meta ${exact?'gtt-exact':'gtt-partial'}"><b>${exact?'EXACT NUMBERS':'SAFE PREVIEW'}</b>`;
+  h+=`<div class="gtt-editor-meta advanced-only ${exact?'gtt-exact':'gtt-partial'}"><b>${exact?'EXACT NUMBERS':'SAFE PREVIEW'}</b>`;
   if(quality&&Number(quality.total)>0)h+=` &middot; Max endpoints ${esc(quality.maxed)}/${esc(quality.total)}`;
   if(model.fingerprint)h+=` &middot; <span class="gtt-fingerprint">#${esc(model.fingerprint)}</span>`;
   if(seeds)h+=`<br>${esc(seeds)}`;
@@ -7194,56 +7757,75 @@ async function openVault(reset=true){
   const vaultRecoveryWarnings=vaultMeta.recoveryWarnings||[];
   const vaultRecoveryMarkup=vaultRecoveryBatches.map(row=>`<div class="recovery-card"><h3>&#9888; Ambiguous ${row.direction==='deposit'?'stash-to-Vault deposit':'Vault-to-stash return'} (${row.itemCount} items)</h3><p>${esc(row.error||'The journal could not prove which side completed.')}</p><p><b>Ownership-safe choice:</b> keep every protected record available in Infinite Vault. Shared Stash will not be changed; duplicates may remain.</p><button class="act recovery-button" data-vault-batch-resolve="${attr(row.requestId)}" data-count="${row.itemCount}" data-direction="${attr(row.direction)}" ${vaultMeta.gameRunning?'disabled':''}>PRESERVE VAULT OWNERSHIP</button></div>`).join('');
   const vaultWarningMarkup=vaultRecoveryWarnings.map(row=>`<div class="vault-warning"><b>Vault ownership preserved for ${row.itemCount} items.</b> ${esc(row.message||'Shared Stash may contain duplicate copies.')}</div>`).join('');
-  let h=`<h2>Infinite Vault <span class="muted">(${vaultMeta.total||0} items)</span></h2>
-    <div class="tool-intro"><b>Unlimited named collections, connected to Shared Stash.</b> Individual actions use normal, Material and Socket grids. Bulk Transfer additionally preserves the complete Unique tab and all 19 numbered tabs.</div>
+  const collectionTabs=[{id:'all',name:'All Items',itemCount:vaultMeta.total||0},...(vaultMeta.collections||[])].map(collection=>`<button type="button" class="${String(collection.id)===String(vaultState.collectionId)?'on':''}" data-vault-collection="${attr(collection.id)}">${esc(collection.name)} (${collection.itemCount||0})</button>`).join('');
+  let h=`<div class="vault-page-head"><h2>Infinite Vault <span class="muted">(${vaultMeta.total||0})</span></h2><div class="vault-primary-actions">
+      <button type="button" class="vault-bulk-button vault-transfer-button" id="vaultdesk" data-static-disabled="${bulkStaticLocked?'1':'0'}" ${bulkLocked?'disabled':''}>TRANSFER ITEMS</button>
+      <details class="vault-tools"><summary aria-label="More Vault options" title="More Vault options">&#8230;</summary><div class="vault-tools-menu">
+        <label>DEFAULT SINGLE-ITEM RETURN<select id="vaultreturn" title="Return individual items to this Shared Stash tab" ${returnOptions?'':'disabled'}>${returnOptions||'<option>No compatible stash grid found</option>'}</select></label>
+        <div class="vault-tool-row"><button class="vault-mini" id="vaultnew">NEW COLLECTION</button><button class="vault-mini" id="vaultrefresh">REFRESH</button></div>
+        <div class="vault-tool-row"><button class="vault-mini" id="vaultrename" ${vaultState.collectionId==='all'?'disabled':''}>RENAME COLLECTION</button><button class="vault-mini danger" id="vaultdelete" ${vaultState.collectionId==='all'?'disabled':''}>DELETE EMPTY</button></div>
+        <div class="vault-tool-row"><button class="vault-mini" id="vaultnewgrid" ${vaultState.collectionId==='all'||vaultState.q.trim()?'disabled':''}>ADD EMPTY GRID</button><button class="vault-mini" id="vaultcompact" ${vaultState.collectionId==='all'||vaultState.q.trim()?'disabled':''}>COMPACT GRIDS</button></div>
+        <button class="vault-mini" id="vaulthistory">HISTORY / UNDO</button>
+      </div></details>
+    </div></div>
     ${vaultMeta.gameRunning?'<div class="vault-warning">Hero Siege is running. Your vault is viewable, but transfers are locked until the game is closed.</div>':''}
     ${vaultWarningMarkup}
     ${(vaultMeta.pending||vaultMeta.conflicts)?`<div class="vault-warning"><b>${vaultMeta.pending||vaultMeta.conflicts} transfer operation needs attention.</b> No item was discarded. Review the ownership-safe recovery below.</div>${vaultRecoveryMarkup}`:''}
-    <div class="vault-bulk-panel">
-      <div class="vault-bulk-copy"><b>Complete Stash Transfer</b><span>Choose every item tab or one exact Shared Stash tab. One preview, one backup, one atomic journal.</span></div>
-      <button type="button" class="vault-bulk-button" id="vaultbulkin" data-static-disabled="${bulkStaticLocked?'1':'0'}" ${bulkLocked?'disabled':''}>MOVE SHARED STASH → VAULT</button>
-      <button type="button" class="vault-bulk-button out" id="vaultbulkout" data-static-disabled="${bulkStaticLocked||!(vaultMeta.total||0)?'1':'0'}" ${bulkLocked||!(vaultMeta.total||0)?'disabled':''}>RETURN ALL VAULT → SHARED STASH</button>
-    </div>
-    <div class="vault-toolbar">
+    <div class="bagtabs vault-collection-tabs" id="vaultcollectiontabs">${collectionTabs}</div>
+    <div class="vault-toolbar grid-mode">
       <input id="vaultq" value="${attr(vaultState.q)}" placeholder="Search this vault..." aria-label="Search Infinite Vault">
-      <select id="vaultcollection"><option value="all">All collections (${vaultMeta.total||0})</option>${vaultCollectionOptions(vaultMeta.collections,vaultState.collectionId)}</select>
-      <select id="vaultreturn" title="Return items to this shared-stash tab" ${returnOptions?'':'disabled'}>${returnOptions||'<option>No compatible stash grid found</option>'}</select>
-      <button class="vault-mini" id="vaultrefresh">REFRESH</button>
     </div>
-    <div class="vault-manage"><button class="vault-mini" id="vaultnew">+ NEW COLLECTION</button><button class="vault-mini" id="vaultrename" ${vaultState.collectionId==='all'?'disabled':''}>RENAME</button><button class="vault-mini danger" id="vaultdelete" ${vaultState.collectionId==='all'?'disabled':''}>DELETE EMPTY</button></div>
-    <div class="vault-summary"><span id="vaultcount">Loading items...</span><span>Database: ${esc(vaultMeta.databaseName||'hs_infinite_vault.sqlite3')}</span></div>
-    <div class="vault-compare-bar" id="vaultcomparebar" hidden><div class="vault-compare-slots" id="vaultcompareslots"></div><button class="vault-mini" id="vaultcompareopen" disabled>COMPARE</button><button class="vault-mini" id="vaultcompareclear">CLEAR</button></div>
+    <div class="vault-summary"><span id="vaultcount">Loading items...</span></div>
+    <div class="vault-compare-bar" id="vaultcomparebar" hidden><div class="vault-compare-slots" id="vaultcompareslots"></div><button class="vault-mini" id="vaultselectedmove">MOVE</button><button class="vault-mini" id="vaultselectedreturn">RETURN</button><button class="vault-mini" id="vaultcompareopen" hidden>COMPARE</button><button class="vault-mini vault-compare-clear" id="vaultcompareclear" title="Clear selection" aria-label="Clear selection">&#10005;</button></div>
     <div id="vaultitems"><div class="vault-empty">Loading...</div></div>`;
   md.innerHTML=h;
   md.querySelectorAll('[data-vault-batch-resolve]').forEach(button=>button.onclick=()=>preserveVaultBatchOwnership(button.dataset.vaultBatchResolve,+button.dataset.count,button.dataset.direction,'vault'));
-  document.getElementById('vaultcollection').value=String(vaultState.collectionId);
   let timer=null;
   document.getElementById('vaultq').oninput=e=>{vaultState.q=e.target.value;vaultState.offset=0;clearTimeout(timer);timer=setTimeout(loadVaultItems,220)};
-  document.getElementById('vaultcollection').onchange=e=>{vaultState.collectionId=e.target.value==='all'?'all':+e.target.value;vaultState.offset=0;openVault(false)};
+  md.querySelectorAll('[data-vault-collection]').forEach(button=>button.onclick=()=>{const id=button.dataset.vaultCollection;vaultState.collectionId=id==='all'?'all':+id;vaultState.offset=0;openVault(false)});
   document.getElementById('vaultreturn').onchange=e=>{vaultState.withdrawTab=e.target.value;try{localStorage.setItem('hsVaultWithdrawTab',vaultState.withdrawTab)}catch(err){}};
   document.getElementById('vaultrefresh').onclick=()=>openVault(false);
-  document.getElementById('vaultbulkin').onclick=()=>openVaultBulk('stash-to-vault');
-  document.getElementById('vaultbulkout').onclick=()=>openVaultBulk('vault-to-stash');
+  document.getElementById('vaultdesk').onclick=openVaultTransferDesk;
   document.getElementById('vaultnew').onclick=()=>manageVaultCollection('create');
   document.getElementById('vaultrename').onclick=()=>manageVaultCollection('rename');
   document.getElementById('vaultdelete').onclick=()=>manageVaultCollection('delete');
+  document.getElementById('vaultnewgrid').onclick=addEmptyVaultGrid;
+  document.getElementById('vaultcompact').onclick=compactVaultGrids;
+  document.getElementById('vaulthistory').onclick=openVaultHistory;
   document.getElementById('vaultcompareopen').onclick=openVaultCompare;
-  document.getElementById('vaultcompareclear').onclick=()=>{vaultCompareItems.clear();renderVaultCompareBar();document.querySelectorAll('.vault-card.compare-selected').forEach(card=>card.classList.remove('compare-selected'))};
+  document.getElementById('vaultselectedmove').onclick=moveSelectedVaultItems;
+  document.getElementById('vaultselectedreturn').onclick=openVaultSelectionReturn;
+  document.getElementById('vaultcompareclear').onclick=()=>{vaultCompareItems.clear();renderVaultCompareBar();document.querySelectorAll('.vault-grid-item.compare-selected').forEach(item=>item.classList.remove('compare-selected'))};
   renderVaultCompareBar();
   await loadVaultItems();
 }
 function vaultBulkSessionKey(direction,sourceTab='all',collectionId='all',destinationTab='auto'){return `hsVaultBulk:${direction}:${sourceTab}:${collectionId}:${destinationTab}`}
-async function openVaultBulk(direction){
+async function openVaultTransferDesk(){
+  const previous=document.getElementById('sockmodal');if(previous)previous.remove();
+  const stash=await j('/api/stash');if(stash.err){flash(stash);return}
+  const itemSources=(vaultMeta.bulkDepositTabs||[]).filter(row=>row.tab!=='all').map(row=>({...row,count:stash[row.tab]&&typeof stash[row.tab]==='object'?Object.keys(stash[row.tab]).length:0}));
+  const allCount=itemSources.reduce((total,row)=>total+row.count,0),sources=[{tab:'all',label:'All item tabs',count:allCount},...itemSources],collections=vaultMeta.collections||[];
+  if(!sources.length||!collections.length){flash({err:'Shared Stash or Vault collections are unavailable.'});return}
+  const selectedCollection=vaultState.collectionId!=='all'&&collections.some(row=>String(row.id)===String(vaultState.collectionId))?vaultState.collectionId:vaultMeta.defaultCollectionId;
+  const selectedCount=vaultCompareItems.size,returnScopes=selectedCount?`<option value="selected">${selectedCount} selected item${selectedCount===1?'':'s'}</option><option value="all">All ${vaultMeta.total||0} Vault items</option>`:`<option value="all">All ${vaultMeta.total||0} Vault items</option>`;
+  const modal=document.createElement('div');modal.id='sockmodal';
+  modal.innerHTML=`<div id="sockbox" role="dialog" aria-modal="true" aria-labelledby="vaultdesktitle" style="width:min(760px,92vw)"><h3 id="vaultdesktitle">Transfer Items</h3><div class="muted" style="margin:6px 0 4px">Choose a direction. You will see an exact preview before anything changes.</div><div class="vault-transfer-options"><section class="vault-transfer-card"><h4>Shared Stash → Vault</h4><p>Move one item tab or every item tab into a Vault collection.</p><label>ITEMS<select id="vaultdesksource">${sources.map(row=>`<option value="${attr(row.tab)}">${esc(row.label)} · ${row.count}</option>`).join('')}</select></label><label>VAULT COLLECTION<select id="vaultdeskcollection">${vaultCollectionOptions(collections,selectedCollection)}</select></label><button class="act" id="vaultdeskin" ${allCount&&!GAME_RUNNING?'':'disabled'}>CONTINUE</button></section><section class="vault-transfer-card"><h4>Vault → Shared Stash</h4><p>Return selected items, or return the complete Vault. The destination is chosen next.</p><label>ITEMS<select id="vaultdeskscope">${returnScopes}</select></label><div class="vault-transfer-spacer"></div><button class="act" id="vaultdeskout" ${(vaultMeta.total||0)&&!GAME_RUNNING?'':'disabled'}>CONTINUE</button></section></div><div class="vault-transfer-close"><button class="vault-mini" id="vaultdeskclose">CLOSE</button></div></div>`;
+  document.body.appendChild(modal);const close=()=>modal.remove(),source=document.getElementById('vaultdesksource'),collection=document.getElementById('vaultdeskcollection'),scope=document.getElementById('vaultdeskscope');document.getElementById('vaultdeskclose').onclick=close;modal.onclick=e=>{if(e.target===modal)close()};modal.onkeydown=e=>{if(e.key==='Escape')close()};
+  document.getElementById('vaultdeskin').onclick=()=>{const defaults={sourceTab:source.value,collectionId:+collection.value};close();openVaultBulk('stash-to-vault',defaults)};
+  document.getElementById('vaultdeskout').onclick=()=>{const selected=scope.value==='selected';close();if(selected)openVaultSelectionReturn();else openVaultBulk('vault-to-stash')};
+  source.focus();
+}
+async function openVaultBulk(direction,defaults={}){
   if(vaultBulkBusy)return;
   if(GAME_RUNNING){flash({err:'Hero Siege is running. Close it before a bulk transfer.'});return}
   const previous=document.getElementById('sockmodal');if(previous)previous.remove();
   const returnFocus=document.activeElement;
   const intoVault=direction==='stash-to-vault';
-  const selectedCollection=vaultState.collectionId!=='all'?vaultState.collectionId:vaultMeta.defaultCollectionId;
+  const selectedCollection=defaults.collectionId||(vaultState.collectionId!=='all'?vaultState.collectionId:vaultMeta.defaultCollectionId);
   const bulkSourceTabs=(vaultMeta.bulkDepositTabs||[]).length?vaultMeta.bulkDepositTabs:[{tab:'all',label:'All item tabs'}];
   const bulkDestinationTabs=(vaultMeta.bulkWithdrawalTabs||[]).length?vaultMeta.bulkWithdrawalTabs:[{tab:'auto',label:'Automatic (original tabs + safe routing)'}];
-  let selectedSource='all';try{const savedSource=localStorage.getItem('hsVaultBulkSourceTab');if(bulkSourceTabs.some(row=>row.tab===savedSource))selectedSource=savedSource}catch(e){}
-  let selectedDestination='auto';try{const savedDestination=localStorage.getItem('hsVaultBulkDestinationTab');if(bulkDestinationTabs.some(row=>row.tab===savedDestination))selectedDestination=savedDestination}catch(e){}
+  let selectedSource='all';try{const savedSource=localStorage.getItem('hsVaultBulkSourceTab');if(bulkSourceTabs.some(row=>row.tab===savedSource))selectedSource=savedSource}catch(e){}if(defaults.sourceTab&&bulkSourceTabs.some(row=>row.tab===defaults.sourceTab))selectedSource=defaults.sourceTab;
+  let selectedDestination='auto';try{const savedDestination=localStorage.getItem('hsVaultBulkDestinationTab');if(bulkDestinationTabs.some(row=>row.tab===savedDestination))selectedDestination=savedDestination}catch(e){}if(defaults.destinationTab&&bulkDestinationTabs.some(row=>row.tab===defaults.destinationTab))selectedDestination=defaults.destinationTab;
   const sourceOptions=bulkSourceTabs.map(row=>`<option value="${attr(row.tab)}" ${row.tab===selectedSource?'selected':''}>${esc(row.label)}</option>`).join('');
   const destinationOptions=bulkDestinationTabs.map(row=>`<option value="${attr(row.tab)}" ${row.tab===selectedDestination?'selected':''}>${esc(row.label)}</option>`).join('');
   const modal=document.createElement('div');modal.id='sockmodal';
@@ -7307,6 +7889,12 @@ async function openVaultBulk(direction){
 }
 async function loadVaultItems(){
   const token=++vaultState.queryToken;
+  const persistent=vaultState.collectionId!=='all'&&!vaultState.q.trim();
+  if(persistent){
+    const ready=await j('/api/vault/layout',{method:'POST',body:JSON.stringify({action:'ensure',collectionId:+vaultState.collectionId})});
+    if(token!==vaultState.queryToken||view!=='vault')return;
+    if(ready.err){renderVaultItems({err:ready.err});return}
+  }
   const params=new URLSearchParams({q:vaultState.q,offset:String(vaultState.offset),limit:String(vaultState.limit)});
   if(vaultState.collectionId!=='all')params.set('collectionId',String(vaultState.collectionId));
   const payload=await j('/api/vault/items?'+params.toString());
@@ -7319,48 +7907,157 @@ function renderVaultItems(payload){
   if(payload.err){count.textContent='Vault query failed';host.innerHTML=`<div class="vault-warning">${esc(payload.err)}</div>`;renderVaultCompareBar();return}
   const rows=payload.items||[],total=payload.total||0;
   const start=total?payload.offset+1:0,end=Math.min(total,payload.offset+rows.length);
-  count.textContent=`Showing ${start}-${end} of ${total}`;
+  const resultPage=Math.floor((payload.offset||0)/Math.max(1,payload.limit||vaultState.limit))+1;
+  count.textContent=`Result page ${resultPage} · showing ${start}-${end} of ${total}`;
   if(!rows.length){host.innerHTML='<div class="vault-empty">No items match this collection or search.</div>';renderVaultCompareBar();return}
-  const cards=rows.map(row=>{
-    const selected=vaultCompareItems.has(String(row.id)),previewId=registerPreviewModel(row.gameTooltip);
-    return `<article class="vault-card${selected?' compare-selected':''}" data-item-preview data-preview-id="${attr(previewId)}" data-vault-id="${attr(row.id)}" data-cid="${row.cid??''}" data-rwcid="${row.rwcid??''}">
-      ${row.spr?`<img src="/icons/${attr(row.spr)}.png?v=2" loading="lazy">`:'<div class="vault-card-icon">&#9671;</div>'}
-      <div class="vault-card-copy">${row.customName?`<div class="vault-alias">${esc(row.customName)}</div>`:''}<div class="vault-name r-${attr(row.rar||'_')}">${esc(row.name)}</div><div class="vault-meta">${esc(row.collectionName)} &middot; ${esc(row.clsName||'Unknown type')}<br>${esc(row.sourceLabel||'Shared Stash')}${row.fingerprint?` &middot; <span class="vault-fingerprint">#${esc(row.fingerprint)}</span>`:''}</div></div>
-      <button type="button" class="vault-card-tool name" data-vault-name="${attr(row.id)}" title="Set or clear custom name" aria-label="Set custom name">&#9998;</button>
-      <button type="button" class="vault-card-tool compare${selected?' on':''}" data-vault-compare="${attr(row.id)}" title="${selected?'Remove from comparison':'Select for comparison'}" aria-label="${selected?'Remove from comparison':'Select for comparison'}">${selected?'&#10003;':'&#8644;'}</button>
-      <div class="vault-actions"><button class="vault-mini" data-vault-move="${attr(row.id)}" data-current-collection="${row.collectionId}">MOVE</button><button class="vault-return" data-vault-return="${attr(row.id)}" ${vaultMeta&&vaultMeta.gameRunning?'disabled':''}>RETURN TO STASH</button></div>
-    </article>`;
-  }).join('');
-  host.innerHTML=`<div class="vault-list">${cards}</div>
-    <div class="vault-pager"><button class="vault-mini" id="vaultprev" ${payload.offset<=0?'disabled':''}>PREVIOUS</button><button class="vault-mini" id="vaultnext" ${payload.offset+rows.length>=total?'disabled':''}>NEXT</button></div>`;
+  vaultState.persistentLayout=!!payload.persistentLayout;
+  const pages=packVaultGridPages(rows,vaultState.persistentLayout),grids=pages.map((page,index)=>vaultGridPageHTML(page,index,vaultState.persistentLayout)).join('');
+  host.innerHTML=`<div class="vault-grid-pages">${grids}</div>
+    <div class="vault-pager"><button class="vault-mini" id="vaultprev" ${payload.offset<=0?'disabled':''}>PREVIOUS PAGE</button><span class="vault-pager-info">${pages.length} grid${pages.length===1?'':'s'} in this result page</span><button class="vault-mini" id="vaultnext" ${payload.offset+rows.length>=total?'disabled':''}>NEXT PAGE</button></div>`;
   const byId=new Map(rows.map(row=>[String(row.id),row]));
-  host.querySelectorAll('[data-vault-return]').forEach(btn=>btn.onclick=()=>withdrawVaultItem(btn.dataset.vaultReturn,btn));
-  host.querySelectorAll('[data-vault-move]').forEach(btn=>btn.onclick=()=>moveVaultItem(btn.dataset.vaultMove,+btn.dataset.currentCollection));
-  host.querySelectorAll('[data-vault-name]').forEach(btn=>btn.onclick=()=>editVaultCustomName(byId.get(btn.dataset.vaultName)));
-  host.querySelectorAll('[data-vault-compare]').forEach(btn=>btn.onclick=()=>toggleVaultCompare(byId.get(btn.dataset.vaultCompare),btn));
+  host.querySelectorAll('.vault-grid-item').forEach(item=>{
+    const row=byId.get(item.dataset.vaultId);
+    item.oncontextmenu=e=>{e.preventDefault();showVaultCtx(e.clientX,e.clientY,row,item)};
+    item.onclick=e=>{if(e.button===0&&!vaultIgnoreSelectionClick)toggleVaultCompare(row,item)};
+    item.onkeydown=e=>{
+      if(e.key==='ContextMenu'||(e.shiftKey&&e.key==='F10')){e.preventDefault();const rect=item.getBoundingClientRect();showVaultCtx(rect.left+Math.min(rect.width,24),rect.top+Math.min(rect.height,24),row,item)}
+      else if(e.key==='Enter'||e.key===' '){e.preventDefault();toggleVaultCompare(row,item)}
+    };
+    if(vaultState.persistentLayout){
+      item.ondragstart=e=>{
+        e.stopPropagation();
+        vaultIgnoreSelectionClick=true;
+        vaultDragInfo={itemId:String(row.id),w:+item.dataset.w,h:+item.dataset.h,updatedAt:item.dataset.updatedAt||'',source:item};
+        e.dataTransfer.effectAllowed='move';e.dataTransfer.setData('text/plain',String(row.id));
+        requestAnimationFrame(()=>item.classList.add('vault-dragging'));
+      };
+      item.ondragend=()=>finishVaultDrag();
+    }
+  });
+  if(vaultState.persistentLayout)bindVaultGridDnD(host);
   document.getElementById('vaultprev').onclick=()=>{vaultState.offset=Math.max(0,vaultState.offset-vaultState.limit);loadVaultItems()};
   document.getElementById('vaultnext').onclick=()=>{vaultState.offset+=vaultState.limit;loadVaultItems()};
   renderVaultCompareBar();
-  if(vaultState.highlightItem){const card=[...host.querySelectorAll('[data-vault-id]')].find(el=>el.dataset.vaultId===vaultState.highlightItem);if(card){card.scrollIntoView({behavior:'smooth',block:'center'});card.classList.add('found-pulse');setTimeout(()=>card.classList.remove('found-pulse'),3800);vaultState.highlightItem=null}}
+  if(vaultState.highlightItem){const item=[...host.querySelectorAll('[data-vault-id]')].find(el=>el.dataset.vaultId===vaultState.highlightItem);if(item){item.scrollIntoView({behavior:'smooth',block:'center'});item.classList.add('found-pulse');setTimeout(()=>item.classList.remove('found-pulse'),3800);vaultState.highlightItem=null}}
+}
+let vaultDragInfo=null,vaultIgnoreSelectionClick=false;
+function finishVaultDrag(){
+  clearGhost();document.querySelectorAll('.vault-drop-target').forEach(el=>el.classList.remove('vault-drop-target'));
+  if(vaultDragInfo&&vaultDragInfo.source)vaultDragInfo.source.classList.remove('vault-dragging');
+  vaultDragInfo=null;
+  setTimeout(()=>{vaultIgnoreSelectionClick=false},80);
+}
+function vaultGridPositionFree(grid,itemId,x,y,w,h){
+  if(x<0||y<0||x+w>VAULT_GRID_COLS||y+h>VAULT_GRID_ROWS)return false;
+  return [...grid.querySelectorAll('.vault-grid-item')].every(item=>{
+    if(item.dataset.vaultId===itemId)return true;
+    const ix=+item.dataset.x,iy=+item.dataset.y,iw=+item.dataset.w,ih=+item.dataset.h;
+    return x+w<=ix||ix+iw<=x||y+h<=iy||iy+ih<=y;
+  });
+}
+function bindVaultGridDnD(host){
+  host.querySelectorAll('.vault-grid').forEach(grid=>{
+    grid.ondragover=e=>{
+      if(!vaultDragInfo)return;e.preventDefault();e.stopPropagation();clearGhost();
+      const rect=grid.getBoundingClientRect(),w=vaultDragInfo.w,h=vaultDragInfo.h;
+      let x=Math.floor((e.clientX-rect.left)/CELL),y=Math.floor((e.clientY-rect.top)/CELL);
+      x=Math.max(0,Math.min(x,VAULT_GRID_COLS-w));y=Math.max(0,Math.min(y,VAULT_GRID_ROWS-h));
+      const free=vaultGridPositionFree(grid,vaultDragInfo.itemId,x,y,w,h),ghost=document.createElement('div');
+      ghost.className='ghost';ghost.dataset.x=x;ghost.dataset.y=y;ghost.dataset.free=free?'1':'';
+      ghost.style.cssText=`position:absolute;left:${x*CELL}px;top:${y*CELL}px;width:${w*CELL-2}px;height:${h*CELL-2}px;border:2px solid ${free?'#54e87a':'#ff5050'};background:${free?'rgba(84,232,122,.18)':'rgba(255,80,80,.18)'};pointer-events:none;z-index:9`;
+      grid.appendChild(ghost);e.dataTransfer.dropEffect=free?'move':'none';
+    };
+    grid.ondrop=async e=>{
+      if(!vaultDragInfo)return;e.preventDefault();e.stopPropagation();
+      const info=vaultDragInfo,ghost=grid.querySelector('.ghost'),pageIndex=+grid.dataset.vaultPage;
+      if(!ghost||ghost.dataset.free!=='1'){finishVaultDrag();flash({err:'That Vault position is occupied.'});return}
+      const x=+ghost.dataset.x,y=+ghost.dataset.y;finishVaultDrag();
+      const result=await j('/api/vault/layout',{method:'POST',body:JSON.stringify({action:'place',collectionId:+vaultState.collectionId,itemId:info.itemId,pageIndex,x,y,expectedUpdatedAt:info.updatedAt})});
+      flash(result);await loadVaultItems();
+    };
+  });
+  document.querySelectorAll('[data-vault-collection]').forEach(button=>{
+    const target=button.dataset.vaultCollection;
+    if(target==='all'||String(target)===String(vaultState.collectionId))return;
+    button.ondragover=e=>{if(!vaultDragInfo)return;e.preventDefault();e.stopPropagation();button.classList.add('vault-drop-target');e.dataTransfer.dropEffect='move'};
+    button.ondragleave=()=>button.classList.remove('vault-drop-target');
+    button.ondrop=async e=>{
+      if(!vaultDragInfo)return;e.preventDefault();e.stopPropagation();const info=vaultDragInfo;finishVaultDrag();
+      const result=await j('/api/vault/item',{method:'POST',body:JSON.stringify({action:'move',itemId:info.itemId,collectionId:+target})});flash(result);
+      if(!result.err){vaultCompareItems.delete(info.itemId);await openVault(false)}
+    };
+  });
+}
+function addEmptyVaultGrid(){
+  if(vaultState.collectionId==='all'||vaultState.q.trim()){flash({err:'Open one collection and clear search before adding a grid.'});return}
+  const host=document.getElementById('vaultitems');if(!host)return;
+  let pages=host.querySelector('.vault-grid-pages');
+  if(!pages){host.innerHTML='<div class="vault-grid-pages"></div>';pages=host.querySelector('.vault-grid-pages')}
+  const indexes=[...pages.querySelectorAll('[data-vault-page]')].map(el=>+el.dataset.vaultPage).filter(Number.isInteger),pageIndex=indexes.length?Math.max(...indexes)+1:0;
+  const blank={pageIndex,occupied:Array.from({length:VAULT_GRID_ROWS},()=>Array(VAULT_GRID_COLS).fill(false)),items:[]},wrapper=document.createElement('div');
+  wrapper.innerHTML=vaultGridPageHTML(blank,pageIndex,true);pages.appendChild(wrapper.firstElementChild);bindVaultGridDnD(host);
+  const created=pages.querySelector(`[data-vault-page="${pageIndex}"]`);if(created)created.scrollIntoView({behavior:'smooth',block:'center'});
+  flash({ok:`Vault Grid ${pageIndex+1} is ready. Drag an item onto it to keep the page.`});
+}
+async function compactVaultGrids(){
+  if(vaultState.collectionId==='all'||vaultState.q.trim())return;
+  if(!confirm('Compact this collection into the fewest possible Vault grids?\n\nItem data is unchanged. Only Vault page positions are reorganized.'))return;
+  const result=await j('/api/vault/layout',{method:'POST',body:JSON.stringify({action:'compact',collectionId:+vaultState.collectionId})});flash(result);if(!result.err)await loadVaultItems();
+}
+function vaultHistoryLabel(event){
+  const labels={item_deposited:'Stored item in Vault',item_custom_name_updated:'Changed custom name',item_moved:'Moved item',items_moved:'Moved selected items',collection_layout_updated:'Organized Vault grid',metadata_undo_applied:'Undid metadata action',withdrawal_reserved:'Prepared item return',withdrawal_committed:'Returned item to Shared Stash',bulk_deposit_prepared:'Prepared Shared Stash transfer',bulk_withdrawal_prepared:'Prepared Vault return'};
+  return labels[event.eventType]||String(event.eventType||'Vault operation').replaceAll('_',' ');
+}
+async function openVaultHistory(){
+  const payload=await j('/api/vault/history');if(payload.err){flash(payload);return}
+  const previous=document.getElementById('sockmodal');if(previous)previous.remove();const modal=document.createElement('div');modal.id='sockmodal';
+  const events=(payload.events||[]).map(event=>`<div class="vault-history-row"><div><b>${esc(vaultHistoryLabel(event))}</b><span>${esc(event.collectionName||'Infinite Vault')}${event.itemId?` · item ${esc(String(event.itemId).slice(0,8))}`:''}</span></div><span>${esc(new Date(event.createdAt).toLocaleString())}</span></div>`).join('')||'<div class="vault-empty">No Vault operations yet.</div>',undo=payload.undo;
+  modal.innerHTML=`<div id="sockbox" role="dialog" aria-modal="true" aria-labelledby="vaulthistorytitle" style="width:min(720px,92vw)"><h3 id="vaulthistorytitle">Infinite Vault History</h3><div class="muted" style="margin:6px 0">Transfers remain protected by their atomic journal and backups. Undo is intentionally limited to the latest safe metadata action: names, collection moves, and grid positions.</div>${undo?`<div class="vault-undo-preview"><b>Safe undo preview:</b> ${esc(undo.label)} · ${undo.itemCount} item${undo.itemCount===1?'':'s'}</div>`:'<div class="vault-undo-preview">No safe metadata action is currently available to undo.</div>'}<div class="flex"><button class="act" id="vaulthistoryundo" style="margin:0;background:#62461e;border-color:#b88337" ${undo?'':'disabled'}>UNDO LATEST SAFE ACTION</button><button class="act" id="vaulthistoryclose" style="margin:0">CLOSE</button></div><div class="vault-history-list">${events}</div></div>`;
+  document.body.appendChild(modal);const close=()=>modal.remove(),button=document.getElementById('vaulthistoryundo');document.getElementById('vaulthistoryclose').onclick=close;modal.onclick=e=>{if(e.target===modal)close()};modal.onkeydown=e=>{if(e.key==='Escape')close()};
+  if(undo)button.onclick=async()=>{if(!confirm(`${undo.label} for ${undo.itemCount} item${undo.itemCount===1?'':'s'}?`))return;button.disabled=true;button.textContent='UNDOING…';const result=await j('/api/vault/undo',{method:'POST',body:JSON.stringify({eventId:undo.eventId})});flash(result);if(!result.err){vaultCompareItems.clear();close();await openVault(false)}else{button.disabled=false;button.textContent='UNDO LATEST SAFE ACTION'}};
+  document.getElementById('vaulthistoryclose').focus();
+}
+function showVaultCtx(x,y,row,el){
+  if(!row)return;
+  let menu=document.getElementById('ctxmenu');
+  if(!menu){menu=document.createElement('div');menu.id='ctxmenu';document.body.appendChild(menu);document.addEventListener('click',()=>{menu.style.display='none'})}
+  const selected=vaultCompareItems.has(String(row.id)),canReturn=!!vaultState.withdrawTab&&!(vaultMeta&&vaultMeta.gameRunning);
+  const actions=[
+    {label:`Return to ${vaultTabLabel(vaultState.withdrawTab)}`,action:'return',disabled:!canReturn},
+    {label:'Move to collection...',action:'move'},
+    {label:row.customName?'Edit custom name...':'Set custom name...',action:'name'},
+    {label:selected?'Remove from selection':'Select item',action:'compare'}
+  ];
+  menu.innerHTML=actions.map(action=>`<div class="${action.disabled?'disabled':''}" data-vault-action="${action.action}">${esc(action.label)}</div>`).join('');
+  menu.querySelectorAll('[data-vault-action]').forEach(option=>option.onclick=async event=>{
+    event.stopPropagation();
+    const action=actions.find(candidate=>candidate.action===option.dataset.vaultAction);if(!action||action.disabled)return;
+    menu.style.display='none';
+    if(action.action==='return')await withdrawVaultItem(row.id,el);
+    else if(action.action==='move')await moveVaultItem(row.id,+row.collectionId);
+    else if(action.action==='name')await editVaultCustomName(row);
+    else toggleVaultCompare(row,el);
+  });
+  menu.style.display='block';
+  menu.style.left=Math.max(6,Math.min(x,innerWidth-menu.offsetWidth-8))+'px';
+  menu.style.top=Math.max(6,Math.min(y,innerHeight-menu.offsetHeight-8))+'px';
 }
 function vaultCompareLabel(row){return row&&String(row.customName||row.name||'Unknown item')}
 function renderVaultCompareBar(){
-  const bar=document.getElementById('vaultcomparebar'),slots=document.getElementById('vaultcompareslots'),open=document.getElementById('vaultcompareopen');
+  const bar=document.getElementById('vaultcomparebar'),slots=document.getElementById('vaultcompareslots'),open=document.getElementById('vaultcompareopen'),move=document.getElementById('vaultselectedmove'),returns=document.getElementById('vaultselectedreturn');
   if(!bar||!slots||!open)return;
-  const rows=[...vaultCompareItems.values()];bar.hidden=!rows.length;open.disabled=rows.length!==2;
-  slots.innerHTML=rows.length?`<b>${rows.length}/2 selected:</b> ${rows.map(vaultCompareLabel).map(esc).join(' &middot; ')}`:'';
+  const rows=[...vaultCompareItems.values()];bar.hidden=!rows.length;open.hidden=rows.length!==2;
+  if(move)move.disabled=!rows.length;if(returns)returns.disabled=!rows.length||GAME_RUNNING;
+  slots.innerHTML=rows.length?`<b>${rows.length}</b> item${rows.length===1?'':'s'} selected`:'';
 }
-function toggleVaultCompare(row,btn){
+function toggleVaultCompare(row,source){
   if(!row)return;
   const id=String(row.id),selected=vaultCompareItems.has(id);
   if(selected)vaultCompareItems.delete(id);
-  else{
-    if(vaultCompareItems.size>=2){flash({err:'Two items are already selected. Remove one before adding another.'});return}
-    vaultCompareItems.set(id,row);
-  }
-  const on=vaultCompareItems.has(id),card=btn&&btn.closest('.vault-card');
-  if(card)card.classList.toggle('compare-selected',on);
-  if(btn){btn.classList.toggle('on',on);btn.innerHTML=on?'&#10003;':'&#8644;';btn.title=on?'Remove from comparison':'Select for comparison';btn.setAttribute('aria-label',btn.title)}
+  else if(vaultCompareItems.size>=500){flash({err:'You can select up to 500 items at once.'});return}
+  else vaultCompareItems.set(id,row);
+  const on=vaultCompareItems.has(id),item=source&&source.closest('.vault-grid-item');
+  if(item)item.classList.toggle('compare-selected',on);
   renderVaultCompareBar();
 }
 function openVaultCompare(){
@@ -7371,6 +8068,47 @@ function openVaultCompare(){
   modal.innerHTML=`<div class="vault-compare-dialog"><div class="vault-compare-head"><div><h3>Item Comparison</h3><div class="muted">Highlighted rows differ; — means that stat is absent on that item. Max endpoints counts rolled stat lines currently at their upper endpoint.</div></div><button class="vault-mini vault-compare-close" type="button">CLOSE</button></div><div class="vault-compare-grid"><section class="vault-compare-column">${renderGameTooltip(rows[0].gameTooltip,{differences,comparison})}</section><section class="vault-compare-column">${renderGameTooltip(rows[1].gameTooltip,{differences,comparison})}</section></div></div>`;
   const close=()=>{document.removeEventListener('keydown',onKey);modal.remove()},onKey=e=>{if(e.key==='Escape')close()};
   modal.querySelector('.vault-compare-close').onclick=close;modal.onclick=e=>{if(e.target===modal)close()};document.addEventListener('keydown',onKey);document.body.appendChild(modal);modal.querySelector('.vault-compare-close').focus();
+}
+async function moveSelectedVaultItems(){
+  const rows=[...vaultCompareItems.values()];if(!rows.length)return;
+  const choices=(vaultMeta.collections||[]).filter(collection=>!rows.every(row=>String(row.collectionId)===String(collection.id)));
+  if(!choices.length){flash({err:'Create another collection first.'});return}
+  const previous=document.getElementById('sockmodal');if(previous)previous.remove();
+  const modal=document.createElement('div');modal.id='sockmodal';
+  modal.innerHTML=`<div id="sockbox" role="dialog" aria-modal="true" aria-labelledby="vaultmovetitle"><h3 id="vaultmovetitle">Move ${rows.length} selected item${rows.length===1?'':'s'}</h3><div class="muted" style="margin:6px 0 12px">The whole selection moves in one database transaction. Native item data is not changed.</div><div class="jlrow"><label for="vaultmovetarget">Collection</label><select id="vaultmovetarget">${vaultCollectionOptions(choices,choices[0].id)}</select></div><div class="flex" style="margin-top:14px"><button class="act" id="vaultmovego" type="button" style="margin:0;background:#234a2a;border-color:#3da55e">MOVE SELECTED</button><button class="act" id="vaultmovecancel" type="button" style="margin:0">CANCEL</button></div></div>`;
+  document.body.appendChild(modal);const go=document.getElementById('vaultmovego'),cancel=document.getElementById('vaultmovecancel'),target=document.getElementById('vaultmovetarget');
+  const close=()=>modal.remove();cancel.onclick=close;modal.onclick=e=>{if(e.target===modal)close()};modal.onkeydown=e=>{if(e.key==='Escape')close()};
+  go.onclick=async()=>{go.disabled=true;cancel.disabled=true;target.disabled=true;go.textContent='MOVING…';
+    try{const result=await j('/api/vault/item',{method:'POST',body:JSON.stringify({action:'moveMany',itemIds:rows.map(row=>row.id),collectionId:+target.value})});flash(result);if(!result.err){vaultCompareItems.clear();close();await openVault(false);return}}
+    catch(error){flash({err:'Selected items could not be moved.'})}
+    go.disabled=false;cancel.disabled=false;target.disabled=false;go.textContent='MOVE SELECTED';
+  };target.focus();
+}
+async function openVaultSelectionReturn(){
+  const rows=[...vaultCompareItems.values()];if(!rows.length)return;if(GAME_RUNNING){flash({err:'Hero Siege is running. Close it before returning items.'});return}
+  const previous=document.getElementById('sockmodal');if(previous)previous.remove();
+  const destinations=(vaultMeta.bulkWithdrawalTabs||[]).length?vaultMeta.bulkWithdrawalTabs:[{tab:'auto',label:'Automatic (original tabs + safe routing)'}];
+  let selected='auto';try{const saved=localStorage.getItem('hsVaultBulkDestinationTab');if(destinations.some(row=>row.tab===saved))selected=saved}catch(e){}
+  const options=destinations.map(row=>`<option value="${attr(row.tab)}" ${row.tab===selected?'selected':''}>${esc(row.label)}</option>`).join(''),modal=document.createElement('div');modal.id='sockmodal';
+  modal.innerHTML=`<div id="sockbox" role="dialog" aria-modal="true" aria-labelledby="vaultselectiontitle"><h3 id="vaultselectiontitle">Return ${rows.length} selected item${rows.length===1?'':'s'}</h3><div class="muted" style="margin:6px 0 12px">First the editor proves that every selected item fits. If one cannot fit, nothing moves.</div><div class="jlrow"><label for="vaultselectiontarget">Destination</label><select id="vaultselectiontarget">${options}</select></div><div id="vaultselectionpreview" class="vault-bulk-preview" role="status" aria-live="polite"><strong>Building exact preview…</strong><div class="vault-bulk-note">No data is being changed.</div></div><div class="vault-bulk-actions"><button class="act vault-bulk-confirm out" id="vaultselectiongo" disabled>RETURN SELECTED</button><button class="act" id="vaultselectioncancel">CANCEL</button></div></div>`;
+  document.body.appendChild(modal);const target=document.getElementById('vaultselectiontarget'),previewHost=document.getElementById('vaultselectionpreview'),go=document.getElementById('vaultselectiongo'),cancel=document.getElementById('vaultselectioncancel'),itemIds=rows.map(row=>String(row.id));let preview=null,busy=false,stableId=requestId();
+  const close=()=>{if(!busy)modal.remove()};cancel.onclick=close;modal.onclick=e=>{if(e.target===modal)close()};modal.onkeydown=e=>{if(e.key==='Escape')close()};
+  const loadPreview=async()=>{if(busy)return;preview=null;go.disabled=true;go.textContent='CHECKING SPACE…';previewHost.innerHTML='<strong>Building exact preview…</strong><div class="vault-bulk-note">No data is being changed.</div>';
+    try{const result=await j('/api/vault/selection-preview',{method:'POST',body:JSON.stringify({itemIds,destinationTab:target.value})});
+      if(result.err){previewHost.innerHTML=`<strong>Transfer unavailable</strong><div class="vault-bulk-note warn">${esc(result.err)}</div>`;go.textContent='RETRY PREVIEW';go.disabled=false;return}
+      preview=result;const tabs=(result.tabCounts||[]).map(row=>`<span>${esc(row.label)} · ${row.count}</span>`).join('');
+      previewHost.innerHTML=`<strong>${result.itemCount} selected item${result.itemCount===1?'':'s'} will return to ${esc(result.destinationLabel)}</strong><div class="vault-bulk-tabs">${tabs}</div><div class="vault-bulk-note">One Shared Stash backup and one atomic journal protect the complete selection.</div>${result.customNamedCount?`<div class="vault-bulk-note warn">${result.customNamedCount} Vault-only custom name${result.customNamedCount===1?'':'s'} will not be written into Hero Siege.</div>`:''}`;
+      go.textContent=`RETURN ${result.itemCount} SELECTED`;go.disabled=!result.canRun;
+    }catch(error){previewHost.innerHTML='<strong>Preview interrupted</strong><div class="vault-bulk-note warn">Try again; nothing was changed.</div>';go.textContent='RETRY PREVIEW';go.disabled=false}
+  };
+  target.onchange=()=>{try{localStorage.setItem('hsVaultBulkDestinationTab',target.value)}catch(e){}loadPreview()};
+  go.onclick=async()=>{if(!preview){loadPreview();return}busy=true;go.disabled=true;cancel.disabled=true;target.disabled=true;go.textContent='RETURNING ATOMICALLY…';
+    try{const result=await j('/api/vault/bulk',{method:'POST',body:JSON.stringify({direction:'vault-to-stash',requestId:stableId,previewToken:preview.previewToken,destinationTab:preview.destinationTab,itemIds})});flash(result);
+      if(!result.err){vaultCompareItems.clear();busy=false;modal.remove();await openVault(false);return}
+      if(result.code==='preview_stale'){preview=null;stableId=requestId();previewHost.innerHTML=`<strong>Preview expired safely</strong><div class="vault-bulk-note warn">${esc(result.err)}</div>`;go.textContent='BUILD NEW PREVIEW'}else go.textContent=result.retryable?'RETRY SAME TRANSFER':'REVIEW AGAIN';
+    }catch(error){flash({err:'Connection interrupted. The atomic journal protects every selected item; retry the same transfer.'});go.textContent='RETRY SAME TRANSFER'}
+    busy=false;go.disabled=false;cancel.disabled=false;target.disabled=false;
+  };target.focus();loadPreview();
 }
 async function editVaultCustomName(row){
   if(!row)return;
@@ -7396,16 +8134,16 @@ async function editVaultCustomName(row){
   modal.onclick=e=>{if(e.target===modal)close()};
   input.focus();input.select();
 }
-async function withdrawVaultItem(itemId,btn){
+async function withdrawVaultItem(itemId,control){
   if(!vaultState.withdrawTab){flash({err:'No compatible Shared Stash grid was found.'});return}
   if(!confirm(`Return this item to ${vaultTabLabel(vaultState.withdrawTab)}?`))return;
-  btn.disabled=true;btn.textContent='RETURNING...';
-  btn.dataset.requestId=btn.dataset.requestId||requestId();
+  control.classList.add('busy');control.setAttribute('aria-busy','true');
+  control.dataset.requestId=control.dataset.requestId||requestId();
   try{
-    const r=await j('/api/vault/withdraw',{method:'POST',body:JSON.stringify({itemId,target:{type:'stash',tab:vaultState.withdrawTab},requestId:btn.dataset.requestId})});
-    flash(r);if(!r.err){delete btn.dataset.requestId;vaultCompareItems.delete(String(itemId));await openVault(false);return}
+    const r=await j('/api/vault/withdraw',{method:'POST',body:JSON.stringify({itemId,target:{type:'stash',tab:vaultState.withdrawTab},requestId:control.dataset.requestId})});
+    flash(r);if(!r.err){delete control.dataset.requestId;vaultCompareItems.delete(String(itemId));await openVault(false);return}
   }catch(e){flash({err:'Transfer interrupted. The item is still protected; press Return again to resume.'})}
-  btn.disabled=false;btn.textContent='RETURN TO STASH';
+  control.classList.remove('busy');control.removeAttribute('aria-busy');
 }
 async function moveVaultItem(itemId,currentId){
   const choices=(vaultMeta.collections||[]).filter(c=>c.id!==currentId);
@@ -7467,6 +8205,24 @@ async function fillStashTab(tab,button,spec){
   }catch(error){flash({err:'The fill request was interrupted; the original stash remains protected.'})}
   button.disabled=GAME_RUNNING;button.textContent=oldText;
 }
+async function openBulkRollDialog(target,label){
+  const returnView=view,returnCharacter=curChar;
+  const previous=document.getElementById('sockmodal');if(previous)previous.remove();const modal=document.createElement('div');modal.id='sockmodal';
+  modal.innerHTML=`<div id="sockbox" role="dialog" aria-modal="true" aria-labelledby="bulkrolltitle" style="width:min(680px,92vw)"><h3 id="bulkrolltitle">Verified MAX / Best Possible · ${esc(label)}</h3><div class="muted" style="margin:6px 0 10px">The editor changes only proven seed fields. Fixed items and skill/class selectors are left alone. Any malformed item blocks the complete write.</div><div id="bulkrollpreview" class="vault-bulk-preview"><strong>Checking every item…</strong><div class="vault-bulk-note">No item is being changed.</div></div><div class="vault-bulk-actions"><button class="act vault-bulk-confirm" id="bulkrollgo" disabled>APPLY VERIFIED ROLLS</button><button class="act" id="bulkrollcancel">CANCEL</button></div></div>`;
+  document.body.appendChild(modal);const host=document.getElementById('bulkrollpreview'),go=document.getElementById('bulkrollgo'),cancel=document.getElementById('bulkrollcancel');let preview=null,busy=false;
+  const close=()=>{if(!busy)modal.remove()};cancel.onclick=close;modal.onclick=e=>{if(e.target===modal)close()};modal.onkeydown=e=>{if(e.key==='Escape')close()};
+  const load=async()=>{preview=null;go.disabled=true;go.textContent='CHECKING…';host.innerHTML='<strong>Checking every item…</strong><div class="vault-bulk-note">No item is being changed.</div>';
+    let result;try{result=await j('/api/roll/bulk',{method:'POST',body:JSON.stringify({action:'preview',target})})}catch(error){host.innerHTML='<strong>Preview interrupted</strong><div class="vault-bulk-note warn">Nothing was changed. Try again.</div>';go.textContent='RETRY PREVIEW';go.disabled=false;return}
+    if(result.err){host.innerHTML=`<strong>Preview unavailable</strong><div class="vault-bulk-note warn">${esc(result.err)}</div>`;go.textContent='RETRY PREVIEW';go.disabled=false;return}
+    preview=result;const blocked=(result.blocked||[]).map(row=>`${row.name}: ${row.reason}`).slice(0,5),skipped=(result.skipped||[]).map(row=>`${row.name}: ${row.reason}`).slice(0,3);
+    host.innerHTML=`<strong>${result.changeCount} item${result.changeCount===1?'':'s'} ready · ${result.exactCount} Exact MAX · ${result.bestCount} Best Possible</strong><div class="vault-bulk-tabs"><span>${result.alreadyCount} already optimized</span><span>${result.skippedCount} safely skipped</span><span>${result.blockedCount} blocked</span></div>${blocked.length?`<div class="vault-bulk-note warn"><b>Fix before applying:</b><br>${blocked.map(esc).join('<br>')}</div>`:''}${skipped.length?`<div class="vault-bulk-note">Skipped by design:<br>${skipped.map(esc).join('<br>')}</div>`:''}<div class="vault-bulk-note">One preflight token, one backup, one file write. If the tab changes after this preview, the operation is cancelled.</div>`;
+    go.textContent=result.changeCount?`APPLY TO ${result.changeCount} ITEMS`:'NOTHING TO CHANGE';go.disabled=!result.canRun;
+  };
+  go.onclick=async()=>{if(!preview){load();return}busy=true;go.disabled=true;cancel.disabled=true;go.textContent='APPLYING…';let result;try{result=await j('/api/roll/bulk',{method:'POST',body:JSON.stringify({action:'apply',target,previewToken:preview.previewToken})})}catch(error){result={err:'Connection interrupted before confirmation. Rebuild the preview to verify the current file.'}}flash(result);
+    if(!result.err){busy=false;close();if(returnView==='stash')await openStash();else if(returnView==='char')await openChar(returnCharacter,document.querySelector('.charbtn.sel'));return}
+    busy=false;cancel.disabled=false;if(result.code==='preview_stale'){preview=null;go.textContent='BUILD NEW PREVIEW';go.disabled=false}else{go.textContent='RETRY SAFELY';go.disabled=false}
+  };cancel.focus();load();
+}
 async function openStash(){
   resetPreviewModels();
   view='stash'; curChar=null; stashData=await j('/api/stash');
@@ -7478,11 +8234,11 @@ async function openStash(){
     const health=document.getElementById('stashhealth');if(health)health.onclick=openHealth;return
   }
   const order=Object.keys(stashData).sort((a,b)=>a.localeCompare(b,undefined,{numeric:true,sensitivity:'base'}));
-  let h='<h2>Stash (shared)</h2>'+TIPBAR+STASH_DRAG_TIP;
+  let h='<h2>Stash (shared)</h2>'+tipBarHTML()+STASH_DRAG_TIP;
   for(const tab of order){
     const items=stashData[tab];
     const fill=stashFillSpec(tab);
-    h+=`<div class="stash-tab-head"><h2 data-find-tab="${attr(tab)}">${esc(tab)} <span class="muted">(${items.length})</span></h2>${fill?`<button class="stash-fill" data-fill-stash="${attr(tab)}" title="${attr(fill.detail)}" ${GAME_RUNNING?'disabled':''}>${esc(fill.button)}</button>`:''}</div>`;
+    h+=`<div class="stash-tab-head"><h2 data-find-tab="${attr(tab)}">${esc(tab)} <span class="muted">(${items.length})</span></h2><div class="stash-head-actions">${items.length?`<button class="stash-roll" data-roll-stash="${attr(tab)}" ${GAME_RUNNING?'disabled':''}>MAX / BEST THIS TAB</button>`:''}${fill?`<button class="stash-fill" data-fill-stash="${attr(tab)}" title="${attr(fill.detail)}" ${GAME_RUNNING?'disabled':''}>${esc(fill.button)}</button>`:''}</div></div>`;
     if(tab==='unique_items'){
       h+=`<div class="muted" style="margin-bottom:7px">auto-sorted tab &middot; ${items.length} records (no grid positions)</div>`;
       h+=uniqueListHTML(items,{type:'stash',tab});
@@ -7495,6 +8251,7 @@ async function openStash(){
     const tab=button.dataset.fillStash,spec=stashFillSpec(tab);
     button.onclick=()=>fillStashTab(tab,button,spec);
   });
+  md.querySelectorAll('.stash-roll').forEach(button=>button.onclick=()=>openBulkRollDialog({type:'stash',tab:button.dataset.rollStash},button.dataset.rollStash));
   bindDelete(); renderTargets();
 }
 // slot -> kabul edilen sinif idleri
@@ -7531,10 +8288,11 @@ function renderChar(){
     <button class="act" style="margin:0;padding:5px 12px" id="losave">Save current as...</button>
     <button class="act" style="margin:0;padding:5px 12px" id="loexport">Export Build</button>
     <button class="act" style="margin:0;padding:5px 12px" id="loimport">Import</button>
+    <button class="act" style="margin:0;padding:5px 12px;border-color:#b88337" id="rollEquipped" ${GAME_RUNNING?'disabled':''}>MAX / BEST EQUIPPED</button>
     <button class="act" style="margin:0;padding:5px 12px;border-color:#7a3030" id="lodelete">Delete</button>
     <input type="file" id="lofile" accept=".json" style="display:none">
   </div>`;
-  h+=TIPBAR;
+  h+=tipBarHTML();
   h+=`<div id="doll">`;
   // relic sutunu
   h+=`<div class="relcol">${[10,11,12,13,14].map(g=>dslot(g,1,1.6,SLOTS[g])).join('')}</div>`;
@@ -7559,12 +8317,16 @@ function renderChar(){
   h+=`<div class="bagtabs">${BT.map(([t,l])=>{
     const n=t==='personal_stash'?charData.personal_stash.length:((charData.bags||{})[t]||[]).length;
     return `<button class="${bagTab===t?'on':''}" onclick="bagSwap('${t}')">${l}${n?` (${n})`:''}</button>`}).join('')}</div>`;
+  const visibleBagCount=bagTab==='personal_stash'?charData.personal_stash.length:((charData.bags||{})[bagTab]||[]).length;
+  h+=`<div class="stash-tab-head"><h2>${esc(BAG_LABELS[bagTab]||bagTab)} <span class="muted">(${visibleBagCount})</span></h2>${visibleBagCount?`<button class="stash-roll" id="rollVisibleBag" ${GAME_RUNNING?'disabled':''}>MAX / BEST VISIBLE BAG</button>`:''}</div>`;
   if(bagTab==='personal_stash'){
     h+=gridHTML('personal_stash',charData.personal_stash,{type:'personal_stash',slot});
   }else{
     h+=gridHTML(bagTab,(charData.bags||{})[bagTab]||[],{type:'bag',slot,tab:bagTab});
   }
   md.innerHTML=h; bindDelete(); bindLoadouts();
+  document.getElementById('rollEquipped').onclick=()=>openBulkRollDialog({type:'equipped',slot,tab:'equipped_items'},`${charData.name||'Character'} · Equipped`);
+  const rollBag=document.getElementById('rollVisibleBag');if(rollBag)rollBag.onclick=()=>openBulkRollDialog(bagTab==='personal_stash'?{type:'personal_stash',slot,tab:'personal_stash'}:{type:'bag',slot,tab:bagTab},`${charData.name||'Character'} · ${BAG_LABELS[bagTab]||bagTab}`);
 }
 function bagSwap(t){ bagTab=t; renderChar(); }
 async function openSets(){
@@ -7948,17 +8710,17 @@ function showCtx(x,y,target,key,el){
   const isEq=target.type==='equipped';
   const acts=[];
   if(target.type==='stash'&&isVaultTransferTab(target.tab))acts.push(['Store in Infinite Vault...','VAULT','']);
-  if(!isEq)acts.push(['Duplicate','duplicate','']);
+  if(advancedMode&&!isEq)acts.push(['Duplicate','duplicate','']);
   let rollProfile=null;
   try{rollProfile=JSON.parse((el&&el.dataset&&el.dataset.roll)||'null')}catch(e){}
   let skillSelector=null;
   try{skillSelector=JSON.parse((el&&el.dataset&&el.dataset.skill)||'null')}catch(e){}
   if(skillSelector)acts.push([skillSelector.targetKind==='class'?'Choose class...':skillSelector.targetKind==='subskill'?'Choose subskill target...':'Choose skill target...','SKILL','']);
   else if(rollProfile&&['exact','best'].includes(rollProfile.mode))acts.push([`Apply ${rollProfile.rollLabel||(rollProfile.mode==='exact'?'EXACT MAX':'BEST POSSIBLE')}`,'perfect','']);
-  acts.push(['Random reroll','reroll','']);
+  if(advancedMode)acts.push(['Random reroll','reroll','']);
   const socketLimit=Number.parseInt((el&&el.dataset&&el.dataset.socketLimit)||'0',10);
   if(Number.isFinite(socketLimit)&&socketLimit>0)acts.push(['Edit sockets...','SOCKETS','']);
-  if(!isEq)acts.push(['Edit stack...','setstack','']);
+  if(advancedMode&&!isEq)acts.push(['Edit stack...','setstack','']);
   acts.push(['Delete','DELETE','danger']);
   m.innerHTML=acts.map(([lbl,act,cls])=>`<div class="${cls}" data-act="${act}">${lbl}</div>`).join('');
   m.querySelectorAll('div').forEach(d=>{

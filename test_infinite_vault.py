@@ -273,6 +273,77 @@ class InfiniteVaultTests(unittest.TestCase):
         self.assertEqual(named.raw_item_json, RAW_SWORD)
         self.assertEqual(named.raw_sha256, item.raw_sha256)
 
+    def test_v4_database_migrates_layout_columns_with_backup(self):
+        legacy_path = self.directory / "legacy-v4.sqlite3"
+        legacy = vault_module.InfiniteVault(legacy_path)
+        item = legacy.deposit("Vault", RAW_HELM, label="Legacy Helm")
+        connection = sqlite3.connect(legacy_path)
+        try:
+            connection.execute("PRAGMA foreign_keys=OFF")
+            connection.execute("DROP INDEX items_collection_layout_idx")
+            connection.execute("DROP INDEX items_collection_status_idx")
+            connection.execute("DROP INDEX items_search_idx")
+            connection.execute(
+                """CREATE TABLE items_v4 (
+                       id TEXT PRIMARY KEY,
+                       collection_id INTEGER NOT NULL REFERENCES collections(id) ON DELETE RESTRICT,
+                       raw_json TEXT NOT NULL, raw_sha256 TEXT NOT NULL,
+                       search_text TEXT NOT NULL, source_item_key TEXT, label TEXT,
+                       custom_name TEXT, source TEXT, deposit_key TEXT UNIQUE,
+                       status TEXT NOT NULL CHECK (status IN ('deposit_pending', 'available', 'reserved')),
+                       reserved_token TEXT UNIQUE, created_at TEXT NOT NULL,
+                       updated_at TEXT NOT NULL,
+                       CHECK (
+                           (status = 'deposit_pending' AND reserved_token IS NULL) OR
+                           (status = 'available' AND reserved_token IS NULL) OR
+                           (status = 'reserved' AND reserved_token IS NOT NULL)
+                       )
+                   )"""
+            )
+            connection.execute(
+                """INSERT INTO items_v4(
+                       id, collection_id, raw_json, raw_sha256, search_text,
+                       source_item_key, label, custom_name, source, deposit_key,
+                       status, reserved_token, created_at, updated_at
+                   ) SELECT id, collection_id, raw_json, raw_sha256, search_text,
+                            source_item_key, label, custom_name, source, deposit_key,
+                            status, reserved_token, created_at, updated_at FROM items"""
+            )
+            connection.execute("DROP TABLE items")
+            connection.execute("ALTER TABLE items_v4 RENAME TO items")
+            connection.execute(
+                "CREATE INDEX items_collection_status_idx ON items(collection_id, status, created_at, id)"
+            )
+            connection.execute("CREATE INDEX items_search_idx ON items(search_text)")
+            connection.execute(
+                "UPDATE schema_meta SET value='4' WHERE key='schema_version'"
+            )
+            connection.execute("PRAGMA user_version = 4")
+            connection.commit()
+        finally:
+            connection.close()
+
+        migrated = vault_module.InfiniteVault(legacy_path)
+        reopened = migrated.get_item(item.id)
+        self.assertEqual(migrated.schema_version, 5)
+        self.assertIsNone(reopened.page_index)
+        self.assertIsNone(reopened.layout_x)
+        self.assertIsNone(reopened.layout_y)
+        self.assertEqual(reopened.raw_item_json, RAW_HELM)
+        self.assertEqual(reopened.raw_sha256, item.raw_sha256)
+
+        backup = sqlite3.connect(Path(str(legacy_path) + ".bak"))
+        try:
+            self.assertEqual(backup.execute("PRAGMA user_version").fetchone()[0], 4)
+            columns = {
+                row[1] for row in backup.execute("PRAGMA table_info(items)").fetchall()
+            }
+        finally:
+            backup.close()
+        self.assertNotIn("page_index", columns)
+        self.assertNotIn("layout_x", columns)
+        self.assertNotIn("layout_y", columns)
+
     def test_special_item_without_base_identity_is_preserved_opaquely(self):
         raw = '{"pos":[0,0],"data":{"a":123,"future":{"kind":"special"}}}'
         record = self.vault.deposit("Vault", raw)
@@ -336,10 +407,174 @@ class InfiniteVaultTests(unittest.TestCase):
     def test_move_item_between_unlimited_named_collections(self):
         item = self.vault.deposit("Vault", RAW_SWORD)
         destinations = [self.vault.create_collection(f"Page {index}") for index in range(80)]
+        positioned = self.vault.set_item_layouts("Vault", [{
+            "itemId": item.id, "pageIndex": 3, "x": 4, "y": 5,
+        }])[0]
+        self.assertEqual(
+            (positioned.page_index, positioned.layout_x, positioned.layout_y),
+            (3, 4, 5),
+        )
         moved = self.vault.move_item(item.id, destinations[-1].id)
         self.assertEqual(moved.collection_name, "Page 79")
+        self.assertIsNone(moved.page_index)
+        self.assertIsNone(moved.layout_x)
+        self.assertIsNone(moved.layout_y)
         self.assertEqual(self.vault.count_items(collection="Vault"), 0)
         self.assertEqual(self.vault.count_items(collection="Page 79"), 1)
+
+    def test_persistent_layout_preserves_payload_and_audits_changes(self):
+        sword = self.vault.deposit("Vault", RAW_SWORD)
+        helm = self.vault.deposit("Vault", RAW_HELM)
+        original = {
+            row.id: (row.raw_item_json, row.raw_sha256)
+            for row in (sword, helm)
+        }
+        placed = self.vault.set_item_layouts("Vault", [
+            {"itemId": sword.id, "pageIndex": 0, "x": 2, "y": 3},
+            {"itemId": helm.id, "pageIndex": 1, "x": 0, "y": 0},
+        ])
+        self.assertEqual(
+            [(row.page_index, row.layout_x, row.layout_y) for row in placed],
+            [(0, 2, 3), (1, 0, 0)],
+        )
+        moved = self.vault.set_item_layouts("Vault", [{
+            "itemId": sword.id, "pageIndex": 0, "x": 8, "y": 9,
+        }])[0]
+        self.assertEqual((moved.page_index, moved.layout_x, moved.layout_y), (0, 8, 9))
+
+        reopened = vault_module.InfiniteVault(self.path)
+        for item_id, expected in original.items():
+            record = reopened.get_item(item_id)
+            self.assertEqual((record.raw_item_json, record.raw_sha256), expected)
+        self.assertEqual(
+            (
+                reopened.get_item(sword.id).page_index,
+                reopened.get_item(sword.id).layout_x,
+                reopened.get_item(sword.id).layout_y,
+            ),
+            (0, 8, 9),
+        )
+
+        connection = sqlite3.connect(self.path)
+        try:
+            events = connection.execute(
+                """SELECT details_json FROM events
+                   WHERE event_type='collection_layout_updated' ORDER BY id"""
+            ).fetchall()
+        finally:
+            connection.close()
+        self.assertEqual(len(events), 2)
+        first = json.loads(events[0][0])
+        second = json.loads(events[1][0])
+        self.assertEqual(first["collectionId"], sword.collection_id)
+        self.assertEqual(first["changes"][0]["previous"], None)
+        self.assertEqual(second["changes"][0]["previous"], {
+            "pageIndex": 0, "x": 2, "y": 3,
+        })
+        self.assertEqual(second["changes"][0]["current"], {
+            "pageIndex": 0, "x": 8, "y": 9,
+        })
+
+    def test_layout_validation_rejects_unsafe_or_stale_targets(self):
+        item = self.vault.deposit("Vault", RAW_SWORD)
+        other = self.vault.create_collection("Other")
+        foreign = self.vault.deposit(other.id, RAW_HELM)
+        invalid = [
+            [{"itemId": item.id, "pageIndex": -1, "x": 0, "y": 0}],
+            [{"itemId": item.id, "pageIndex": 0, "x": 17, "y": 0}],
+            [{"itemId": item.id, "pageIndex": 0, "x": 0, "y": 18}],
+            [{"itemId": item.id, "pageIndex": True, "x": 0, "y": 0}],
+            [
+                {"itemId": item.id, "pageIndex": 0, "x": 0, "y": 0},
+                {"itemId": item.id, "pageIndex": 0, "x": 1, "y": 0},
+            ],
+        ]
+        for placements in invalid:
+            with self.subTest(placements=placements):
+                with self.assertRaises(vault_module.VaultValidationError):
+                    self.vault.set_item_layouts("Vault", placements)
+        with self.assertRaises(vault_module.VaultConflictError):
+            self.vault.set_item_layouts("Vault", [{
+                "itemId": foreign.id, "pageIndex": 0, "x": 0, "y": 0,
+            }])
+        withdrawal = self.vault.reserve_withdrawal(item.id)
+        with self.assertRaises(vault_module.VaultConflictError):
+            self.vault.set_item_layouts("Vault", [{
+                "itemId": item.id, "pageIndex": 0, "x": 0, "y": 0,
+            }])
+        self.vault.cancel_withdrawal(withdrawal.token)
+        unchanged = self.vault.get_item(item.id)
+        self.assertIsNone(unchanged.page_index)
+
+    def test_move_selected_items_is_atomic_and_preserves_payloads(self):
+        target = self.vault.create_collection("Loadout")
+        first = self.vault.deposit("Vault", RAW_SWORD)
+        second = self.vault.deposit("Vault", RAW_HELM)
+        self.vault.set_item_layouts("Vault", [
+            {"itemId": first.id, "pageIndex": 0, "x": 0, "y": 0},
+            {"itemId": second.id, "pageIndex": 0, "x": 4, "y": 0},
+        ])
+        originals = {
+            first.id: (first.raw_item_json, first.raw_sha256),
+            second.id: (second.raw_item_json, second.raw_sha256),
+        }
+        moved = self.vault.move_items([first.id, second.id], target.id)
+        self.assertEqual([row.id for row in moved], [first.id, second.id])
+        for row in moved:
+            self.assertEqual(row.collection_id, target.id)
+            self.assertIsNone(row.page_index)
+            self.assertEqual((row.raw_item_json, row.raw_sha256), originals[row.id])
+
+        withdrawal = self.vault.reserve_withdrawal(first.id)
+        before = self.vault.get_item(second.id)
+        with self.assertRaises(vault_module.VaultStateError):
+            self.vault.move_items([first.id, second.id], "Vault")
+        self.assertEqual(self.vault.get_item(second.id), before)
+        self.vault.cancel_withdrawal(withdrawal.token)
+
+    def test_history_preview_and_custom_name_undo_are_state_checked(self):
+        item = self.vault.deposit("Vault", RAW_SWORD, label="Blade")
+        named = self.vault.set_item_custom_name(item.id, "Boss Loadout")
+        preview = self.vault.preview_metadata_undo()
+        self.assertEqual(preview["eventType"], "item_custom_name_updated")
+        self.assertEqual(preview["itemCount"], 1)
+        with self.assertRaises(vault_module.VaultConflictError):
+            self.vault.undo_metadata_event(preview["eventId"] + 1)
+        result = self.vault.undo_metadata_event(preview["eventId"])
+        self.assertEqual(result["eventType"], "item_custom_name_updated")
+        restored = self.vault.get_item(item.id)
+        self.assertIsNone(restored.custom_name)
+        self.assertEqual(restored.raw_item_json, named.raw_item_json)
+        self.assertEqual(restored.raw_sha256, named.raw_sha256)
+        self.assertIsNone(self.vault.preview_metadata_undo())
+        history = self.vault.list_events(limit=10)
+        self.assertEqual(history[0]["eventType"], "metadata_undo_applied")
+        self.assertEqual(history[0]["details"]["eventId"], preview["eventId"])
+
+    def test_move_and_layout_undo_restore_previous_collection_grid(self):
+        destination = self.vault.create_collection("Build")
+        item = self.vault.deposit("Vault", RAW_HELM)
+        self.vault.set_item_layouts("Vault", [{
+            "itemId": item.id, "pageIndex": 2, "x": 4, "y": 5,
+        }])
+        self.vault.move_items([item.id], destination.id)
+        move_preview = self.vault.preview_metadata_undo()
+        self.assertEqual(move_preview["eventType"], "items_moved")
+        self.vault.undo_metadata_event(move_preview["eventId"])
+        restored = self.vault.get_item(item.id)
+        self.assertEqual(restored.collection_name, "Vault")
+        self.assertEqual(
+            (restored.page_index, restored.layout_x, restored.layout_y),
+            (2, 4, 5),
+        )
+
+        layout_preview = self.vault.preview_metadata_undo()
+        self.assertEqual(layout_preview["eventType"], "collection_layout_updated")
+        self.vault.undo_metadata_event(layout_preview["eventId"])
+        cleared = self.vault.get_item(item.id)
+        self.assertIsNone(cleared.page_index)
+        self.assertIsNone(cleared.layout_x)
+        self.assertIsNone(cleared.layout_y)
 
     def test_reserve_and_cancel_restores_item(self):
         item = self.vault.deposit("Vault", RAW_SWORD)
@@ -930,6 +1165,67 @@ class InfiniteVaultTests(unittest.TestCase):
             )
         self.assertEqual(self.vault.count_items(status="available"), 1)
         self.assertEqual(self.vault.list_pending_transfer_batches(), [])
+
+    def test_selected_bulk_withdrawal_leaves_unselected_items_available(self):
+        rows = [
+            self.vault.deposit(
+                "Vault", json.dumps({"data": {"a": index, "b": index + 1}}),
+                source_item_key=f"0-0-{index}-3",
+            )
+            for index in range(3)
+        ]
+        selected = rows[:2]
+        targets = []
+        for index, row in enumerate(selected):
+            targets.append({
+                "item_id": row.id,
+                "raw_sha256": row.raw_sha256,
+                "metadata_sha256": vault_module.canonical_request_hash({
+                    "id": row.id,
+                    "collectionId": row.collection_id,
+                    "collectionName": row.collection_name,
+                    "sourceItemKey": row.source_item_key,
+                    "label": row.label,
+                    "customName": row.custom_name,
+                    "source": row.source,
+                    "depositKey": row.deposit_key,
+                    "createdAt": row.created_at,
+                    "updatedAt": row.updated_at,
+                }),
+                "target_tab": "stash_tab_1",
+                "target_key": f"0-0-{200 + index}-3",
+                "target_pos": [index, 0],
+            })
+        request_hash = vault_module.canonical_request_hash({
+            "direction": "bulk_withdrawal",
+            "items": [
+                {
+                    "itemId": row["item_id"],
+                    "rawSha256": row["raw_sha256"],
+                    "metadataSha256": row["metadata_sha256"],
+                    "targetTab": row["target_tab"],
+                    "targetKey": row["target_key"],
+                    "targetPos": row["target_pos"],
+                }
+                for row in targets
+            ],
+            "scope": "selection",
+        })
+        batch = self.vault.prepare_bulk_withdrawal(
+            targets,
+            request_id="bulk_selected_parent_012345",
+            request_hash=request_hash,
+            stash_before_sha256="9" * 64,
+            stash_after_sha256="a" * 64,
+            selection=True,
+        )
+        self.assertEqual(batch.item_count, 2)
+        self.assertEqual(self.vault.count_items(status="reserved"), 2)
+        self.assertEqual(self.vault.count_items(status="available"), 1)
+        self.assertEqual(self.vault.get_item(rows[2].id).status, "available")
+        self.vault.commit_transfer_batch(batch.request_id, "a" * 64)
+        self.assertEqual(self.vault.count_items(status="all"), 1)
+        self.assertEqual(self.vault.get_item(rows[2].id).raw_item_json, rows[2].raw_item_json)
 
     def test_bulk_hash_conflict_retains_every_pending_or_reserved_item(self):
         entry = {

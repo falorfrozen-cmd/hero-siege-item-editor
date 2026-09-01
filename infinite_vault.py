@@ -30,7 +30,7 @@ from pathlib import Path
 from typing import Any, Callable, Iterable, Mapping, TypeVar
 
 
-SCHEMA_VERSION = 4
+SCHEMA_VERSION = 5
 DEFAULT_COLLECTION_NAME = "Vault"
 MAX_COLLECTION_NAME_LENGTH = 128
 MAX_CUSTOM_NAME_LENGTH = 128
@@ -38,6 +38,8 @@ MAX_ITEM_JSON_BYTES = 4 * 1024 * 1024
 MAX_TEXT_FIELD_LENGTH = 512
 MAX_SEARCH_LENGTH = 256
 MAX_PAGE_SIZE = 500
+VAULT_GRID_COLUMNS = 17
+VAULT_GRID_ROWS = 18
 SQLITE_MAX_INTEGER = (1 << 63) - 1
 PROCESS_LOCK_TIMEOUT_SECONDS = 30.0
 
@@ -112,6 +114,9 @@ class VaultItemRecord:
     deposit_key: str | None
     status: str
     reserved_token: str | None
+    page_index: int | None
+    layout_x: int | None
+    layout_y: int | None
     created_at: str
     updated_at: str
 
@@ -134,6 +139,9 @@ class VaultItemRecord:
             "depositKey": self.deposit_key,
             "status": self.status,
             "reservedToken": self.reserved_token,
+            "pageIndex": self.page_index,
+            "layoutX": self.layout_x,
+            "layoutY": self.layout_y,
             "createdAt": self.created_at,
             "updatedAt": self.updated_at,
         }
@@ -299,12 +307,19 @@ CREATE TABLE items (
     deposit_key TEXT UNIQUE,
     status TEXT NOT NULL CHECK (status IN ('deposit_pending', 'available', 'reserved')),
     reserved_token TEXT UNIQUE,
+    page_index INTEGER CHECK (page_index IS NULL OR page_index >= 0),
+    layout_x INTEGER CHECK (layout_x IS NULL OR (layout_x >= 0 AND layout_x < 17)),
+    layout_y INTEGER CHECK (layout_y IS NULL OR (layout_y >= 0 AND layout_y < 18)),
     created_at TEXT NOT NULL,
     updated_at TEXT NOT NULL,
     CHECK (
         (status = 'deposit_pending' AND reserved_token IS NULL) OR
         (status = 'available' AND reserved_token IS NULL) OR
         (status = 'reserved' AND reserved_token IS NOT NULL)
+    ),
+    CHECK (
+        (page_index IS NULL AND layout_x IS NULL AND layout_y IS NULL) OR
+        (page_index IS NOT NULL AND layout_x IS NOT NULL AND layout_y IS NOT NULL)
     )
 );
 
@@ -370,6 +385,8 @@ CREATE TABLE events (
 CREATE INDEX items_collection_status_idx
     ON items(collection_id, status, created_at, id);
 CREATE INDEX items_search_idx ON items(search_text);
+CREATE INDEX items_collection_layout_idx
+    ON items(collection_id, page_index, layout_y, layout_x, id);
 CREATE INDEX transfers_status_idx ON transfers(status, created_at, request_id);
 CREATE INDEX transfers_item_idx ON transfers(item_id, created_at, request_id);
 CREATE INDEX transfer_batches_status_idx
@@ -377,11 +394,11 @@ CREATE INDEX transfer_batches_status_idx
 CREATE INDEX transfers_batch_idx ON transfers(batch_id, batch_ordinal);
 CREATE INDEX events_created_idx ON events(created_at, id);
 
-INSERT INTO schema_meta(key, value) VALUES ('schema_version', '4');
+INSERT INTO schema_meta(key, value) VALUES ('schema_version', '5');
 INSERT INTO collections(name, name_key, created_at, updated_at)
 VALUES ('Vault', 'vault', strftime('%Y-%m-%dT%H:%M:%fZ', 'now'),
         strftime('%Y-%m-%dT%H:%M:%fZ', 'now'));
-PRAGMA user_version = 4;
+PRAGMA user_version = 5;
 COMMIT;
 """
 
@@ -395,7 +412,7 @@ _REQUIRED_COLUMNS = {
     "items": frozenset({
         "id", "collection_id", "raw_json", "raw_sha256", "search_text",
         "source_item_key", "label", "custom_name", "source", "deposit_key", "status",
-        "reserved_token", "created_at", "updated_at",
+        "reserved_token", "page_index", "layout_x", "layout_y", "created_at", "updated_at",
     }),
     "transfer_batches": frozenset({
         "request_id", "request_hash", "direction", "status", "item_count",
@@ -417,12 +434,20 @@ _REQUIRED_COLUMNS = {
     }),
 }
 
+_REQUIRED_COLUMNS_V4 = {
+    table: (
+        columns - {"page_index", "layout_x", "layout_y"}
+        if table == "items" else columns
+    )
+    for table, columns in _REQUIRED_COLUMNS.items()
+}
+
 _REQUIRED_COLUMNS_V3 = {
     table: (
         columns - {"batch_id", "batch_ordinal"}
         if table == "transfers" else columns
     )
-    for table, columns in _REQUIRED_COLUMNS.items()
+    for table, columns in _REQUIRED_COLUMNS_V4.items()
     if table != "transfer_batches"
 }
 
@@ -914,6 +939,49 @@ class InfiniteVault:
                 f"vault schema migration from 3 to 4 failed: {exc}"
             ) from exc
 
+    @staticmethod
+    def _migrate_v4_to_v5(connection: sqlite3.Connection) -> None:
+        """Add persistent per-collection Vault page coordinates.
+
+        Existing items deliberately start unplaced. The editor resolves their
+        real dimensions and assigns non-overlapping cells on first use without
+        touching the native item JSON.
+        """
+
+        try:
+            connection.execute("BEGIN IMMEDIATE")
+            item_columns = {
+                row[1] for row in connection.execute(
+                    "PRAGMA table_info(items)"
+                ).fetchall()
+            }
+            if "page_index" not in item_columns:
+                connection.execute(
+                    "ALTER TABLE items ADD COLUMN page_index INTEGER CHECK (page_index IS NULL OR page_index >= 0)"
+                )
+            if "layout_x" not in item_columns:
+                connection.execute(
+                    "ALTER TABLE items ADD COLUMN layout_x INTEGER CHECK (layout_x IS NULL OR (layout_x >= 0 AND layout_x < 17))"
+                )
+            if "layout_y" not in item_columns:
+                connection.execute(
+                    "ALTER TABLE items ADD COLUMN layout_y INTEGER CHECK (layout_y IS NULL OR (layout_y >= 0 AND layout_y < 18))"
+                )
+            connection.execute(
+                """CREATE INDEX IF NOT EXISTS items_collection_layout_idx
+                   ON items(collection_id, page_index, layout_y, layout_x, id)"""
+            )
+            connection.execute(
+                "UPDATE schema_meta SET value='5' WHERE key='schema_version'"
+            )
+            connection.execute("PRAGMA user_version = 5")
+            connection.commit()
+        except Exception as exc:
+            connection.rollback()
+            raise VaultSchemaError(
+                f"vault schema migration from 4 to 5 failed: {exc}"
+            ) from exc
+
     def _initialize(self) -> None:
         if self.path.exists() and self.path.is_dir():
             raise VaultValidationError("vault database path points to a directory")
@@ -958,14 +1026,20 @@ class InfiniteVault:
                     f"vault schema {version} is newer than supported schema {SCHEMA_VERSION}"
                 )
             if version < SCHEMA_VERSION:
-                if version not in {2, 3}:
+                if version not in {2, 3, 4}:
                     raise VaultSchemaError(
                         f"vault schema {version} has no supported migration to {SCHEMA_VERSION}"
                     )
                 self._validate_schema_shape(
                     connection,
                     tables,
-                    _REQUIRED_COLUMNS_V2 if version == 2 else _REQUIRED_COLUMNS_V3,
+                    (
+                        _REQUIRED_COLUMNS_V2
+                        if version == 2
+                        else _REQUIRED_COLUMNS_V3
+                        if version == 3
+                        else _REQUIRED_COLUMNS_V4
+                    ),
                     version,
                 )
                 # A migration is a mutation. Preserve the complete old database
@@ -978,6 +1052,9 @@ class InfiniteVault:
                     version = 3
                 if version == 3:
                     self._migrate_v3_to_v4(connection)
+                    version = 4
+                if version == 4:
+                    self._migrate_v4_to_v5(connection)
                 integrity = connection.execute("PRAGMA quick_check").fetchone()[0]
                 if integrity != "ok":
                     raise VaultSchemaError(
@@ -1089,6 +1166,11 @@ class InfiniteVault:
             deposit_key=row["deposit_key"],
             status=str(row["status"]),
             reserved_token=row["reserved_token"],
+            page_index=(
+                int(row["page_index"]) if row["page_index"] is not None else None
+            ),
+            layout_x=(int(row["layout_x"]) if row["layout_x"] is not None else None),
+            layout_y=(int(row["layout_y"]) if row["layout_y"] is not None else None),
             created_at=str(row["created_at"]),
             updated_at=str(row["updated_at"]),
         )
@@ -1216,6 +1298,276 @@ class InfiniteVault:
                 json.dumps(dict(details or {}), separators=(",", ":"), sort_keys=True),
             ),
         )
+
+    @staticmethod
+    def _event_payload(row: sqlite3.Row) -> dict[str, Any]:
+        try:
+            details = json.loads(str(row["details_json"]))
+        except (TypeError, json.JSONDecodeError) as exc:
+            raise VaultSchemaError("stored Vault history details are malformed") from exc
+        if not isinstance(details, dict):
+            raise VaultSchemaError("stored Vault history details are not an object")
+        return {
+            "id": int(row["id"]),
+            "eventType": str(row["event_type"]),
+            "itemId": row["item_id"],
+            "collectionName": row["collection_name"],
+            "withdrawalToken": row["withdrawal_token"],
+            "createdAt": str(row["created_at"]),
+            "details": details,
+        }
+
+    def list_events(self, *, limit: int = 50) -> list[dict[str, Any]]:
+        if isinstance(limit, bool) or not isinstance(limit, int) or not 1 <= limit <= 200:
+            raise VaultValidationError("history limit must be between 1 and 200")
+        return self._read(
+            lambda connection: [
+                self._event_payload(row)
+                for row in connection.execute(
+                    """SELECT * FROM events ORDER BY id DESC LIMIT ?""", (limit,)
+                ).fetchall()
+            ]
+        )
+
+    @staticmethod
+    def _latest_reversible_event(
+        connection: sqlite3.Connection,
+    ) -> tuple[sqlite3.Row, dict[str, Any]] | None:
+        reversible = {
+            "item_custom_name_updated",
+            "item_moved",
+            "items_moved",
+            "collection_layout_updated",
+        }
+        rows = connection.execute(
+            "SELECT * FROM events ORDER BY id DESC LIMIT 2000"
+        ).fetchall()
+        undone: set[int] = set()
+        for row in rows:
+            if row["event_type"] != "metadata_undo_applied":
+                continue
+            payload = InfiniteVault._event_payload(row)
+            event_id = payload["details"].get("eventId")
+            if isinstance(event_id, int):
+                undone.add(event_id)
+        for row in rows:
+            if row["event_type"] in reversible and int(row["id"]) not in undone:
+                return row, InfiniteVault._event_payload(row)
+        return None
+
+    def preview_metadata_undo(self) -> dict[str, Any] | None:
+        def operation(connection: sqlite3.Connection):
+            candidate = self._latest_reversible_event(connection)
+            if candidate is None:
+                return None
+            _row, event = candidate
+            details = event["details"]
+            event_type = event["eventType"]
+            count = (
+                len(details.get("changes") or [])
+                if event_type in {"items_moved", "collection_layout_updated"}
+                else 1
+            )
+            labels = {
+                "item_custom_name_updated": "Restore previous custom name",
+                "item_moved": "Move item back to its previous collection",
+                "items_moved": "Move selected items back",
+                "collection_layout_updated": "Restore previous Vault grid positions",
+            }
+            return {
+                "eventId": event["id"],
+                "eventType": event_type,
+                "createdAt": event["createdAt"],
+                "itemCount": count,
+                "label": labels[event_type],
+            }
+
+        return self._read(operation)
+
+    def undo_metadata_event(self, expected_event_id: int) -> dict[str, Any]:
+        """Undo the latest reversible metadata event after strict state checks."""
+
+        if (
+            isinstance(expected_event_id, bool)
+            or not isinstance(expected_event_id, int)
+            or expected_event_id <= 0
+        ):
+            raise VaultValidationError("a valid Vault history event id is required")
+
+        def operation(connection: sqlite3.Connection) -> dict[str, Any]:
+            candidate = self._latest_reversible_event(connection)
+            if candidate is None:
+                raise VaultStateError("there is no reversible Vault metadata action")
+            row, event = candidate
+            if int(row["id"]) != expected_event_id:
+                raise VaultConflictError(
+                    "Vault history changed after the undo preview; review it again"
+                )
+            details = event["details"]
+            event_type = event["eventType"]
+            now = _utc_now()
+            affected: list[str] = []
+
+            if event_type == "item_custom_name_updated":
+                item_id = _clean_id(event["itemId"], "item id")
+                item = connection.execute(
+                    """SELECT i.*, c.name AS collection_name FROM items AS i
+                       JOIN collections AS c ON c.id=i.collection_id WHERE i.id=?""",
+                    (item_id,),
+                ).fetchone()
+                if item is None or item["status"] != "available":
+                    raise VaultConflictError("the renamed Vault item is no longer available")
+                if item["custom_name"] != details.get("customName"):
+                    raise VaultConflictError("the custom name changed after this history entry")
+                previous_name = details.get("previousCustomName")
+                decoded = validate_item_record_integrity(self._item_from_row(item))
+                search_text = _search_document(
+                    decoded,
+                    (
+                        item["source_item_key"], item["label"], item["source"],
+                        previous_name,
+                    ),
+                )
+                connection.execute(
+                    """UPDATE items SET custom_name=?, search_text=?, updated_at=?
+                       WHERE id=?""",
+                    (previous_name, search_text, now, item_id),
+                )
+                affected.append(item_id)
+
+            elif event_type == "item_moved":
+                changes = [{
+                    "itemId": event["itemId"],
+                    "previousCollectionId": details.get("previousCollectionId"),
+                    "previousLayout": details.get("previousLayout"),
+                }]
+                destination_name = event["collectionName"]
+                affected.extend(self._restore_move_changes(
+                    connection, changes, destination_name, now
+                ))
+
+            elif event_type == "items_moved":
+                changes = details.get("changes")
+                if not isinstance(changes, list) or not changes:
+                    raise VaultSchemaError("batch move history has no item changes")
+                affected.extend(self._restore_move_changes(
+                    connection, changes, event["collectionName"], now
+                ))
+
+            elif event_type == "collection_layout_updated":
+                changes = details.get("changes")
+                collection_id = details.get("collectionId")
+                if not isinstance(changes, list) or not changes:
+                    raise VaultSchemaError("layout history has no item changes")
+                if isinstance(collection_id, bool) or not isinstance(collection_id, int):
+                    raise VaultSchemaError("layout history collection is invalid")
+                for change in changes:
+                    if not isinstance(change, dict):
+                        raise VaultSchemaError("layout history change is malformed")
+                    item_id = _clean_id(change.get("itemId"), "item id")
+                    current = change.get("current")
+                    previous = change.get("previous")
+                    if not isinstance(current, dict) or (
+                        previous is not None and not isinstance(previous, dict)
+                    ):
+                        raise VaultSchemaError("layout history coordinates are malformed")
+                    item = connection.execute(
+                        "SELECT * FROM items WHERE id=?", (item_id,)
+                    ).fetchone()
+                    if item is None or item["status"] != "available" or int(item["collection_id"]) != collection_id:
+                        raise VaultConflictError("a layout item moved after this history entry")
+                    observed = {
+                        "pageIndex": item["page_index"],
+                        "x": item["layout_x"],
+                        "y": item["layout_y"],
+                    }
+                    if observed != current:
+                        raise VaultConflictError("Vault positions changed after this history entry")
+                    values = (
+                        (None, None, None)
+                        if previous is None else (
+                            previous.get("pageIndex"), previous.get("x"), previous.get("y")
+                        )
+                    )
+                    connection.execute(
+                        """UPDATE items SET page_index=?, layout_x=?, layout_y=?,
+                                  updated_at=? WHERE id=?""",
+                        (*values, now, item_id),
+                    )
+                    affected.append(item_id)
+            else:  # pragma: no cover - candidate filter is exhaustive.
+                raise VaultStateError("this Vault history event cannot be undone")
+
+            self._event(
+                connection,
+                "metadata_undo_applied",
+                details={
+                    "eventId": int(row["id"]),
+                    "eventType": event_type,
+                    "itemCount": len(affected),
+                },
+            )
+            return {
+                "eventId": int(row["id"]),
+                "eventType": event_type,
+                "itemCount": len(affected),
+            }
+
+        return self._write(operation)
+
+    @staticmethod
+    def _restore_move_changes(
+        connection: sqlite3.Connection,
+        changes: list[dict[str, Any]],
+        destination_name: str | None,
+        now: str,
+    ) -> list[str]:
+        destination = connection.execute(
+            "SELECT id FROM collections WHERE name=?", (destination_name,)
+        ).fetchone()
+        if destination is None:
+            raise VaultConflictError("the move destination collection no longer exists")
+        prepared: list[tuple[str, int, tuple[Any, Any, Any]]] = []
+        for change in changes:
+            if not isinstance(change, dict):
+                raise VaultSchemaError("move history change is malformed")
+            item_id = _clean_id(change.get("itemId"), "item id")
+            previous_collection = change.get("previousCollectionId")
+            if (
+                isinstance(previous_collection, bool)
+                or not isinstance(previous_collection, int)
+            ):
+                raise VaultSchemaError("move history collection is invalid")
+            if connection.execute(
+                "SELECT 1 FROM collections WHERE id=?", (previous_collection,)
+            ).fetchone() is None:
+                raise VaultConflictError("a previous collection no longer exists")
+            item = connection.execute(
+                "SELECT * FROM items WHERE id=?", (item_id,)
+            ).fetchone()
+            if item is None or item["status"] != "available":
+                raise VaultConflictError("a moved Vault item is no longer available")
+            if int(item["collection_id"]) != int(destination["id"]):
+                raise VaultConflictError("a moved Vault item changed collection again")
+            layout = change.get("previousLayout")
+            if layout is None:
+                values = (None, None, None)
+            elif isinstance(layout, dict):
+                values = (
+                    layout.get("pageIndex"), layout.get("x"), layout.get("y")
+                )
+                if any(isinstance(value, bool) or not isinstance(value, int) for value in values):
+                    raise VaultSchemaError("move history layout is invalid")
+            else:
+                raise VaultSchemaError("move history layout is malformed")
+            prepared.append((item_id, previous_collection, values))
+        for item_id, previous_collection, values in prepared:
+            connection.execute(
+                """UPDATE items SET collection_id=?, page_index=?, layout_x=?,
+                          layout_y=?, updated_at=? WHERE id=?""",
+                (previous_collection, *values, now, item_id),
+            )
+        return [row[0] for row in prepared]
 
     def create_collection(self, name: str) -> CollectionRecord:
         clean_name, name_key = _clean_collection_name(name)
@@ -1546,7 +1898,10 @@ class InfiniteVault:
                 f"""SELECT i.*, c.name AS collection_name
                     FROM items AS i JOIN collections AS c ON c.id = i.collection_id
                     WHERE {' AND '.join(conditions)}
-                    ORDER BY i.created_at DESC, i.id
+                    ORDER BY
+                        CASE WHEN i.page_index IS NULL THEN 1 ELSE 0 END,
+                        i.page_index, i.layout_y, i.layout_x,
+                        i.created_at DESC, i.id
                     LIMIT ? OFFSET ?""",
                 tuple(arguments),
             ).fetchall()
@@ -1554,20 +1909,33 @@ class InfiniteVault:
 
         return self._read(operation)
 
-    def list_all_available_items(self) -> list[VaultItemRecord]:
+    def list_all_available_items(
+        self, *, collection: int | str | None = None
+    ) -> list[VaultItemRecord]:
         """Return one transactionally consistent unpaged snapshot for bulk work."""
 
-        return self._read(
-            lambda connection: [
+        def operation(connection: sqlite3.Connection) -> list[VaultItemRecord]:
+            arguments: tuple[Any, ...] = ()
+            where = "i.status='available'"
+            if collection is not None:
+                target = self._resolve_collection(connection, collection)
+                where += " AND i.collection_id=?"
+                arguments = (target["id"],)
+            return [
                 self._item_from_row(row)
                 for row in connection.execute(
-                    """SELECT i.*, c.name AS collection_name
-                       FROM items AS i JOIN collections AS c ON c.id=i.collection_id
-                       WHERE i.status='available'
-                       ORDER BY i.created_at, i.id"""
+                    f"""SELECT i.*, c.name AS collection_name
+                        FROM items AS i JOIN collections AS c ON c.id=i.collection_id
+                        WHERE {where}
+                        ORDER BY
+                            CASE WHEN i.page_index IS NULL THEN 1 ELSE 0 END,
+                            i.page_index, i.layout_y, i.layout_x,
+                            i.created_at, i.id""",
+                    arguments,
                 ).fetchall()
             ]
-        )
+
+        return self._read(operation)
 
     def available_item_origin_tabs(self) -> dict[str, str]:
         """Return the machine source tab retained by each available deposit journal."""
@@ -1630,6 +1998,110 @@ class InfiniteVault:
 
         return self._read(operation)
 
+    def set_item_layouts(
+        self,
+        collection: int | str,
+        placements: Iterable[Mapping[str, Any]],
+    ) -> list[VaultItemRecord]:
+        """Persist validated grid coordinates without rewriting item payloads.
+
+        Dimension and overlap validation belongs to the editor integration,
+        which owns the game catalog. This storage boundary still validates the
+        collection, item state, coordinate range, duplicate ids, and performs
+        the complete metadata update in one backed-up SQLite transaction.
+        """
+
+        prepared: list[tuple[str, int, int, int]] = []
+        seen: set[str] = set()
+        for raw in placements:
+            if not isinstance(raw, Mapping):
+                raise VaultValidationError("Vault placements must be objects")
+            item_id = _clean_id(raw.get("itemId"), "item id")
+            if item_id in seen:
+                raise VaultValidationError("Vault placements contain a duplicate item")
+            seen.add(item_id)
+            values: list[int] = []
+            for field, upper in (
+                ("pageIndex", SQLITE_MAX_INTEGER),
+                ("x", VAULT_GRID_COLUMNS - 1),
+                ("y", VAULT_GRID_ROWS - 1),
+            ):
+                value = raw.get(field)
+                if isinstance(value, bool) or not isinstance(value, int):
+                    raise VaultValidationError(f"Vault layout {field} must be an integer")
+                if not 0 <= value <= upper:
+                    raise VaultValidationError(f"Vault layout {field} is out of range")
+                values.append(value)
+            prepared.append((item_id, values[0], values[1], values[2]))
+            if len(prepared) > MAX_PAGE_SIZE:
+                raise VaultValidationError(
+                    f"at most {MAX_PAGE_SIZE} Vault placements can be saved at once"
+                )
+        if not prepared:
+            return []
+
+        def operation(connection: sqlite3.Connection) -> list[VaultItemRecord]:
+            target = self._resolve_collection(connection, collection)
+            rows = connection.execute(
+                """SELECT * FROM items
+                   WHERE collection_id=? AND status='available'""",
+                (target["id"],),
+            ).fetchall()
+            by_id = {str(row["id"]): row for row in rows}
+            missing = [item_id for item_id, *_ in prepared if item_id not in by_id]
+            if missing:
+                raise VaultConflictError(
+                    "a Vault item moved, disappeared, or became reserved before layout save"
+                )
+            now = _utc_now()
+            changes: list[dict[str, Any]] = []
+            for item_id, page_index, x, y in prepared:
+                row = by_id[item_id]
+                previous = (
+                    int(row["page_index"]),
+                    int(row["layout_x"]),
+                    int(row["layout_y"]),
+                ) if (
+                    row["page_index"] is not None
+                    and row["layout_x"] is not None
+                    and row["layout_y"] is not None
+                ) else None
+                current = (page_index, x, y)
+                if previous == current:
+                    continue
+                connection.execute(
+                    """UPDATE items SET page_index=?, layout_x=?, layout_y=?,
+                              updated_at=? WHERE id=?""",
+                    (page_index, x, y, now, item_id),
+                )
+                changes.append({
+                    "itemId": item_id,
+                    "previous": (
+                        {"pageIndex": previous[0], "x": previous[1], "y": previous[2]}
+                        if previous is not None else None
+                    ),
+                    "current": {"pageIndex": page_index, "x": x, "y": y},
+                })
+            if changes:
+                self._event(
+                    connection,
+                    "collection_layout_updated",
+                    collection_name=target["name"],
+                    details={"collectionId": int(target["id"]), "changes": changes},
+                )
+            result: list[VaultItemRecord] = []
+            for item_id, *_ in prepared:
+                row = connection.execute(
+                    """SELECT i.*, c.name AS collection_name
+                       FROM items AS i JOIN collections AS c ON c.id=i.collection_id
+                       WHERE i.id=?""",
+                    (item_id,),
+                ).fetchone()
+                result.append(self._item_from_row(row))
+            return result
+
+        return self._write(operation)
+
     def move_item(self, item_id: str, destination: int | str) -> VaultItemRecord:
         clean_item_id = _clean_id(item_id, "item id")
 
@@ -1642,12 +2114,22 @@ class InfiniteVault:
             if item["status"] != "available":
                 raise VaultStateError("a reserved item cannot be moved")
             target = self._resolve_collection(connection, destination)
+            if int(item["collection_id"]) == int(target["id"]):
+                row = connection.execute(
+                    """SELECT i.*, c.name AS collection_name
+                       FROM items AS i JOIN collections AS c ON c.id=i.collection_id
+                       WHERE i.id=?""",
+                    (clean_item_id,),
+                ).fetchone()
+                return self._item_from_row(row)
             previous = connection.execute(
                 "SELECT name FROM collections WHERE id = ?", (item["collection_id"],)
             ).fetchone()[0]
             now = _utc_now()
             connection.execute(
-                "UPDATE items SET collection_id = ?, updated_at = ? WHERE id = ?",
+                """UPDATE items SET collection_id = ?, page_index = NULL,
+                          layout_x = NULL, layout_y = NULL, updated_at = ?
+                   WHERE id = ?""",
                 (target["id"], now, clean_item_id),
             )
             self._event(
@@ -1655,7 +2137,21 @@ class InfiniteVault:
                 "item_moved",
                 item_id=clean_item_id,
                 collection_name=target["name"],
-                details={"previousCollection": previous},
+                details={
+                    "previousCollection": previous,
+                    "previousCollectionId": int(item["collection_id"]),
+                    "previousLayout": (
+                        {
+                            "pageIndex": int(item["page_index"]),
+                            "x": int(item["layout_x"]),
+                            "y": int(item["layout_y"]),
+                        }
+                        if item["page_index"] is not None
+                        and item["layout_x"] is not None
+                        and item["layout_y"] is not None
+                        else None
+                    ),
+                },
             )
             row = connection.execute(
                 """SELECT i.*, c.name AS collection_name
@@ -1664,6 +2160,94 @@ class InfiniteVault:
                 (clean_item_id,),
             ).fetchone()
             return self._item_from_row(row)
+
+        return self._write(operation)
+
+    def move_items(
+        self, item_ids: Iterable[str], destination: int | str
+    ) -> list[VaultItemRecord]:
+        """Move a selected set atomically and clear its old page positions."""
+
+        cleaned: list[str] = []
+        seen: set[str] = set()
+        for value in item_ids:
+            item_id = _clean_id(value, "item id")
+            if item_id in seen:
+                raise VaultValidationError("selected Vault items contain a duplicate")
+            seen.add(item_id)
+            cleaned.append(item_id)
+            if len(cleaned) > MAX_PAGE_SIZE:
+                raise VaultValidationError(
+                    f"at most {MAX_PAGE_SIZE} Vault items can be moved at once"
+                )
+        if not cleaned:
+            raise VaultValidationError("select at least one Vault item")
+
+        def operation(connection: sqlite3.Connection) -> list[VaultItemRecord]:
+            target = self._resolve_collection(connection, destination)
+            rows = connection.execute(
+                """SELECT i.*, c.name AS collection_name
+                   FROM items AS i JOIN collections AS c ON c.id=i.collection_id
+                   WHERE i.id IN ({})""".format(",".join("?" for _ in cleaned)),
+                tuple(cleaned),
+            ).fetchall()
+            by_id = {str(row["id"]): row for row in rows}
+            if set(by_id) != set(cleaned):
+                raise VaultConflictError(
+                    "a selected Vault item moved or disappeared before the batch"
+                )
+            if any(row["status"] != "available" for row in rows):
+                raise VaultStateError("a reserved Vault item cannot be moved")
+            now = _utc_now()
+            changes: list[dict[str, Any]] = []
+            for item_id in cleaned:
+                row = by_id[item_id]
+                if int(row["collection_id"]) == int(target["id"]):
+                    continue
+                previous_layout = (
+                    {
+                        "pageIndex": int(row["page_index"]),
+                        "x": int(row["layout_x"]),
+                        "y": int(row["layout_y"]),
+                    }
+                    if row["page_index"] is not None
+                    and row["layout_x"] is not None
+                    and row["layout_y"] is not None
+                    else None
+                )
+                connection.execute(
+                    """UPDATE items SET collection_id=?, page_index=NULL,
+                              layout_x=NULL, layout_y=NULL, updated_at=?
+                       WHERE id=?""",
+                    (target["id"], now, item_id),
+                )
+                changes.append({
+                    "itemId": item_id,
+                    "previousCollectionId": int(row["collection_id"]),
+                    "previousCollection": str(row["collection_name"]),
+                    "previousLayout": previous_layout,
+                })
+            if changes:
+                self._event(
+                    connection,
+                    "items_moved",
+                    collection_name=target["name"],
+                    details={
+                        "destinationCollectionId": int(target["id"]),
+                        "itemCount": len(changes),
+                        "changes": changes,
+                    },
+                )
+            result = []
+            for item_id in cleaned:
+                row = connection.execute(
+                    """SELECT i.*, c.name AS collection_name
+                       FROM items AS i JOIN collections AS c ON c.id=i.collection_id
+                       WHERE i.id=?""",
+                    (item_id,),
+                ).fetchone()
+                result.append(self._item_from_row(row))
+            return result
 
         return self._write(operation)
 
@@ -1890,8 +2474,9 @@ class InfiniteVault:
         stash_before_sha256: str,
         stash_after_sha256: str,
         destination_tab: str | None = None,
+        selection: bool = False,
     ) -> TransferBatchRecord:
-        """Reserve the complete available Vault snapshot as one atomic batch."""
+        """Reserve a previewed complete snapshot or selected subset atomically."""
 
         clean_request_id = _clean_required_request_id(request_id)
         clean_request_hash = _clean_sha256(request_hash, "request hash")
@@ -1902,6 +2487,8 @@ class InfiniteVault:
         )
         if before_hash == after_hash:
             raise VaultValidationError("batch before and after stash hashes must differ")
+        if not isinstance(selection, bool):
+            raise VaultValidationError("bulk withdrawal selection flag must be boolean")
         prepared: list[dict[str, Any]] = []
         item_ids: set[str] = set()
         destinations: set[tuple[str, str]] = set()
@@ -1959,6 +2546,8 @@ class InfiniteVault:
             }
             if clean_destination_tab is not None:
                 expected_intent["destinationTab"] = clean_destination_tab
+            if selection:
+                expected_intent["scope"] = "selection"
             expected_hash = canonical_request_hash(expected_intent)
             if prior is not None:
                 if (
@@ -1979,7 +2568,12 @@ class InfiniteVault:
                    FROM items AS i JOIN collections AS c ON c.id=i.collection_id
                    WHERE i.status='available' ORDER BY i.id"""
             ).fetchall()
-            if {str(row["id"]) for row in available_rows} != item_ids:
+            available_ids = {str(row["id"]) for row in available_rows}
+            snapshot_matches = (
+                item_ids.issubset(available_ids)
+                if selection else available_ids == item_ids
+            )
+            if not snapshot_matches:
                 raise VaultConflictError(
                     "the available Vault changed after the bulk transfer was previewed"
                 )
@@ -3040,6 +3634,8 @@ __all__ = [
     "SCHEMA_VERSION",
     "DEFAULT_COLLECTION_NAME",
     "MAX_CUSTOM_NAME_LENGTH",
+    "VAULT_GRID_COLUMNS",
+    "VAULT_GRID_ROWS",
     "CollectionRecord",
     "VaultItemRecord",
     "WithdrawalRecord",
