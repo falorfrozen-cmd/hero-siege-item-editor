@@ -30,9 +30,10 @@ from pathlib import Path
 from typing import Any, Callable, Iterable, Mapping, TypeVar
 
 
-SCHEMA_VERSION = 5
+SCHEMA_VERSION = 6
 DEFAULT_COLLECTION_NAME = "Vault"
 MAX_COLLECTION_NAME_LENGTH = 128
+MAX_STASH_NAME_LENGTH = 128
 MAX_CUSTOM_NAME_LENGTH = 128
 MAX_ITEM_JSON_BYTES = 4 * 1024 * 1024
 MAX_TEXT_FIELD_LENGTH = 512
@@ -83,6 +84,7 @@ class CollectionRecord:
     reserved_count: int
     created_at: str
     updated_at: str
+    stash_count: int = 0
 
     @property
     def item_count(self) -> int:
@@ -95,6 +97,29 @@ class CollectionRecord:
             "itemCount": self.item_count,
             "availableCount": self.available_count,
             "reservedCount": self.reserved_count,
+            "createdAt": self.created_at,
+            "updatedAt": self.updated_at,
+            "stashCount": self.stash_count,
+        }
+
+
+@dataclass(frozen=True)
+class StashPageRecord:
+    id: int
+    collection_id: int
+    page_index: int
+    name: str
+    item_count: int
+    created_at: str
+    updated_at: str
+
+    def as_dict(self) -> dict[str, Any]:
+        return {
+            "id": self.id,
+            "collectionId": self.collection_id,
+            "pageIndex": self.page_index,
+            "name": self.name,
+            "itemCount": self.item_count,
             "createdAt": self.created_at,
             "updatedAt": self.updated_at,
         }
@@ -294,6 +319,18 @@ CREATE TABLE collections (
     updated_at TEXT NOT NULL
 );
 
+CREATE TABLE stash_pages (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    collection_id INTEGER NOT NULL REFERENCES collections(id) ON DELETE CASCADE,
+    page_index INTEGER NOT NULL CHECK (page_index >= 0),
+    name TEXT NOT NULL,
+    name_key TEXT NOT NULL,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    UNIQUE(collection_id, page_index),
+    UNIQUE(collection_id, name_key)
+);
+
 CREATE TABLE items (
     id TEXT PRIMARY KEY,
     collection_id INTEGER NOT NULL REFERENCES collections(id) ON DELETE RESTRICT,
@@ -387,6 +424,8 @@ CREATE INDEX items_collection_status_idx
 CREATE INDEX items_search_idx ON items(search_text);
 CREATE INDEX items_collection_layout_idx
     ON items(collection_id, page_index, layout_y, layout_x, id);
+CREATE INDEX stash_pages_collection_idx
+    ON stash_pages(collection_id, page_index);
 CREATE INDEX transfers_status_idx ON transfers(status, created_at, request_id);
 CREATE INDEX transfers_item_idx ON transfers(item_id, created_at, request_id);
 CREATE INDEX transfer_batches_status_idx
@@ -394,21 +433,30 @@ CREATE INDEX transfer_batches_status_idx
 CREATE INDEX transfers_batch_idx ON transfers(batch_id, batch_ordinal);
 CREATE INDEX events_created_idx ON events(created_at, id);
 
-INSERT INTO schema_meta(key, value) VALUES ('schema_version', '5');
+INSERT INTO schema_meta(key, value) VALUES ('schema_version', '6');
 INSERT INTO collections(name, name_key, created_at, updated_at)
 VALUES ('Vault', 'vault', strftime('%Y-%m-%dT%H:%M:%fZ', 'now'),
         strftime('%Y-%m-%dT%H:%M:%fZ', 'now'));
-PRAGMA user_version = 5;
+INSERT INTO stash_pages(collection_id, page_index, name, name_key, created_at, updated_at)
+SELECT id, 0, 'Stash 1', 'stash 1',
+       strftime('%Y-%m-%dT%H:%M:%fZ', 'now'),
+       strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
+FROM collections WHERE name_key='vault';
+PRAGMA user_version = 6;
 COMMIT;
 """
 
 _REQUIRED_TABLES = frozenset({
-    "schema_meta", "collections", "items", "transfer_batches", "transfers", "events"
+    "schema_meta", "collections", "stash_pages", "items", "transfer_batches", "transfers", "events"
 })
 
 _REQUIRED_COLUMNS = {
     "schema_meta": frozenset({"key", "value"}),
     "collections": frozenset({"id", "name", "name_key", "created_at", "updated_at"}),
+    "stash_pages": frozenset({
+        "id", "collection_id", "page_index", "name", "name_key",
+        "created_at", "updated_at",
+    }),
     "items": frozenset({
         "id", "collection_id", "raw_json", "raw_sha256", "search_text",
         "source_item_key", "label", "custom_name", "source", "deposit_key", "status",
@@ -434,12 +482,18 @@ _REQUIRED_COLUMNS = {
     }),
 }
 
+_REQUIRED_COLUMNS_V5 = {
+    table: columns
+    for table, columns in _REQUIRED_COLUMNS.items()
+    if table != "stash_pages"
+}
+
 _REQUIRED_COLUMNS_V4 = {
     table: (
         columns - {"page_index", "layout_x", "layout_y"}
         if table == "items" else columns
     )
-    for table, columns in _REQUIRED_COLUMNS.items()
+    for table, columns in _REQUIRED_COLUMNS_V5.items()
 }
 
 _REQUIRED_COLUMNS_V3 = {
@@ -535,6 +589,21 @@ def _clean_collection_name(value: Any) -> tuple[str, str]:
         )
     if any(unicodedata.category(char).startswith("C") for char in name):
         raise VaultValidationError("collection name cannot contain control characters")
+    return name, name.casefold()
+
+
+def _clean_stash_name(value: Any) -> tuple[str, str]:
+    if not isinstance(value, str):
+        raise VaultValidationError("stash name must be text")
+    name = unicodedata.normalize("NFC", value.strip())
+    if not name:
+        raise VaultValidationError("stash name cannot be empty")
+    if len(name) > MAX_STASH_NAME_LENGTH:
+        raise VaultValidationError(
+            f"stash name cannot exceed {MAX_STASH_NAME_LENGTH} characters"
+        )
+    if any(unicodedata.category(char).startswith("C") for char in name):
+        raise VaultValidationError("stash name cannot contain control characters")
     return name, name.casefold()
 
 
@@ -982,6 +1051,64 @@ class InfiniteVault:
                 f"vault schema migration from 4 to 5 failed: {exc}"
             ) from exc
 
+    @staticmethod
+    def _migrate_v5_to_v6(connection: sqlite3.Connection) -> None:
+        """Turn implicit grid indexes into named stash records.
+
+        Every existing collection receives at least one stash. Existing page
+        indexes keep their identity and native item JSON is never rewritten.
+        """
+
+        try:
+            connection.execute("BEGIN IMMEDIATE")
+            connection.execute(
+                """CREATE TABLE IF NOT EXISTS stash_pages (
+                       id INTEGER PRIMARY KEY AUTOINCREMENT,
+                       collection_id INTEGER NOT NULL REFERENCES collections(id) ON DELETE CASCADE,
+                       page_index INTEGER NOT NULL CHECK (page_index >= 0),
+                       name TEXT NOT NULL,
+                       name_key TEXT NOT NULL,
+                       created_at TEXT NOT NULL,
+                       updated_at TEXT NOT NULL,
+                       UNIQUE(collection_id, page_index),
+                       UNIQUE(collection_id, name_key)
+                   )"""
+            )
+            now = _utc_now()
+            collections = connection.execute(
+                "SELECT id FROM collections ORDER BY id"
+            ).fetchall()
+            for collection in collections:
+                collection_id = int(collection["id"])
+                maximum = connection.execute(
+                    "SELECT MAX(page_index) FROM items WHERE collection_id=?",
+                    (collection_id,),
+                ).fetchone()[0]
+                page_count = max(1, int(maximum) + 1 if maximum is not None else 1)
+                for page_index in range(page_count):
+                    name = f"Stash {page_index + 1}"
+                    connection.execute(
+                        """INSERT OR IGNORE INTO stash_pages(
+                               collection_id, page_index, name, name_key,
+                               created_at, updated_at
+                           ) VALUES (?, ?, ?, ?, ?, ?)""",
+                        (collection_id, page_index, name, name.casefold(), now, now),
+                    )
+            connection.execute(
+                """CREATE INDEX IF NOT EXISTS stash_pages_collection_idx
+                   ON stash_pages(collection_id, page_index)"""
+            )
+            connection.execute(
+                "UPDATE schema_meta SET value='6' WHERE key='schema_version'"
+            )
+            connection.execute("PRAGMA user_version = 6")
+            connection.commit()
+        except Exception as exc:
+            connection.rollback()
+            raise VaultSchemaError(
+                f"vault schema migration from 5 to 6 failed: {exc}"
+            ) from exc
+
     def _initialize(self) -> None:
         if self.path.exists() and self.path.is_dir():
             raise VaultValidationError("vault database path points to a directory")
@@ -1026,7 +1153,7 @@ class InfiniteVault:
                     f"vault schema {version} is newer than supported schema {SCHEMA_VERSION}"
                 )
             if version < SCHEMA_VERSION:
-                if version not in {2, 3, 4}:
+                if version not in {2, 3, 4, 5}:
                     raise VaultSchemaError(
                         f"vault schema {version} has no supported migration to {SCHEMA_VERSION}"
                     )
@@ -1039,6 +1166,8 @@ class InfiniteVault:
                         else _REQUIRED_COLUMNS_V3
                         if version == 3
                         else _REQUIRED_COLUMNS_V4
+                        if version == 4
+                        else _REQUIRED_COLUMNS_V5
                     ),
                     version,
                 )
@@ -1055,6 +1184,9 @@ class InfiniteVault:
                     version = 4
                 if version == 4:
                     self._migrate_v4_to_v5(connection)
+                    version = 5
+                if version == 5:
+                    self._migrate_v5_to_v6(connection)
                 integrity = connection.execute("PRAGMA quick_check").fetchone()[0]
                 if integrity != "ok":
                     raise VaultSchemaError(
@@ -1142,11 +1274,25 @@ class InfiniteVault:
 
     @staticmethod
     def _collection_from_row(row: sqlite3.Row) -> CollectionRecord:
+        keys = set(row.keys())
         return CollectionRecord(
             id=int(row["id"]),
             name=str(row["name"]),
             available_count=int(row["available_count"]),
             reserved_count=int(row["reserved_count"]),
+            created_at=str(row["created_at"]),
+            updated_at=str(row["updated_at"]),
+            stash_count=(int(row["stash_count"]) if "stash_count" in keys else 0),
+        )
+
+    @staticmethod
+    def _stash_page_from_row(row: sqlite3.Row) -> StashPageRecord:
+        return StashPageRecord(
+            id=int(row["id"]),
+            collection_id=int(row["collection_id"]),
+            page_index=int(row["page_index"]),
+            name=str(row["name"]),
+            item_count=int(row["item_count"]),
             created_at=str(row["created_at"]),
             updated_at=str(row["updated_at"]),
         )
@@ -1581,12 +1727,19 @@ class InfiniteVault:
                 )
             except sqlite3.IntegrityError as exc:
                 raise VaultConflictError("a collection with that name already exists") from exc
+            collection_id = int(cursor.lastrowid)
+            connection.execute(
+                """INSERT INTO stash_pages(
+                       collection_id, page_index, name, name_key, created_at, updated_at
+                   ) VALUES (?, 0, 'Stash 1', 'stash 1', ?, ?)""",
+                (collection_id, now, now),
+            )
             self._event(connection, "collection_created", collection_name=clean_name)
             row = connection.execute(
                 """SELECT id, name, 0 AS available_count, 0 AS reserved_count,
-                          created_at, updated_at
+                          1 AS stash_count, created_at, updated_at
                    FROM collections WHERE id = ?""",
-                (cursor.lastrowid,),
+                (collection_id,),
             ).fetchone()
             return self._collection_from_row(row)
 
@@ -1599,7 +1752,9 @@ class InfiniteVault:
                           COALESCE(SUM(CASE WHEN i.status = 'available' THEN 1 ELSE 0 END), 0)
                               AS available_count,
                           COALESCE(SUM(CASE WHEN i.status = 'reserved' THEN 1 ELSE 0 END), 0)
-                              AS reserved_count
+                              AS reserved_count,
+                          (SELECT COUNT(*) FROM stash_pages AS sp
+                           WHERE sp.collection_id=c.id) AS stash_count
                    FROM collections AS c
                    LEFT JOIN items AS i ON i.collection_id = c.id
                    GROUP BY c.id
@@ -1608,6 +1763,200 @@ class InfiniteVault:
             return [self._collection_from_row(row) for row in rows]
 
         return self._read(operation)
+
+    def list_stash_pages(self, collection: int | str) -> list[StashPageRecord]:
+        def operation(connection: sqlite3.Connection) -> list[StashPageRecord]:
+            target = self._resolve_collection(connection, collection)
+            rows = connection.execute(
+                """SELECT sp.*,
+                          COALESCE(SUM(CASE WHEN i.status='available' THEN 1 ELSE 0 END), 0)
+                              AS item_count
+                   FROM stash_pages AS sp
+                   LEFT JOIN items AS i
+                     ON i.collection_id=sp.collection_id
+                    AND i.page_index=sp.page_index
+                   WHERE sp.collection_id=?
+                   GROUP BY sp.id
+                   ORDER BY sp.page_index""",
+                (target["id"],),
+            ).fetchall()
+            return [self._stash_page_from_row(row) for row in rows]
+
+        return self._read(operation)
+
+    @staticmethod
+    def _next_stash_name(
+        connection: sqlite3.Connection, collection_id: int, page_index: int
+    ) -> tuple[str, str]:
+        base = f"Stash {page_index + 1}"
+        existing = {
+            str(row[0])
+            for row in connection.execute(
+                "SELECT name_key FROM stash_pages WHERE collection_id=?",
+                (collection_id,),
+            ).fetchall()
+        }
+        candidate = base
+        suffix = 2
+        while candidate.casefold() in existing:
+            candidate = f"{base} ({suffix})"
+            suffix += 1
+        return candidate, candidate.casefold()
+
+    def add_stash_page(self, collection: int | str) -> StashPageRecord:
+        """Append exactly one named stash to a category."""
+
+        def operation(connection: sqlite3.Connection) -> StashPageRecord:
+            target = self._resolve_collection(connection, collection)
+            maximum = connection.execute(
+                "SELECT MAX(page_index) FROM stash_pages WHERE collection_id=?",
+                (target["id"],),
+            ).fetchone()[0]
+            page_index = int(maximum) + 1 if maximum is not None else 0
+            name, name_key = self._next_stash_name(
+                connection, int(target["id"]), page_index
+            )
+            now = _utc_now()
+            cursor = connection.execute(
+                """INSERT INTO stash_pages(
+                       collection_id, page_index, name, name_key, created_at, updated_at
+                   ) VALUES (?, ?, ?, ?, ?, ?)""",
+                (target["id"], page_index, name, name_key, now, now),
+            )
+            connection.execute(
+                "UPDATE collections SET updated_at=? WHERE id=?",
+                (now, target["id"]),
+            )
+            self._event(
+                connection, "stash_page_created", collection_name=target["name"],
+                details={"pageIndex": page_index, "name": name},
+            )
+            row = connection.execute(
+                """SELECT sp.*, 0 AS item_count FROM stash_pages AS sp
+                   WHERE sp.id=?""",
+                (cursor.lastrowid,),
+            ).fetchone()
+            return self._stash_page_from_row(row)
+
+        return self._write(operation)
+
+    def ensure_stash_page_count(
+        self, collection: int | str, page_count: int
+    ) -> list[StashPageRecord]:
+        """Create missing legacy pages up to ``page_count`` in one transaction."""
+
+        if isinstance(page_count, bool) or not isinstance(page_count, int) or page_count < 1:
+            raise VaultValidationError("stash page count must be a positive integer")
+        if page_count > MAX_PAGE_SIZE:
+            raise VaultValidationError(
+                f"a category cannot initialize more than {MAX_PAGE_SIZE} stashes at once"
+            )
+
+        def operation(connection: sqlite3.Connection) -> list[StashPageRecord]:
+            target = self._resolve_collection(connection, collection)
+            existing = {
+                int(row[0])
+                for row in connection.execute(
+                    "SELECT page_index FROM stash_pages WHERE collection_id=?",
+                    (target["id"],),
+                ).fetchall()
+            }
+            now = _utc_now()
+            created: list[int] = []
+            for page_index in range(page_count):
+                if page_index in existing:
+                    continue
+                name, name_key = self._next_stash_name(
+                    connection, int(target["id"]), page_index
+                )
+                connection.execute(
+                    """INSERT INTO stash_pages(
+                           collection_id, page_index, name, name_key,
+                           created_at, updated_at
+                       ) VALUES (?, ?, ?, ?, ?, ?)""",
+                    (target["id"], page_index, name, name_key, now, now),
+                )
+                created.append(page_index)
+            if created:
+                connection.execute(
+                    "UPDATE collections SET updated_at=? WHERE id=?",
+                    (now, target["id"]),
+                )
+                self._event(
+                    connection, "stash_pages_initialized",
+                    collection_name=target["name"],
+                    details={"pageIndexes": created},
+                )
+            rows = connection.execute(
+                """SELECT sp.*,
+                          COALESCE(SUM(CASE WHEN i.status='available' THEN 1 ELSE 0 END), 0)
+                              AS item_count
+                   FROM stash_pages AS sp
+                   LEFT JOIN items AS i
+                     ON i.collection_id=sp.collection_id
+                    AND i.page_index=sp.page_index
+                   WHERE sp.collection_id=?
+                   GROUP BY sp.id ORDER BY sp.page_index""",
+                (target["id"],),
+            ).fetchall()
+            return [self._stash_page_from_row(row) for row in rows]
+
+        return self._write(operation)
+
+    def rename_stash_page(
+        self, collection: int | str, page_index: int, new_name: str
+    ) -> StashPageRecord:
+        if isinstance(page_index, bool) or not isinstance(page_index, int) or page_index < 0:
+            raise VaultValidationError("stash page index must be a non-negative integer")
+        clean_name, name_key = _clean_stash_name(new_name)
+
+        def operation(connection: sqlite3.Connection) -> StashPageRecord:
+            target = self._resolve_collection(connection, collection)
+            current = connection.execute(
+                """SELECT * FROM stash_pages
+                   WHERE collection_id=? AND page_index=?""",
+                (target["id"], page_index),
+            ).fetchone()
+            if current is None:
+                raise VaultNotFoundError("stash was not found")
+            if current["name"] == clean_name:
+                item_count = connection.execute(
+                    """SELECT COUNT(*) FROM items
+                       WHERE collection_id=? AND page_index=? AND status='available'""",
+                    (target["id"], page_index),
+                ).fetchone()[0]
+                return self._stash_page_from_row(dict(current) | {"item_count": item_count})
+            now = _utc_now()
+            try:
+                connection.execute(
+                    """UPDATE stash_pages SET name=?, name_key=?, updated_at=?
+                       WHERE id=?""",
+                    (clean_name, name_key, now, current["id"]),
+                )
+            except sqlite3.IntegrityError as exc:
+                raise VaultConflictError(
+                    "a stash with that name already exists in this category"
+                ) from exc
+            self._event(
+                connection, "stash_page_renamed", collection_name=target["name"],
+                details={
+                    "pageIndex": page_index,
+                    "previousName": current["name"],
+                    "name": clean_name,
+                },
+            )
+            row = connection.execute(
+                """SELECT sp.*,
+                          (SELECT COUNT(*) FROM items AS i
+                           WHERE i.collection_id=sp.collection_id
+                             AND i.page_index=sp.page_index
+                             AND i.status='available') AS item_count
+                   FROM stash_pages AS sp WHERE sp.id=?""",
+                (current["id"],),
+            ).fetchone()
+            return self._stash_page_from_row(row)
+
+        return self._write(operation)
 
     def rename_collection(self, collection: int | str, new_name: str) -> CollectionRecord:
         clean_name, name_key = _clean_collection_name(new_name)
@@ -1633,7 +1982,9 @@ class InfiniteVault:
                           COALESCE(SUM(CASE WHEN i.status = 'available' THEN 1 ELSE 0 END), 0)
                               AS available_count,
                           COALESCE(SUM(CASE WHEN i.status = 'reserved' THEN 1 ELSE 0 END), 0)
-                              AS reserved_count
+                              AS reserved_count,
+                          (SELECT COUNT(*) FROM stash_pages AS sp
+                           WHERE sp.collection_id=c.id) AS stash_count
                    FROM collections AS c
                    LEFT JOIN items AS i ON i.collection_id = c.id
                    WHERE c.id = ? GROUP BY c.id""",
@@ -2042,6 +2393,17 @@ class InfiniteVault:
 
         def operation(connection: sqlite3.Connection) -> list[VaultItemRecord]:
             target = self._resolve_collection(connection, collection)
+            valid_pages = {
+                int(row[0])
+                for row in connection.execute(
+                    "SELECT page_index FROM stash_pages WHERE collection_id=?",
+                    (target["id"],),
+                ).fetchall()
+            }
+            if any(page_index not in valid_pages for _, page_index, _, _ in prepared):
+                raise VaultConflictError(
+                    "the target stash no longer exists in this category"
+                )
             rows = connection.execute(
                 """SELECT * FROM items
                    WHERE collection_id=? AND status='available'""",
@@ -2088,6 +2450,109 @@ class InfiniteVault:
                     "collection_layout_updated",
                     collection_name=target["name"],
                     details={"collectionId": int(target["id"]), "changes": changes},
+                )
+            result: list[VaultItemRecord] = []
+            for item_id, *_ in prepared:
+                row = connection.execute(
+                    """SELECT i.*, c.name AS collection_name
+                       FROM items AS i JOIN collections AS c ON c.id=i.collection_id
+                       WHERE i.id=?""",
+                    (item_id,),
+                ).fetchone()
+                result.append(self._item_from_row(row))
+            return result
+
+        return self._write(operation)
+
+    def update_stash_item_payloads(
+        self,
+        collection: int | str,
+        page_index: int,
+        updates: Iterable[Mapping[str, Any]],
+    ) -> list[VaultItemRecord]:
+        """Atomically replace verified item payloads in one named stash.
+
+        This is intentionally separate from layout metadata: callers must
+        provide each currently observed SHA-256, and every item is validated
+        again inside the backed-up transaction before any payload changes.
+        """
+
+        if isinstance(page_index, bool) or not isinstance(page_index, int) or page_index < 0:
+            raise VaultValidationError("stash page index must be a non-negative integer")
+        prepared: list[tuple[str, str, str, str, dict[str, Any]]] = []
+        seen: set[str] = set()
+        for raw in updates:
+            if not isinstance(raw, Mapping):
+                raise VaultValidationError("Vault item updates must be objects")
+            item_id = _clean_id(raw.get("itemId"), "item id")
+            if item_id in seen:
+                raise VaultValidationError("Vault item updates contain a duplicate item")
+            seen.add(item_id)
+            expected = raw.get("expectedSha256")
+            if not isinstance(expected, str) or _SHA256_RE.fullmatch(expected) is None:
+                raise VaultValidationError("expected item SHA-256 is invalid")
+            raw_json = raw.get("rawItemJson")
+            decoded = validate_raw_item_json(raw_json)
+            digest = hashlib.sha256(raw_json.encode("utf-8")).hexdigest()
+            prepared.append((item_id, expected.lower(), raw_json, digest, decoded))
+            if len(prepared) > MAX_PAGE_SIZE:
+                raise VaultValidationError(
+                    f"at most {MAX_PAGE_SIZE} Vault items can be updated at once"
+                )
+        if not prepared:
+            return []
+
+        def operation(connection: sqlite3.Connection) -> list[VaultItemRecord]:
+            target = self._resolve_collection(connection, collection)
+            page = connection.execute(
+                """SELECT 1 FROM stash_pages
+                   WHERE collection_id=? AND page_index=?""",
+                (target["id"], page_index),
+            ).fetchone()
+            if page is None:
+                raise VaultNotFoundError("stash was not found")
+            placeholders = ",".join("?" for _ in prepared)
+            rows = connection.execute(
+                f"""SELECT * FROM items
+                    WHERE id IN ({placeholders}) AND collection_id=?
+                      AND page_index=? AND status='available'""",
+                tuple(item_id for item_id, *_ in prepared)
+                + (target["id"], page_index),
+            ).fetchall()
+            by_id = {str(row["id"]): row for row in rows}
+            if len(by_id) != len(prepared):
+                raise VaultConflictError(
+                    "a Vault item moved, disappeared, or became reserved before the write"
+                )
+            now = _utc_now()
+            changed_ids: list[str] = []
+            for item_id, expected, raw_json, digest, decoded in prepared:
+                row = by_id[item_id]
+                _validate_stored_raw_item_integrity(row["raw_json"], row["raw_sha256"])
+                if str(row["raw_sha256"]).lower() != expected:
+                    raise VaultConflictError(
+                        "a Vault item changed after preview; nothing was written"
+                    )
+                if row["raw_json"] == raw_json and row["raw_sha256"] == digest:
+                    continue
+                search_text = _search_document(
+                    decoded,
+                    (
+                        row["source_item_key"], row["label"], row["source"],
+                        row["custom_name"],
+                    ),
+                )
+                connection.execute(
+                    """UPDATE items SET raw_json=?, raw_sha256=?, search_text=?,
+                              updated_at=? WHERE id=?""",
+                    (raw_json, digest, search_text, now, item_id),
+                )
+                changed_ids.append(item_id)
+            if changed_ids:
+                self._event(
+                    connection, "stash_items_optimized",
+                    collection_name=target["name"],
+                    details={"pageIndex": page_index, "itemIds": changed_ids},
                 )
             result: list[VaultItemRecord] = []
             for item_id, *_ in prepared:
@@ -2319,6 +2784,7 @@ class InfiniteVault:
         request_hash: str,
         stash_before_sha256: str,
         stash_after_sha256: str,
+        destination_page_index: int | None = None,
     ) -> TransferBatchRecord:
         """Persist every stash item as one indivisible pending deposit batch."""
 
@@ -2328,8 +2794,15 @@ class InfiniteVault:
         after_hash = _clean_sha256(stash_after_sha256, "stash after hash")
         if before_hash == after_hash:
             raise VaultValidationError("batch before and after stash hashes must differ")
+        if destination_page_index is not None and (
+            isinstance(destination_page_index, bool)
+            or not isinstance(destination_page_index, int)
+            or destination_page_index < 0
+        ):
+            raise VaultValidationError("destination stash index must be a non-negative integer")
         prepared: list[dict[str, Any]] = []
         sources: set[tuple[str, str]] = set()
+        planned_cells: set[tuple[int, int]] = set()
         for raw_spec in entries:
             if not isinstance(raw_spec, Mapping):
                 raise VaultValidationError("bulk deposit entries must be objects")
@@ -2346,6 +2819,42 @@ class InfiniteVault:
             label = _clean_optional_text(raw_spec.get("label"), "label")
             source = _clean_optional_text(raw_spec.get("source"), "source") or source_tab
             raw_sha256 = hashlib.sha256(raw_json.encode("utf-8")).hexdigest()
+            target_pos = None
+            target_size = None
+            if destination_page_index is not None:
+                raw_pos = raw_spec.get("target_pos")
+                raw_size = raw_spec.get("target_size")
+                if (
+                    not isinstance(raw_pos, (list, tuple)) or len(raw_pos) != 2
+                    or not isinstance(raw_size, (list, tuple)) or len(raw_size) != 2
+                    or any(isinstance(value, bool) or not isinstance(value, int)
+                           for value in (*raw_pos, *raw_size))
+                ):
+                    raise VaultValidationError(
+                        "a destination stash transfer requires integer position and size"
+                    )
+                x, y = int(raw_pos[0]), int(raw_pos[1])
+                width, height = int(raw_size[0]), int(raw_size[1])
+                if (
+                    x < 0 or y < 0 or width < 1 or height < 1
+                    or x + width > VAULT_GRID_COLUMNS
+                    or y + height > VAULT_GRID_ROWS
+                ):
+                    raise VaultValidationError("a deposited item does not fit the destination stash")
+                cells = {
+                    (column, row)
+                    for row in range(y, y + height)
+                    for column in range(x, x + width)
+                }
+                if cells & planned_cells:
+                    raise VaultValidationError("bulk deposit destination positions overlap")
+                planned_cells.update(cells)
+                target_pos = (x, y)
+                target_size = (width, height)
+            elif raw_spec.get("target_pos") is not None or raw_spec.get("target_size") is not None:
+                raise VaultValidationError(
+                    "destination positions require a concrete destination stash"
+                )
             prepared.append({
                 "raw_json": raw_json,
                 "raw_sha256": raw_sha256,
@@ -2354,13 +2863,23 @@ class InfiniteVault:
                 "source_key": source_key,
                 "label": label,
                 "source": source,
+                "target_pos": target_pos,
+                "target_size": target_size,
             })
         if not prepared:
             raise VaultValidationError("bulk deposit requires at least one item")
 
         def operation(connection: sqlite3.Connection) -> TransferBatchRecord:
             target = self._resolve_collection(connection, collection)
-            expected_hash = canonical_request_hash({
+            if destination_page_index is not None:
+                page = connection.execute(
+                    """SELECT 1 FROM stash_pages
+                       WHERE collection_id=? AND page_index=?""",
+                    (target["id"], destination_page_index),
+                ).fetchone()
+                if page is None:
+                    raise VaultNotFoundError("destination stash was not found")
+            expected_intent = {
                 "direction": "bulk_deposit",
                 "collectionId": int(target["id"]),
                 "items": [
@@ -2368,10 +2887,20 @@ class InfiniteVault:
                         "sourceTab": row["source_tab"],
                         "sourceKey": row["source_key"],
                         "rawSha256": row["raw_sha256"],
+                        **(
+                            {
+                                "targetPos": list(row["target_pos"]),
+                                "targetSize": list(row["target_size"]),
+                            }
+                            if row["target_pos"] is not None else {}
+                        ),
                     }
                     for row in prepared
                 ],
-            })
+            }
+            if destination_page_index is not None:
+                expected_intent["destinationPageIndex"] = destination_page_index
+            expected_hash = canonical_request_hash(expected_intent)
             prior = connection.execute(
                 "SELECT * FROM transfer_batches WHERE request_id=?",
                 (clean_request_id,),
@@ -2425,13 +2954,17 @@ class InfiniteVault:
                     """INSERT INTO items(
                            id, collection_id, raw_json, raw_sha256, search_text,
                            source_item_key, label, source, deposit_key, status,
-                           reserved_token, created_at, updated_at
+                           reserved_token, page_index, layout_x, layout_y,
+                           created_at, updated_at
                        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'deposit_pending',
-                                 NULL, ?, ?)""",
+                                 NULL, ?, ?, ?, ?, ?)""",
                     (
                         item_id, target["id"], row["raw_json"], row["raw_sha256"],
                         row["search_text"], row["source_key"], row["label"],
-                        row["source"], child_id, now, now,
+                        row["source"], child_id, destination_page_index,
+                        row["target_pos"][0] if row["target_pos"] is not None else None,
+                        row["target_pos"][1] if row["target_pos"] is not None else None,
+                        now, now,
                     ),
                 )
                 connection.execute(
@@ -2454,7 +2987,10 @@ class InfiniteVault:
             self._event(
                 connection, "bulk_deposit_prepared",
                 collection_name=target["name"], withdrawal_token=clean_request_id,
-                details={"itemCount": len(prepared)},
+                details={
+                    "itemCount": len(prepared),
+                    "destinationPageIndex": destination_page_index,
+                },
             )
             return self._batch_from_row(
                 connection.execute(
@@ -3634,9 +4170,11 @@ __all__ = [
     "SCHEMA_VERSION",
     "DEFAULT_COLLECTION_NAME",
     "MAX_CUSTOM_NAME_LENGTH",
+    "MAX_STASH_NAME_LENGTH",
     "VAULT_GRID_COLUMNS",
     "VAULT_GRID_ROWS",
     "CollectionRecord",
+    "StashPageRecord",
     "VaultItemRecord",
     "WithdrawalRecord",
     "TransferRecord",

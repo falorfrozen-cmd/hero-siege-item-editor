@@ -97,11 +97,16 @@ present it must be finite.
 
 ## SQLite model
 
-`infinite_vault.py` owns schema version 5. Opening schema 2, 3, or 4 creates a
-consistent `.bak` first and migrates sequentially; a newer schema is rejected.
+`infinite_vault.py` owns schema version 6. Opening schema 2, 3, 4, or 5 creates
+one consistent pre-migration `.bak` first and migrates sequentially; a newer
+schema is rejected.
 
 - `collections`: unlimited, Unicode-normalized, case-insensitively unique
-  names.
+  category names. Creating one also creates its first stash in the same SQLite
+  transaction.
+- `stash_pages`: permanent named 17×18 stashes inside a category. `page_index`
+  and the normalized name are unique per category. Empty stashes remain real
+  database rows, so a refresh cannot make them disappear.
 - `items`: exact `raw_json`, SHA-256, source key/location, searchable text,
   collection, optional Vault-only custom name, nullable `page_index`,
   `layout_x`, and `layout_y`, and one of `deposit_pending`, `available`, or `reserved`. Layout
@@ -125,14 +130,32 @@ Every SQLite mutation performs a consistent backup before `BEGIN IMMEDIATE`.
 The backup and mutation share the same inter-process OS lock. Schema creation
 and the default `Vault` collection are committed atomically.
 
-### Persistent grid and metadata undo
+### Named stashes, persistent grids, and metadata undo
 
-Each collection uses 17×18 pages. The editor resolves true catalog dimensions,
+Each category contains named 17×18 stashes. The editor resolves true catalog dimensions,
 preserves every valid saved placement, and deterministically first-fit packs
 only missing/invalid positions. A drop is rejected when it is out of bounds,
 overlaps another rectangle, names a stale `updated_at`, or no longer belongs to
-the collection. Moving to another collection clears the previous page metadata
+the category. Moving to another category clears the previous page metadata
 so the destination can place it safely.
+
+The main UI deliberately exposes only category creation/selection, one-stash
+creation, and the concrete stash grids. Stash names are saved on blur/Enter.
+Each stash has a verified MAX / Best Possible preflight and an atomic complete
+return flow that requires a concrete compatible Shared Stash destination (or
+the proven automatic router). The roll write validates every stored hash again
+inside one backed-up database transaction; a stale or malformed member cancels
+the complete stash update. The same MAX transaction also sets every
+catalog-proven native stackable to `x999`; stack-like opaque fields on
+equipment and known singleton repository records are never treated as stacks.
+
+Each compatible Shared Stash header has a complete-tab transfer action. The
+user chooses both the Vault category and one named stash. Preview resolves real
+item dimensions, accounts for existing target-stash rectangles, prefers each
+original Shared Stash position when free, and fails before mutation unless the
+whole tab fits. Prepared database rows already contain the chosen page and
+coordinates, so crash recovery exposes them in the same named stash rather
+than leaving placement as a second non-atomic step.
 
 Layout initialization, one-item drops, compacting, and multi-item collection
 moves each run as one backed-up SQLite transaction. The event log stores both
@@ -226,10 +249,16 @@ never choose a second destination and duplicate the item.
 - `POST /api/vault/deposit`: shared-stash source, key, collection, request ID.
 - `POST /api/vault/withdraw`: vault item, shared-stash target, request ID.
 - `POST /api/vault/collections`: create, rename, delete-empty.
-- `POST /api/vault/item`: move an available item between collections.
+- `POST /api/vault/stashes`: append exactly one stash or rename one stash.
+- `POST /api/vault/item`: move an available item between collections, change a
+  Vault-only name, or add an exact positive amount to a proven native stack.
 - `POST /api/vault/layout`: initialize, place, or compact persistent pages.
+- `POST /api/vault/roll`: preview/apply verified rolls and native `x999`
+  stack maxima to one concrete stash.
 - `POST /api/vault/selection-preview`: exact non-mutating plan for selected return.
-- `POST /api/vault/bulk`: complete or selected atomic stash transfer.
+- `POST /api/vault/bulk`: complete or selected atomic stash transfer. A
+  Shared Stash deposit may bind `destinationPageIndex` to one named Vault
+  stash; the page and every item coordinate are part of the preview hash.
 - `POST /api/vault/undo`: state-checked latest metadata rollback.
 
 Collection management never edits a game save. Deposit and withdrawal always

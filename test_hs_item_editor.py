@@ -253,6 +253,130 @@ class ItemEditorSeason10Tests(unittest.TestCase):
             self.assertEqual(editor.grid_dims(tab), (15, 6))
         self.assertEqual(editor.grid_dims("stash_tab_20"), (17, 18))
 
+    def test_positionless_relic_and_tarot_collections_get_virtual_nonoverlap(self):
+        bag_path = self.saves / "inventory_order_1.hss"
+        bags = json.loads(editor.decode_hss(bag_path))
+        relic_rows = [
+            row for row in editor.CAT
+            if row.get("cls") == 16 and row.get("available", True)
+        ][:100]
+        tarot_rows = [
+            row for row in editor.CAT
+            if row.get("cls") == 13
+            and (
+                19 <= int(row.get("b", -1)) <= 40
+                or 54 <= int(row.get("b", -1)) <= 57
+            )
+            and row.get("available", True)
+        ]
+        bags["inventory_relic_tab"] = {
+            f"0-0-{2_100_000_000_000 + index}-16": {
+                "data": {
+                    "c": 0.0, "b": float(row["b"]),
+                    "a": float(editor.SEED_MIN + index), "j": 0.0,
+                }
+            }
+            for index, row in enumerate(relic_rows)
+        }
+        bags["inventory_tarot_tab"] = {
+            f"0-0-{2_200_000_000_000 + index}-13": {
+                "data": {
+                    "c": 0.0, "b": float(row["b"]),
+                    "a": float(editor.SEED_MIN + index), "j": 0.0,
+                    "o": 1.0,
+                }
+            }
+            for index, row in enumerate(tarot_rows)
+        }
+        bag_path.write_text(
+            editor.encode_hss(json.dumps(bags)), encoding="ascii"
+        )
+        before = bag_path.read_bytes()
+
+        character = editor.read_char(1)
+        self.assertEqual(bag_path.read_bytes(), before)
+
+        for tab, expected_count in (
+            ("inventory_relic_tab", len(relic_rows)),
+            ("inventory_tarot_tab", len(tarot_rows)),
+        ):
+            rows = character["bags"][tab]
+            self.assertEqual(len(rows), expected_count)
+            self.assertTrue(all(row.get("virtualPos") is True for row in rows))
+            occupied = set()
+            for row in rows:
+                x, y = map(int, row["pos"])
+                cells = {
+                    (x + dx, y + dy)
+                    for dy in range(int(row["h"]))
+                    for dx in range(int(row["w"]))
+                }
+                self.assertTrue(occupied.isdisjoint(cells))
+                occupied.update(cells)
+        self.assertGreaterEqual(
+            max(row["pos"][1] for row in character["bags"]["inventory_relic_tab"]),
+            6,
+        )
+
+    def test_virtual_collection_add_and_same_tab_drag_never_save_position(self):
+        tarot = catalog_row("collectible_tarot_death")
+        target = {
+            "type": "bag", "slot": 1, "tab": "inventory_tarot_tab",
+            "pos": [9, 4],
+        }
+        added = editor.op_add({"cid": tarot["id"], "target": target})
+        self.assertIn("auto-arranged", added["ok"])
+
+        bag_path = self.saves / "inventory_order_1.hss"
+        bags = json.loads(editor.decode_hss(bag_path))
+        key, entry = next(iter(bags["inventory_tarot_tab"].items()))
+        self.assertNotIn("pos", entry)
+        before = bag_path.read_bytes()
+        same_tab = editor.op_move({
+            "from": {"type": "bag", "slot": 1,
+                     "tab": "inventory_tarot_tab"},
+            "to": {"type": "bag", "slot": 1,
+                   "tab": "inventory_tarot_tab"},
+            "key": key,
+            "pos": [5, 3],
+        })
+        self.assertEqual(same_tab["backup"], "")
+        self.assertEqual(bag_path.read_bytes(), before)
+
+        moved = editor.op_move({
+            "from": {"type": "bag", "slot": 1,
+                     "tab": "inventory_tarot_tab"},
+            "to": {"type": "bag", "slot": 1, "tab": "inventory_tab_0"},
+            "key": key,
+            "pos": [2, 3],
+        })
+        self.assertIn("ok", moved)
+        bags = json.loads(editor.decode_hss(bag_path))
+        self.assertNotIn(key, bags["inventory_tarot_tab"])
+        self.assertEqual(bags["inventory_tab_0"][key]["pos"], [2.0, 3.0])
+
+    def test_virtual_collection_preserves_real_positions_and_packs_around_them(self):
+        death = catalog_row("collectible_tarot_death")
+        tower = catalog_row("collectible_tarot_the_tower")
+        items = {
+            "0-0-2200000000100-13": {
+                "pos": [0.0, 0.0],
+                "data": editor.make_data(death),
+            },
+            "0-0-2200000000101-13": {
+                "data": editor.make_data(tower),
+            },
+        }
+        layout = editor.virtual_collection_layout("inventory_tarot_tab", items)
+        self.assertEqual(
+            layout["0-0-2200000000100-13"],
+            {"pos": [0, 0], "virtual": False},
+        )
+        self.assertEqual(
+            layout["0-0-2200000000101-13"],
+            {"pos": [1, 0], "virtual": True},
+        )
+
     def test_add_new_unique_to_stash_and_potion_belt(self):
         crown = catalog_row("helmet_leviathans_crown")
         result = editor.op_add({"cid": crown["id"], "target": {"type": "stash_unique"}})

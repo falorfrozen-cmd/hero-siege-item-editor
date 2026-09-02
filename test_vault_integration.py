@@ -978,9 +978,9 @@ class InfiniteVaultIntegrationTests(unittest.TestCase):
             "function openVaultCompare()",
             "async function editVaultCustomName(row)",
             "function packVaultGridPages(items,persistent=false)",
-            "function vaultGridPageHTML(page,index,persistent=false)",
+            "function vaultGridPageHTML(page,index,persistent=false,stash=null)",
             "function showVaultCtx(x,y,row,el)",
-            "data-vault-collection",
+            "data-vault-stash-name",
             "vault-grid-item",
             "registerPreviewModel(row.gameTooltip)",
             "Array.isArray(model.identities)",
@@ -994,7 +994,11 @@ class InfiniteVaultIntegrationTests(unittest.TestCase):
         )
         self.assertIn("row.customName||row.name", html)
         self.assertIn("VAULT_GRID_COLS=17,VAULT_GRID_ROWS=18", html)
-        self.assertIn("Drag to organize.", html)
+        self.assertIn("data-vault-stash-roll", html)
+        self.assertIn("data-vault-stash-send", html)
+        self.assertIn("function openStackAmountDialog", html)
+        self.assertIn("Add stack...", html)
+        self.assertIn("action:'addStack'", html)
         self.assertIn("/api/vault/layout", html)
         self.assertIn("/api/vault/selection-preview", html)
         self.assertIn("action:'moveMany'", html)
@@ -1008,7 +1012,7 @@ class InfiniteVaultIntegrationTests(unittest.TestCase):
         self.assertIn("CLEAR", custom_name_ui)
         vault_renderer = html.split("function renderVaultItems(payload){", 1)[1]
         vault_renderer = vault_renderer.split("async function withdrawVaultItem", 1)[0]
-        self.assertIn("packVaultGridPages(rows,vaultState.persistentLayout)", vault_renderer)
+        self.assertIn("packVaultGridPages(rows,true)", vault_renderer)
         self.assertIn("item.oncontextmenu", vault_renderer)
         self.assertIn("showVaultCtx", vault_renderer)
         self.assertNotIn("vault-card", vault_renderer)
@@ -1017,20 +1021,30 @@ class InfiniteVaultIntegrationTests(unittest.TestCase):
         self.assertNotIn("data-skill", vault_renderer)
 
     def test_infinite_vault_keeps_the_primary_screen_simple(self):
-        html = editor.HTML
+        html = editor.HTML.split("async function openVault(reset=true){", 1)[1]
+        html = html.split("function vaultBulkSessionKey", 1)[0]
         for marker in (
             'class="vault-page-head"',
-            'id="vaultdesk"',
-            'TRANSFER ITEMS',
+            'id="vaultnew"',
+            'id="vaultcategory"',
+            'id="vaultnewgrid"',
+            '+ CATEGORY',
+            '+ STASH',
             'class="vault-tools-menu"',
-            'id="vaultdeskscope"',
-            "open.hidden=rows.length!==2",
         ):
             self.assertIn(marker, html)
         self.assertNotIn("Complete Stash Transfer", html)
+        self.assertNotIn("TRANSFER ITEMS", html)
+        self.assertNotIn("Search this vault", html)
+        self.assertNotIn("All Items", html)
         self.assertNotIn('id="vaultbulkin"', html)
         self.assertNotIn('id="vaultbulkout"', html)
         self.assertNotIn("Database: ${esc(vaultMeta.databaseName", html)
+        self.assertIn("}while(payload.hasMore);", editor.HTML)
+        self.assertIn("function openSharedStashVaultTransfer", editor.HTML)
+        self.assertIn("TO INFINITE VAULT", editor.HTML)
+        self.assertIn("destinationPageIndex", editor.HTML)
+        self.assertIn("data-vault-stash-source", editor.HTML)
 
     def test_bulk_verified_roll_preview_and_apply_are_one_safe_write(self):
         cap_key = "0-0-1700000000999-0"
@@ -1060,6 +1074,159 @@ class InfiniteVaultIntegrationTests(unittest.TestCase):
         self.assertEqual(changed[SOURCE_KEY], before_original)
         self.assertEqual(changed[cap_key]["data"]["a"], 172693)
         self.assertTrue(result["backup"])
+
+    def test_shared_stash_max_sets_only_proven_stackables_to_native_x999(self):
+        material_key = "0-0-1700000000998-14"
+        stash = self._read_stash()
+        stash["material_tab"][material_key] = {
+            "pos": [0.0, 0.0],
+            "data": {"a": 123456.0, "j": 0.0, "b": 70.0, "c": 0.0, "o": 2.0},
+        }
+        self._write_stash(stash)
+        target = {"type": "stash", "tab": "material_tab"}
+
+        preview = editor.op_bulk_roll({"action": "preview", "target": target})
+        self.assertEqual(preview["changeCount"], 1)
+        self.assertEqual(preview["stackMaxCount"], 1)
+        self.assertEqual(preview["exactCount"], 0)
+        self.assertTrue(preview["canRun"])
+        result = editor.op_bulk_roll({
+            "action": "apply", "target": target,
+            "previewToken": preview["previewToken"],
+        })
+        self._assert_ok(result)
+        self.assertEqual(
+            self._read_stash()["material_tab"][material_key]["data"]["o"],
+            999.0,
+        )
+
+    def test_add_stack_adds_delta_in_shared_stash_and_rejects_equipment(self):
+        material_key = "0-0-1700000000997-14"
+        stash = self._read_stash()
+        stash["material_tab"][material_key] = {
+            "pos": [0.0, 0.0],
+            "data": {"a": 123456.0, "j": 0.0, "b": 70.0, "c": 0.0, "o": 2.0},
+        }
+        self._write_stash(stash)
+
+        result = editor.op_modify({
+            "action": "addstack",
+            "target": {"type": "stash", "tab": "material_tab"},
+            "key": material_key,
+            "count": 500,
+        })
+        self._assert_ok(result)
+        self.assertEqual(result["stack"], 502)
+        self.assertEqual(
+            self._read_stash()["material_tab"][material_key]["data"]["o"],
+            502.0,
+        )
+
+        before = self.stash_path.read_bytes()
+        rejected = editor.op_modify({
+            "action": "addstack",
+            "target": {"type": "stash", "tab": "stash_tab_1"},
+            "key": SOURCE_KEY,
+            "count": 500,
+        })
+        self.assertIn("err", rejected)
+        self.assertEqual(self.stash_path.read_bytes(), before)
+
+    def test_vault_add_stack_then_max_is_atomic_and_catalog_guarded(self):
+        material_key = "0-0-1700000000996-14"
+        raw = json.dumps({
+            "pos": [0.0, 0.0],
+            "data": {"a": 123456.0, "j": 0.0, "b": 70.0, "c": 0.0, "o": 2.0},
+        }, separators=(",", ":"))
+        vault = self._vault()
+        item = vault.deposit(
+            "Vault", raw, source_item_key=material_key, label="Angel's Wisdom"
+        )
+        vault.set_item_layouts("Vault", [{
+            "itemId": item.id, "pageIndex": 0, "x": 0, "y": 0,
+        }])
+
+        added = editor.op_vault_item({
+            "action": "addStack", "itemId": item.id, "count": 500,
+        })
+        self._assert_ok(added)
+        self.assertEqual(added["stack"], 502)
+        self.assertEqual(vault.get_item(item.id).decoded_item()["data"]["o"], 502.0)
+
+        preview = editor.op_vault_roll({
+            "action": "preview", "collectionId": 1, "pageIndex": 0,
+        })
+        self.assertEqual(preview["changeCount"], 1)
+        self.assertEqual(preview["stackMaxCount"], 1)
+        applied = editor.op_vault_roll({
+            "action": "apply", "collectionId": 1, "pageIndex": 0,
+            "previewToken": preview["previewToken"],
+        })
+        self._assert_ok(applied)
+        self.assertEqual(vault.get_item(item.id).decoded_item()["data"]["o"], 999.0)
+
+        singleton = editor.resolve(
+            "0-0-1700000000995-14",
+            {"a": 1.0, "j": 0.0, "b": 59.0, "c": 0.0},
+        )
+        self.assertFalse(singleton["stackable"])
+
+    def test_vault_stash_verified_roll_preview_and_apply_are_atomic(self):
+        cap_key = "0-0-1700000000999-0"
+        raw = json.dumps({
+            "pos": [0.0, 0.0],
+            "data": {"a": 1.0, "j": 0.0, "b": 0.0, "c": 0.0, "o": 1.0},
+        }, separators=(",", ":"))
+        vault = self._vault()
+        item = vault.deposit("Vault", raw, source_item_key=cap_key, label="Cap")
+        vault.set_item_layouts("Vault", [{
+            "itemId": item.id, "pageIndex": 0, "x": 0, "y": 0,
+        }])
+
+        preview = editor.op_vault_roll({
+            "action": "preview", "collectionId": 1, "pageIndex": 0,
+        })
+        self.assertEqual(preview["changeCount"], 1)
+        self.assertEqual(preview["exactCount"], 1)
+        self.assertTrue(preview["canRun"])
+        result = editor.op_vault_roll({
+            "action": "apply", "collectionId": 1, "pageIndex": 0,
+            "previewToken": preview["previewToken"],
+        })
+        self._assert_ok(result)
+        self.assertEqual(vault.get_item(item.id).decoded_item()["data"]["a"], 172693)
+        self.assertTrue(result["backup"])
+
+    def test_vault_stash_roll_rejects_stale_preview_without_partial_write(self):
+        cap_key = "0-0-1700000000999-0"
+        raw = json.dumps({
+            "pos": [0.0, 0.0],
+            "data": {"a": 1.0, "j": 0.0, "b": 0.0, "c": 0.0, "o": 1.0},
+        }, separators=(",", ":"))
+        vault = self._vault()
+        item = vault.deposit("Vault", raw, source_item_key=cap_key, label="Cap")
+        vault.set_item_layouts("Vault", [{
+            "itemId": item.id, "pageIndex": 0, "x": 0, "y": 0,
+        }])
+        preview = editor.op_vault_roll({
+            "action": "preview", "collectionId": 1, "pageIndex": 0,
+        })
+        changed = json.dumps({
+            "pos": [0.0, 0.0],
+            "data": {"a": 2.0, "j": 0.0, "b": 0.0, "c": 0.0, "o": 1.0},
+        }, separators=(",", ":"))
+        vault.update_stash_item_payloads("Vault", 0, [{
+            "itemId": item.id,
+            "expectedSha256": item.raw_sha256,
+            "rawItemJson": changed,
+        }])
+        before = self.vault_path.read_bytes()
+        result = editor.op_vault_roll({
+            "action": "apply", "collectionId": 1, "pageIndex": 0,
+            "previewToken": preview["previewToken"],
+        })
+        self.assertEqual(result.get("code"), "preview_stale")
+        self.assertEqual(self.vault_path.read_bytes(), before)
 
     def test_bulk_verified_roll_rejects_stale_preview_without_write(self):
         cap_key = "0-0-1700000000999-0"
@@ -1248,6 +1415,41 @@ class InfiniteVaultIntegrationTests(unittest.TestCase):
         self._assert_ok(returned)
         self.assertEqual(self._read_stash(), original)
         self.assertEqual(self._vault().count_items(status="all"), 0)
+
+    def test_shared_stash_tab_moves_into_exact_named_vault_stash(self):
+        self._write_stash(self._full_bulk_stash())
+        vault = self._vault()
+        second = vault.add_stash_page("Vault")
+        self.assertEqual(second.page_index, 1)
+        preview = editor.vault_bulk_preview({
+            "direction": ["stash-to-vault"],
+            "collectionId": ["1"],
+            "sourceTab": ["stash_tab_1"],
+            "destinationPageIndex": ["1"],
+        })
+        self.assertNotIn("err", preview, preview.get("err"))
+        self.assertEqual(preview["destinationPageIndex"], 1)
+        self.assertEqual(preview["destinationStashName"], "Stash 2")
+        request = {
+            "direction": "stash-to-vault",
+            "collectionId": 1,
+            "sourceTab": "stash_tab_1",
+            "destinationPageIndex": 1,
+            "requestId": "bulk_exact_vault_stash_0123456",
+            "previewToken": preview["previewToken"],
+        }
+        result = editor.op_vault_bulk(request)
+        self._assert_ok(result)
+        self.assertEqual(self._read_stash()["stash_tab_1"], {})
+        stored = vault.list_items(status="available")
+        self.assertEqual(len(stored), 1)
+        self.assertEqual(stored[0].page_index, 1)
+        self.assertEqual((stored[0].layout_x, stored[0].layout_y), (4, 7))
+
+        retry_bytes = self.stash_path.read_bytes()
+        retry = editor.op_vault_bulk(request)
+        self._assert_ok(retry)
+        self.assertEqual(self.stash_path.read_bytes(), retry_bytes)
 
     def test_bulk_selected_special_tabs_are_independent_sources(self):
         stash = self._full_bulk_stash()

@@ -8,7 +8,33 @@ A local/offline save editor for **Hero Siege** (Pixel Prone Games). Manage items
 
 Single file, no install, no Python needed. Just run it.
 
-## What's new in v2.11.4
+## What's new in v2.12.0
+
+- Infinite Vault now has one simple hierarchy: **Category → named Stashes**.
+  The top bar contains only `+ CATEGORY`, the category selector, `+ STASH`, and
+  a small maintenance menu.
+- Creating a category atomically creates its first `Stash 1`. Every `+ STASH`
+  click creates exactly one permanent empty stash.
+- Stash names are editable directly in the header: click, type, press Enter.
+- Every Vault stash uses the Shared Stash 17×18 grid and has its own
+  **MAX / BEST** preview plus **SEND TO SHARED STASH**. A send first asks for
+  the exact Shared Stash destination and proves that the complete stash fits.
+- Every compatible Shared Stash has **TO INFINITE VAULT** beside MAX. Choose
+  the exact Vault category and named stash; the whole source tab is
+  capacity-checked and transferred atomically.
+- MAX now also sets every catalog-proven native stackable in its target stash
+  to `x999`. Right-click **Add stack** adds a chosen amount to the current
+  quantity in Shared Stash or Infinite Vault.
+- Existing Vault databases migrate to schema 6 after a consistent backup.
+  Existing items, positions, payload hashes, categories, and empty pages are
+  preserved and converted to named stashes.
+- With no saved category selection, the Vault opens the category containing
+  the most items instead of dropping the user into an empty category.
+
+See [the v2.12.0 release notes](RELEASE_NOTES_v2.12.0.md) for the safety and
+migration details.
+
+## Previously added in v2.11.4
 
 - Hero Siege **7.0.5 support** for 5,059 verified Max/Best roll profiles and
   exact numeric tooltips.
@@ -117,6 +143,9 @@ Roll and Dice explanation.
 
 - Season 10 catalog profile: 944 current unique identities, including all 24 new S10 Heroic boss items
 - Season 10 inventory support: Relics, Tarot, Essence Vaults, Keys, Materials, and Runes/Gems/Orbs
+- Native positionless Relic and Tarot collections are auto-arranged without
+  saving invented coordinates; large Relic collections expand vertically
+  instead of overlapping in the first cell
 - Legacy entries removed from the S10 repository remain readable but cannot be generated
 - Essence Vaults are readable/movable; generation stays locked because their rolled `v1/v2/d` payload is not a generic item seed
 - Paper-doll character view with drag-and-drop equip/unequip
@@ -136,12 +165,13 @@ Roll and Dice explanation.
   item-preservation evidence before creating a permanent source backup
 - Safe repair mode only relocates deterministic grid conflicts or resets invalid stack amounts; every changed file is backed up first
 - Global Item Finder — search every character, equipment slot, bag, potion belt, personal stash, and shared stash, then jump to the item
-- Infinite Vault — unlimited named SQLite collections connected to every
-  numbered, Material, and Socket Shared Stash grid, with search, paging, exact
-  item preservation, idempotent transfers, automatic recovery, a pre-mutation
-  database backup, Vault-only custom names, persistent 17×18 page positions,
-  drag organization, multi-selection, two-item comparison, a side-by-side
-  Transfer Desk, exact source-tab bulk deposits, and state-checked metadata undo
+- Infinite Vault — unlimited named categories containing permanent, directly
+  renameable 17×18 stashes. Categories and stashes use one compact control bar;
+  each stash supports drag organization, per-stash MAX / Best Possible, and an
+  exact atomic return to a selected Shared Stash. Shared Stash headers can
+  likewise send their complete tab to one exact named Vault stash. Native item payloads remain
+  byte-preserved across transfers, with idempotent journals, automatic recovery,
+  pre-mutation database backups, bulk deposits, and state-checked metadata undo
 - Bulk Verified Rolls — preview and apply Exact MAX / Best Possible to one
   Shared Stash tab, one visible character bag, or all equipped items in a
   single write; explicit skill/class selectors are skipped and malformed items
@@ -179,7 +209,9 @@ Your characters and stash are detected automatically (standard Windows save fold
   manual Random Reroll, Duplicate, or Edit Stack controls.
 - **Right-click supported equipment** → apply **EXACT MAX / BEST POSSIBLE**;
   fixed-stat equipment needs no roll action. The same menu also offers
-  **Edit sockets**, **Reroll stats**, **Duplicate**, **Edit stack**, and **Delete**
+  **Edit sockets**, **Reroll stats**, **Duplicate**, and **Delete**. A proven
+  stackable instead offers **Add stack**, which adds the entered amount to its
+  current quantity; Advanced Mode also exposes absolute **Edit stack**.
 - **Right-click Loaded Dice / Overloaded Dice** → **Choose skill/sub-skill**;
   search by skill name, class, or numeric ID, then apply the verified native
   seed. Newly generated Dice items require the target skill to be selected in
@@ -188,15 +220,14 @@ Your characters and stash are detected automatically (standard Windows save fold
 - **Right-click an item in any numbered, Material, or Socket Shared Stash
   grid** → **Store in Infinite Vault**; use the Infinite Vault workspace to
   search, organize, and return it to any compatible grid
-- In **Infinite Vault**, open one collection and drag items between persistent
-  grid cells. Click any number of items for bulk move/return; selecting exactly
-  two also enables side-by-side **Compare**. Right-click sets a Vault-only name
-  or performs an individual action. **Transfer Items** is the single guided
-  entry point for both transfer directions. Less common collection, grid,
-  refresh, destination, and history actions live in the `…` menu
+- In **Infinite Vault**, choose a category and drag items between its named
+  persistent stashes. Right-click sets a Vault-only name or adds to a proven
+  stack. Each stash has its own MAX and complete return button; less common
+  category, compact, refresh, and history actions live in the `…` menu.
 - Use **MAX / BEST THIS TAB** in Shared Stash, **MAX / BEST VISIBLE BAG**, or
   **MAX / BEST EQUIPPED** for a fail-closed batch preview. Skill/class selector
-  items are intentionally skipped so their identity is never chosen silently
+  items are intentionally skipped so their identity is never chosen silently;
+  every proven stackable in the chosen container is also set to native `x999`
 - While dragging through **Shared Stash**, use the mouse wheel; if the native
   browser drag suppresses wheel input, hold the pointer near the top or bottom
   edge for continuous auto-scroll. No save occurs until a valid drop

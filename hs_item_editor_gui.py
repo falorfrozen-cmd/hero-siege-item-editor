@@ -163,7 +163,7 @@ def _resource_base() -> Path:
 BASE = _resource_base()
 CATALOG_FILE = BASE / "hs_full_catalog.json"
 PORT = 8765
-APP_VERSION = "2.11.4-s10"
+APP_VERSION = "2.12.0-s10"
 APPLICATION_ID = "hero-siege-item-editor"
 CATALOG_PROFILE = "Season 10"
 MAX_POST_BYTES = 2 * 1024 * 1024
@@ -249,6 +249,22 @@ CLASS_NAMES = {0: "Helmet", 1: "Body Armor", 2: "Boots", 3: "Weapon", 4: "Gloves
                6: "Shield", 7: "Ring", 8: "Belt", 10: "Charm", 11: "Potion / Codex",
                12: "Key", 13: "Boss Part / Tarot", 14: "Material", 15: "Rune / Gem / Orb",
                16: "Relic", 18: "Flask", 19: "Essence Vault", -2: "Runeword"}
+# Native Season 10 item classes whose ``o`` save field is a stack quantity.
+# Some catalog addresses in those repositories are deliberately singleton
+# records; adding an ``o`` field to those would create an unproven save shape.
+STACKABLE_CLS = {
+    12: "Key",
+    13: "Boss Part / Tarot",
+    14: "Material",
+    15: "Rune / Gem / Orb",
+}
+FULL_STACK_AMOUNT = 999
+MAX_MANUAL_STACK_AMOUNT = 99_999_999
+MATERIAL_SINGLETON_ADDRESSES = frozenset({
+    *((13, base) for base in range(58, 65)),
+    (14, 59),  # Reflection of Tarethiel
+    (14, 67),  # Blessed Dice
+})
 # Only these repository classes are equipment whose visible definition-stat
 # rolls are covered by the verified profile database.  If one of these rows
 # lacks its exact address profile, generation must stop instead of silently
@@ -272,6 +288,15 @@ GRID_DIMS = {"inventory_tab": (15, 6), "inventory_charms": (3, 11), "inventory_k
              "inventory_vault_tab": (15, 6), "inventory_vault_active": (15, 6),
              "stash_tab": (17, 18), "material_tab": (17, 18), "socket_tab": (17, 18),
              "potions": (5, 2), "personal_stash": (17, 18)}
+
+# The game stores unlocked Relics and Tarot cards as collections.  Native
+# entries can therefore omit ``pos`` entirely; their order on the editor's
+# canvas is presentation state, not save data.  Keep this distinction explicit
+# so reading a collection never writes invented coordinates back to the save.
+VIRTUAL_COLLECTION_BAG_TABS = frozenset({
+    "inventory_relic_tab",
+    "inventory_tarot_tab",
+})
 
 # Season 10 additions whose save addresses were verified from the current build
 # and/or observed S10 saves. Entries that only exist in localization but whose
@@ -589,7 +614,7 @@ BULK_STASH_ITEM_TABS = (
 )
 BULK_DEPOSIT_ALL_TABS = "all"
 BULK_WITHDRAWAL_AUTO = "auto"
-BULK_ROUTING_VERSION = 3
+BULK_ROUTING_VERSION = 4
 
 
 def _vault_source_display(source: str | None) -> str:
@@ -1100,6 +1125,81 @@ def item_socket_limit(item: object) -> int:
     return 0
 
 
+def native_stackable_info(key: object, data: object) -> dict | None:
+    """Return catalog-backed stack metadata for one native save entry.
+
+    Display names and the mere presence of ``o`` are not enough: equipment can
+    carry opaque future fields.  The native key class, kind bit and catalog
+    address must all agree before MAX or Add Stack may change the quantity.
+    """
+
+    if not isinstance(key, str) or not isinstance(data, dict):
+        return None
+    try:
+        cls = int(key.rsplit("-", 1)[1])
+        kind_bit = int(data.get("c", 0))
+        base = int(data["b"])
+    except (KeyError, TypeError, ValueError, OverflowError):
+        return None
+    if kind_bit != 0 or cls not in STACKABLE_CLS:
+        return None
+    if (cls, base) in MATERIAL_SINGLETON_ADDRESSES:
+        return None
+    row = BY_ADDR.get((0, cls, 0, base))
+    if not isinstance(row, dict) or not row.get("available", True):
+        return None
+    if row.get("kind") != "normal" or int(row.get("cls", -1)) != cls:
+        return None
+    return {
+        "cls": cls,
+        "base": base,
+        "name": str(row.get("name") or row.get("key") or "Stackable item"),
+        "maxStack": FULL_STACK_AMOUNT,
+    }
+
+
+def native_stack_count(data: object) -> int | None:
+    """Read a positive integral native stack, treating a missing ``o`` as one."""
+
+    if not isinstance(data, dict):
+        return None
+    value = data.get("o", 1)
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return None
+    try:
+        number = float(value)
+    except (TypeError, ValueError, OverflowError):
+        return None
+    if not math.isfinite(number) or not number.is_integer():
+        return None
+    count = int(number)
+    return count if 1 <= count <= MAX_MANUAL_STACK_AMOUNT else None
+
+
+def clean_positive_stack_amount(value: object) -> int:
+    """Parse one exact positive integer without silently truncating decimals."""
+
+    if isinstance(value, bool):
+        raise ValueError("stack amount must be a positive whole number")
+    if isinstance(value, int):
+        amount = value
+    elif isinstance(value, float):
+        if not math.isfinite(value) or not value.is_integer():
+            raise ValueError("stack amount must be a positive whole number")
+        amount = int(value)
+    elif isinstance(value, str) and re.fullmatch(r"[0-9]+", value.strip()):
+        amount = int(value.strip())
+    else:
+        raise ValueError("stack amount must be a positive whole number")
+    if amount < 1:
+        raise ValueError("stack amount must be at least 1")
+    if amount > MAX_MANUAL_STACK_AMOUNT:
+        raise ValueError(
+            f"stack amount cannot exceed {MAX_MANUAL_STACK_AMOUNT:,}"
+        )
+    return amount
+
+
 def resolve(key: str, data: dict) -> dict:
     """Save kaydini katalog girdisine cozer."""
     try:
@@ -1109,7 +1209,16 @@ def resolve(key: str, data: dict) -> dict:
     c = int(data.get("c", 0))
     j = int(data.get("j", 0))
     b = data.get("b")
-    out = {"key": key, "raw": data, "stack": data.get("o"), "cls": sfx, "sub": j}
+    stackable = native_stackable_info(key, data)
+    out = {
+        "key": key,
+        "raw": data,
+        "stack": data.get("o"),
+        "stackable": stackable is not None,
+        "maxStack": stackable["maxStack"] if stackable else None,
+        "cls": sfx,
+        "sub": j,
+    }
     if b is None:
         out.update(name="Special/Runeword item", rar="Runeword", w=2, h=4, cid=None)
     else:
@@ -1391,6 +1500,8 @@ def _vault_item_payload(record, build_status: dict | None = None) -> dict:
         "w": item.get("w", 1),
         "h": item.get("h", 1),
         "stack": item.get("stack"),
+        "stackable": bool(item.get("stackable")),
+        "maxStack": item.get("maxStack"),
         "pageIndex": record.page_index,
         "pos": (
             [record.layout_x, record.layout_y]
@@ -1465,9 +1576,18 @@ def read_char(slot: int) -> dict:
                 if not isinstance(items, dict):
                     continue
                 lst = []
+                collection_layout = virtual_collection_layout(tab, items)
                 for k, v in items.items():
+                    if not isinstance(v, dict) or not isinstance(v.get("data", {}), dict):
+                        continue
                     it = resolve(k, v.get("data", {}))
-                    it["pos"] = v.get("pos", [0, 0])
+                    display = collection_layout.get(str(k))
+                    if display is not None:
+                        it["pos"] = list(display["pos"])
+                        it["virtualPos"] = bool(display["virtual"])
+                        it["collectionLayout"] = True
+                    else:
+                        it["pos"] = v.get("pos", [0, 0])
                     _attach_game_tooltip(it, tooltip_build_status)
                     lst.append(it)
                 bags[tab] = lst
@@ -1518,6 +1638,86 @@ def grid_dims(tab: str):
     # New S10 character inventory tabs use the same 15x6 bag canvas. Unknown
     # stash tabs remain 17x18. This also keeps future inventory tabs visible.
     return (15, 6) if base.startswith("inventory_") else (17, 18)
+
+
+def virtual_collection_layout(tab: str, items: object) -> dict[str, dict]:
+    """Return display-only positions for one native positionless collection.
+
+    Saved coordinates are preserved when present and valid.  Entries without a
+    usable coordinate are packed deterministically around those occupied cells.
+    Rows may grow beyond the normal six-row bag canvas because the Relic
+    collection can contain more than 90 catalog entries.  Nothing returned by
+    this helper is written to the HSS document.
+    """
+
+    if tab not in VIRTUAL_COLLECTION_BAG_TABS or not isinstance(items, dict):
+        return {}
+    cols, _default_rows = grid_dims(tab)
+    occupied: set[tuple[int, int]] = set()
+    layout: dict[str, dict] = {}
+    pending = []
+
+    for raw_key, entry in items.items():
+        key = str(raw_key)
+        if not isinstance(entry, dict):
+            continue
+        item = resolve(key, entry.get("data", {}))
+        width = max(1, min(cols, int(item.get("w", 1))))
+        height = max(1, int(item.get("h", 1)))
+        saved = entry.get("pos")
+        saved_pos = None
+        if isinstance(saved, (list, tuple)) and len(saved) >= 2:
+            try:
+                sx, sy = float(saved[0]), float(saved[1])
+                if (
+                    math.isfinite(sx) and math.isfinite(sy)
+                    and sx.is_integer() and sy.is_integer()
+                    and int(sx) >= 0 and int(sy) >= 0
+                    and int(sx) + width <= cols
+                    # Avoid an accidentally corrupt coordinate creating a
+                    # multi-million-row browser canvas.
+                    and int(sy) + height <= 4096
+                ):
+                    saved_pos = [int(sx), int(sy)]
+            except (TypeError, ValueError, OverflowError):
+                saved_pos = None
+        if saved_pos is not None:
+            x, y = saved_pos
+            occupied.update(
+                (x + dx, y + dy)
+                for dy in range(height)
+                for dx in range(width)
+            )
+            layout[key] = {"pos": saved_pos, "virtual": False}
+            continue
+        catalog_id = item.get("cid")
+        sort_id = (
+            catalog_id
+            if isinstance(catalog_id, int) and not isinstance(catalog_id, bool)
+            else len(CAT) + 1
+        )
+        pending.append((sort_id, key, width, height))
+
+    for _sort_id, key, width, height in sorted(pending):
+        y = 0
+        while True:
+            chosen = None
+            for x in range(cols - width + 1):
+                cells = {
+                    (x + dx, y + dy)
+                    for dy in range(height)
+                    for dx in range(width)
+                }
+                if occupied.isdisjoint(cells):
+                    chosen = (x, y, cells)
+                    break
+            if chosen is not None:
+                x, y, cells = chosen
+                occupied.update(cells)
+                layout[key] = {"pos": [x, y], "virtual": True}
+                break
+            y += 1
+    return layout
 
 
 def find_free_pos(items: dict, tab: str, w: int, h: int):
@@ -2000,6 +2200,24 @@ def _bulk_deposit_source_label(source_tab: str) -> str:
     return _bulk_stash_tab_label(source_tab)
 
 
+def _bulk_deposit_destination_page(value: object = None) -> int | None:
+    """Return an optional concrete Vault stash page index."""
+
+    if value in (None, ""):
+        return None
+    if isinstance(value, bool):
+        raise VaultValidationError("destinationPageIndex must be a non-negative integer")
+    try:
+        page_index = int(value)
+    except (TypeError, ValueError, OverflowError) as exc:
+        raise VaultValidationError(
+            "destinationPageIndex must be a non-negative integer"
+        ) from exc
+    if page_index < 0:
+        raise VaultValidationError("destinationPageIndex must be a non-negative integer")
+    return page_index
+
+
 def _bulk_deposit_source_options() -> list[dict[str, str]]:
     """Stable UI choices; the backend still validates every submitted value."""
 
@@ -2207,6 +2425,10 @@ def _bulk_deposit_plan(
     document: dict,
     collection_id: int,
     source_tab: str = BULK_DEPOSIT_ALL_TABS,
+    *,
+    destination_page_index: int | None = None,
+    destination_stash_name: str | None = None,
+    existing_records: list | None = None,
 ) -> dict:
     _bulk_validate_stash_document(document)
     source_tab = _bulk_deposit_source_tab(source_tab)
@@ -2235,9 +2457,21 @@ def _bulk_deposit_plan(
                     f"{_bulk_stash_tab_label(tab)} item key {raw_source_key!r} "
                     "contains unsupported outer whitespace; it was left untouched"
                 )
-            _decoded, resolved, _cls = _bulk_native_item_info(
+            decoded, resolved, _cls = _bulk_native_item_info(
                 source_key, raw_json, tab
             )
+            try:
+                width = max(1, int(resolved.get("w") or 1))
+                height = max(1, int(resolved.get("h") or 1))
+            except (TypeError, ValueError, OverflowError) as exc:
+                raise VaultValidationError(
+                    f"{resolved.get('name') or source_key} has invalid Vault grid "
+                    "dimensions; nothing was moved"
+                ) from exc
+            if width > VAULT_GRID_COLUMNS or height > VAULT_GRID_ROWS:
+                raise VaultValidationError(
+                    f"{resolved.get('name') or source_key} does not fit a Vault stash"
+                )
             label = _bulk_clean_text_field(
                 str(resolved.get("name") or source_key), "item label"
             )
@@ -2249,9 +2483,71 @@ def _bulk_deposit_plan(
                 # Keep the machine tab, not only a friendly label. This makes
                 # a later full return origin-exact even across app restarts.
                 "source": tab,
+                "source_pos": decoded.get("pos"),
+                "_grid_size": (width, height),
             })
         work[tab] = {}
-    intent_hash = canonical_request_hash({
+    if destination_page_index is not None:
+        occupied: set[tuple[int, int]] = set()
+
+        def claim(x: int, y: int, width: int, height: int) -> bool:
+            if (
+                x < 0 or y < 0
+                or x + width > VAULT_GRID_COLUMNS
+                or y + height > VAULT_GRID_ROWS
+            ):
+                return False
+            cells = {
+                (column, row)
+                for row in range(y, y + height)
+                for column in range(x, x + width)
+            }
+            if cells & occupied:
+                return False
+            occupied.update(cells)
+            return True
+
+        existing_layout = _vault_layout_plan(existing_records or [])
+        for record in existing_records or []:
+            placement = existing_layout[record.id]
+            if placement[0] != destination_page_index:
+                continue
+            _page, x, y, width, height = placement
+            if not claim(x, y, width, height):
+                raise VaultValidationError(
+                    "Destination Vault stash contains overlapping layout metadata; nothing was moved"
+                )
+
+        for row in entries:
+            width, height = row["_grid_size"]
+            position = None
+            source_pos = row.get("source_pos")
+            if isinstance(source_pos, (list, tuple)) and len(source_pos) == 2:
+                try:
+                    source_x, source_y = float(source_pos[0]), float(source_pos[1])
+                    if source_x.is_integer() and source_y.is_integer() and claim(
+                        int(source_x), int(source_y), width, height
+                    ):
+                        position = (int(source_x), int(source_y))
+                except (TypeError, ValueError, OverflowError):
+                    position = None
+            if position is None:
+                for y in range(VAULT_GRID_ROWS - height + 1):
+                    for x in range(VAULT_GRID_COLUMNS - width + 1):
+                        if claim(x, y, width, height):
+                            position = (x, y)
+                            break
+                    if position is not None:
+                        break
+            if position is None:
+                raise VaultValidationError(
+                    f"{destination_stash_name or 'Destination Vault stash'} has no room "
+                    "for every item; nothing was moved"
+                )
+            row["target_pos"] = position
+            row["target_size"] = (width, height)
+
+    intent = {
         "direction": "bulk_deposit",
         "collectionId": collection_id,
         "items": [
@@ -2261,10 +2557,20 @@ def _bulk_deposit_plan(
                 "rawSha256": hashlib.sha256(
                     row["raw_item_json"].encode("utf-8")
                 ).hexdigest(),
+                **(
+                    {
+                        "targetPos": list(row["target_pos"]),
+                        "targetSize": list(row["target_size"]),
+                    }
+                    if destination_page_index is not None else {}
+                ),
             }
             for row in entries
         ],
-    })
+    }
+    if destination_page_index is not None:
+        intent["destinationPageIndex"] = destination_page_index
+    intent_hash = canonical_request_hash(intent)
     encoded_after = _bulk_encode_stash_document(work)
     return {
         "entries": entries,
@@ -2276,6 +2582,8 @@ def _bulk_deposit_plan(
         "customNamedCount": 0,
         "sourceTab": source_tab,
         "sourceLabel": _bulk_deposit_source_label(source_tab),
+        "destinationPageIndex": destination_page_index,
+        "destinationStashName": destination_stash_name,
     }
 
 
@@ -2573,6 +2881,7 @@ def _bulk_plan_locked(
     source_tab: object = None,
     destination_tab: object = None,
     item_ids: list[str] | None = None,
+    destination_page_index: int | None = None,
 ) -> dict:
     stash_path = SAVES / "stash.hss"
     stash_sha256 = _file_sha256(stash_path)
@@ -2581,6 +2890,9 @@ def _bulk_plan_locked(
     collection_name = None
     if direction == "stash-to-vault":
         source_tab = _bulk_deposit_source_tab(source_tab)
+        destination_page_index = _bulk_deposit_destination_page(
+            destination_page_index
+        )
         if collection_id is None:
             raise VaultValidationError("a destination Vault collection is required")
         collection = next(
@@ -2589,8 +2901,33 @@ def _bulk_plan_locked(
         if collection is None:
             raise VaultValidationError("destination Vault collection was not found")
         collection_name = collection.name
-        plan = _bulk_deposit_plan(document, collection_id, source_tab)
+        destination_stash_name = None
+        existing_records = None
+        if destination_page_index is not None:
+            destination_page = next(
+                (
+                    row for row in store.list_stash_pages(collection_id)
+                    if row.page_index == destination_page_index
+                ),
+                None,
+            )
+            if destination_page is None:
+                raise VaultValidationError("destination Vault stash was not found")
+            destination_stash_name = destination_page.name
+            existing_records = store.list_all_available_items(
+                collection=collection_id
+            )
+        plan = _bulk_deposit_plan(
+            document, collection_id, source_tab,
+            destination_page_index=destination_page_index,
+            destination_stash_name=destination_stash_name,
+            existing_records=existing_records,
+        )
     elif direction == "vault-to-stash":
+        if destination_page_index is not None:
+            raise VaultValidationError(
+                "destinationPageIndex can only be used when moving Shared Stash items into the Vault"
+            )
         if source_tab not in (None, BULK_DEPOSIT_ALL_TABS):
             raise VaultValidationError(
                 "sourceTab can only be used when moving Shared Stash items into the Vault"
@@ -2632,6 +2969,14 @@ def _bulk_plan_locked(
             _bulk_deposit_source_label(source_tab)
             if direction == "stash-to-vault" else None
         ),
+        "destinationPageIndex": (
+            plan.get("destinationPageIndex")
+            if direction == "stash-to-vault" else None
+        ),
+        "destinationStashName": (
+            plan.get("destinationStashName")
+            if direction == "stash-to-vault" else None
+        ),
         "destinationTab": (
             plan.get("destinationTab") if direction == "vault-to-stash" else None
         ),
@@ -2658,6 +3003,8 @@ def _bulk_public_preview(plan: dict, *, game_is_running: bool) -> dict:
         "collectionName": plan.get("collectionName"),
         "sourceTab": plan.get("sourceTab"),
         "sourceLabel": plan.get("sourceLabel"),
+        "destinationPageIndex": plan.get("destinationPageIndex"),
+        "destinationStashName": plan.get("destinationStashName"),
         "destinationTab": plan.get("destinationTab"),
         "destinationLabel": plan.get("destinationLabel"),
         "customNamedCount": int(plan.get("customNamedCount", 0)),
@@ -2732,6 +3079,7 @@ def vault_bulk_preview(query: dict) -> dict:
     collection_id = None
     source_tab = None
     destination_tab = None
+    destination_page_index = None
     if direction == "stash-to-vault":
         if "destinationTab" in query:
             return {
@@ -2746,9 +3094,16 @@ def vault_bulk_preview(query: dict) -> dict:
             source_tab = _bulk_deposit_source_tab(
                 query.get("sourceTab", [None])[0]
             )
+            destination_page_index = _bulk_deposit_destination_page(
+                query.get("destinationPageIndex", [None])[0]
+            )
         except VaultValidationError as exc:
             return {"err": str(exc)}
     elif direction == "vault-to-stash":
+        if query.get("destinationPageIndex", [None])[0] not in (None, ""):
+            return {
+                "err": "destinationPageIndex can only be used when moving Shared Stash items into the Vault"
+            }
         if query.get("sourceTab", [None])[0] not in (
             None, BULK_DEPOSIT_ALL_TABS
         ):
@@ -2785,7 +3140,8 @@ def vault_bulk_preview(query: dict) -> dict:
                             "err": "An interrupted Infinite Vault transfer must be recovered first."
                         }
                 plan = _bulk_plan_locked(
-                    direction, collection_id, source_tab, destination_tab
+                    direction, collection_id, source_tab, destination_tab,
+                    destination_page_index=destination_page_index,
                 )
                 return _bulk_public_preview(plan, game_is_running=running)
     except (VaultError, OSError, ValueError, json.JSONDecodeError) as exc:
@@ -3080,8 +3436,17 @@ def vault_meta() -> dict:
     ]
     default = next((row for row in collections if row.name == "Vault"),
                    collections[0] if collections else None)
+    collection_payloads = [
+        {
+            **row.as_dict(),
+            "stashes": [
+                page.as_dict() for page in store.list_stash_pages(row.id)
+            ],
+        }
+        for row in collections
+    ]
     return {
-        "collections": [row.as_dict() for row in collections],
+        "collections": collection_payloads,
         "defaultCollectionId": default.id if default else None,
         "total": store.count_items(status="available"),
         "gameRunning": running,
@@ -3225,18 +3590,27 @@ def op_vault_layout(body: dict) -> dict:
         plan = _vault_layout_plan(
             records, preserve_existing=action != "compact"
         )
+        required_page_count = 1 + max(
+            (placement[0] for placement in plan.values()), default=0
+        )
+        pages = store.list_stash_pages(collection_id)
+        existing_indexes = {page.page_index for page in pages}
+        if any(index not in existing_indexes for index in range(required_page_count)):
+            pages = store.ensure_stash_page_count(
+                collection_id, required_page_count
+            )
         initialized = _save_vault_layout_changes(
             store, collection_id, records, plan
         )
         if action in {"ensure", "compact"}:
-            page_count = 1 + max((placement[0] for placement in plan.values()), default=-1)
             return {
                 "ok": (
                     "Vault grids compacted safely"
                     if action == "compact" else "Vault layout is ready"
                 ),
                 "changed": initialized,
-                "pageCount": page_count,
+                "pageCount": len(pages),
+                "stashes": [page.as_dict() for page in pages],
             }
 
         # A first placement may also have initialized legacy rows. Reload the
@@ -3291,7 +3665,7 @@ def op_vault_layout(body: dict) -> dict:
 
 def vault_items(query: dict) -> dict:
     try:
-        limit = max(1, min(500, int(query.get("limit", [500])[0])))
+        limit = max(1, min(5000, int(query.get("limit", [500])[0])))
         offset = max(0, int(query.get("offset", [0])[0]))
     except (TypeError, ValueError):
         raise VaultValidationError("invalid vault pagination")
@@ -3304,16 +3678,22 @@ def vault_items(query: dict) -> dict:
         except (TypeError, ValueError):
             raise VaultValidationError("invalid collectionId")
     store = vault_store()
-    rows = store.list_items(
-        collection=collection, search=search, status="available",
-        limit=min(500, limit + 1), offset=offset,
-    )
-    has_more = len(rows) > limit
-    rows = rows[:limit]
-    if search and search.strip():
-        total = offset + len(rows) + (1 if has_more else 0)
+    if collection is not None and not (search and search.strip()):
+        all_rows = store.list_all_available_items(collection=collection)
+        total = len(all_rows)
+        rows = all_rows[offset:offset + limit]
+        has_more = offset + len(rows) < total
     else:
-        total = store.count_items(collection=collection, status="available")
+        storage_limit = min(500, limit)
+        rows = store.list_items(
+            collection=collection, search=search, status="available",
+            limit=storage_limit, offset=offset,
+        )
+        has_more = len(rows) >= storage_limit
+        if search and search.strip():
+            total = offset + len(rows) + (1 if has_more else 0)
+        else:
+            total = store.count_items(collection=collection, status="available")
     try:
         tooltip_build_status = _editor_runtime_build_status()
     except Exception:
@@ -3329,6 +3709,10 @@ def vault_items(query: dict) -> dict:
         "limit": limit,
         "hasMore": has_more,
         "persistentLayout": collection is not None and not bool(search and search.strip()),
+        "stashes": (
+            [page.as_dict() for page in store.list_stash_pages(collection)]
+            if collection is not None else []
+        ),
     }
 
 
@@ -3434,6 +3818,30 @@ def op_vault_collections(body: dict) -> dict:
         return {"err": str(exc)}
 
 
+def op_vault_stashes(body: dict) -> dict:
+    """Add or quickly rename one concrete stash inside a Vault category."""
+
+    try:
+        action = body.get("action")
+        collection_id = int(body.get("collectionId"))
+        store = vault_store()
+        if action == "add":
+            page = store.add_stash_page(collection_id)
+            return {
+                "ok": f"{page.name} created",
+                "stash": page.as_dict(),
+                "stashes": [row.as_dict() for row in store.list_stash_pages(collection_id)],
+            }
+        if action == "rename":
+            page = store.rename_stash_page(
+                collection_id, int(body.get("pageIndex")), body.get("name")
+            )
+            return {"ok": f"Stash renamed: {page.name}", "stash": page.as_dict()}
+        return {"err": "unknown Vault stash action"}
+    except (VaultError, TypeError, ValueError) as exc:
+        return {"err": str(exc)}
+
+
 def op_vault_item(body: dict) -> dict:
     try:
         action = body.get("action")
@@ -3461,9 +3869,55 @@ def op_vault_item(body: dict) -> dict:
                 if row.custom_name
                 else "Custom name cleared"
             )
+        elif action == "addStack":
+            if game_running():
+                return {"err": "Game is running! Close it before changing a Vault stack."}
+            try:
+                amount = clean_positive_stack_amount(body.get("count"))
+            except ValueError as exc:
+                return {"err": str(exc)}
+            store = vault_store()
+            current_row = store.get_item(body.get("itemId"))
+            if current_row.page_index is None:
+                return {"err": "Vault item has no stash position. Refresh the category and try again."}
+            entry = current_row.decoded_item()
+            key = current_row.source_item_key or ""
+            data = entry.get("data")
+            stack_info = native_stackable_info(key, data)
+            if stack_info is None:
+                return {"err": "This catalog item is not safely stackable."}
+            current = native_stack_count(data)
+            if current is None:
+                return {"err": "Current stack quantity is malformed; item unchanged."}
+            new_count = current + amount
+            if new_count > MAX_MANUAL_STACK_AMOUNT:
+                return {
+                    "err": (
+                        f"{current} + {amount} exceeds the editor's safe limit of "
+                        f"{MAX_MANUAL_STACK_AMOUNT:,}; item unchanged"
+                    )
+                }
+            data["o"] = float(new_count)
+            updated = store.update_stash_item_payloads(
+                current_row.collection_id, current_row.page_index, [{
+                    "itemId": current_row.id,
+                    "expectedSha256": current_row.raw_sha256,
+                    "rawItemJson": json.dumps(
+                        entry, ensure_ascii=False, separators=(",", ":")
+                    ),
+                }],
+            )
+            row = updated[0]
+            message = (
+                f"{stack_info['name']}: {current} + {amount} = {new_count}"
+            )
         else:
             return {"err": "unknown vault item action"}
-        return {"ok": message, "item": _vault_item_payload(row)}
+        result = {"ok": message, "item": _vault_item_payload(row)}
+        if action == "addStack":
+            result["stack"] = int(row.decoded_item()["data"]["o"])
+            result["backup"] = Path(str(VAULT_DB_FILE) + ".bak").name
+        return result
     except (VaultError, TypeError, ValueError) as exc:
         return {"err": str(exc)}
 
@@ -3792,15 +4246,23 @@ def op_vault_bulk(body: dict) -> dict:
         collection_id = None
         source_tab = None
         destination_tab = None
+        destination_page_index = None
         selection_ids = None
         if direction == "stash-to-vault":
             collection_id = int(body.get("collectionId"))
             source_tab = _bulk_deposit_source_tab(body.get("sourceTab"))
+            destination_page_index = _bulk_deposit_destination_page(
+                body.get("destinationPageIndex")
+            )
             if body.get("destinationTab") is not None:
                 raise VaultValidationError(
                     "destinationTab can only be used when returning Vault items to Shared Stash"
                 )
         else:
+            if body.get("destinationPageIndex") not in (None, ""):
+                raise VaultValidationError(
+                    "destinationPageIndex can only be used when moving Shared Stash items into the Vault"
+                )
             if body.get("sourceTab") not in (None, BULK_DEPOSIT_ALL_TABS):
                 raise VaultValidationError(
                     "sourceTab can only be used when moving Shared Stash items into the Vault"
@@ -3878,7 +4340,7 @@ def op_vault_bulk(body: dict) -> dict:
                     return {"err": "Game started while the bulk transfer was waiting.", "code": "game_running"}
                 plan = _bulk_plan_locked(
                     direction, collection_id, source_tab, destination_tab,
-                    selection_ids,
+                    selection_ids, destination_page_index,
                 )
                 if plan["previewToken"] != preview_token.lower():
                     return {
@@ -3902,6 +4364,7 @@ def op_vault_bulk(body: dict) -> dict:
                         request_hash=plan["intentHash"],
                         stash_before_sha256=before_hash,
                         stash_after_sha256=after_hash,
+                        destination_page_index=plan.get("destinationPageIndex"),
                     )
                 else:
                     batch = store.prepare_bulk_withdrawal(
@@ -4084,6 +4547,31 @@ def op_move(body: dict) -> dict:
     dst = ctx.items(to)
     dst_tab = to.get("tab") or to["type"]
     same = src is dst
+    virtual_collection_target = (
+        to.get("type") == "bag"
+        and dst_tab in VIRTUAL_COLLECTION_BAG_TABS
+    )
+    if virtual_collection_target:
+        if same:
+            return {
+                "ok": f"{it['name']} is already in the auto-arranged {dst_tab} collection.",
+                "backup": "",
+            }
+        del src[key]
+        if frm["type"] == "equipped":
+            entry.get("data", {}).pop("g", None)
+            entry.get("data", {}).pop("t", None)
+        if key in dst:
+            key = fresh_key(int(key.rsplit("-", 1)[1]), dst)
+        # Native Relic/Tarot collections do not require a grid coordinate.
+        # The reader recreates their visual layout without polluting the save.
+        entry.pop("pos", None)
+        dst[key] = entry
+        baks = ctx.save_all(destination_first=file_key(to))
+        return {
+            "ok": f"{it['name']} moved -> auto-arranged {dst_tab}",
+            "backup": ", ".join(baks),
+        }
     if not pos_free(dst, dst_tab, pos, it["w"], it["h"], skip_key=key if same else None):
         return {"err": "cell occupied or does not fit"}
     if not same:
@@ -4169,7 +4657,10 @@ def op_add(body: dict) -> dict:
         p = SAVES / f"inventory_order_{slot}.hss"
         d = json.loads(decode_hss(p)) if p.exists() and p.stat().st_size > 50 else {}
         items = d.setdefault(tab, {})
-        if tgt.get("pos") is not None:
+        virtual_collection_target = tab in VIRTUAL_COLLECTION_BAG_TABS
+        if virtual_collection_target:
+            pos = None
+        elif tgt.get("pos") is not None:
             pos = [float(int(tgt["pos"][0])), float(int(tgt["pos"][1]))]
             if not pos_free(items, tab, pos, r["w"], r["h"]):
                 return {"err": "cell occupied or does not fit"}
@@ -4178,9 +4669,16 @@ def op_add(body: dict) -> dict:
             if pos is None:
                 return {"err": "No free space in the bag."}
         key = fresh_key(r["cls"], items)
-        items[key] = {"pos": pos, "data": make_data(r, skill_id=skill_id)}
+        entry = {"data": make_data(r, skill_id=skill_id)}
+        if pos is not None:
+            entry["pos"] = pos
+        items[key] = entry
         bk = write_bags(slot, d)
-        return {"ok": f"{r['name']} -> canta {tab}{skill_suffix}", "backup": bk}
+        placement = " (auto-arranged)" if virtual_collection_target else ""
+        return {
+            "ok": f"{r['name']} -> canta {tab}{placement}{skill_suffix}",
+            "backup": bk,
+        }
     if tgt["type"] in ("potions", "personal_stash"):
         slot = int(tgt["slot"])
         p = SAVES / f"herosiege{slot}.hss"
@@ -4425,11 +4923,32 @@ def op_modify(body: dict) -> dict:
         return {"ok": (f"{it['name']}: {mode} applied ({detail}; "
                        f"{seed_detail})"),
                 "backup": ", ".join(baks)}
-    if action == "setstack":
-        n = max(1, min(99_999_999, int(body.get("count", 1))))
-        entry.setdefault("data", {})["o"] = float(n)
+    if action in {"setstack", "addstack"}:
+        data = entry.setdefault("data", {})
+        if native_stackable_info(key, data) is None:
+            return {"err": f"{it['name']}: this catalog item is not safely stackable"}
+        current = native_stack_count(data)
+        if current is None:
+            return {"err": f"{it['name']}: current stack quantity is malformed; item unchanged"}
+        try:
+            amount = clean_positive_stack_amount(body.get("count", 1))
+        except ValueError as exc:
+            return {"err": str(exc)}
+        if action == "addstack":
+            n = current + amount
+            if n > MAX_MANUAL_STACK_AMOUNT:
+                return {
+                    "err": (
+                        f"{it['name']}: {current} + {amount} exceeds the editor's "
+                        f"safe limit of {MAX_MANUAL_STACK_AMOUNT:,}; item unchanged"
+                    )
+                }
+        else:
+            n = min(MAX_MANUAL_STACK_AMOUNT, amount)
+        data["o"] = float(n)
         baks = ctx.save_all()
-        return {"ok": f"{it['name']}: stack = {n}", "backup": ", ".join(baks)}
+        verb = f"{current} + {amount} = {n}" if action == "addstack" else f"stack = {n}"
+        return {"ok": f"{it['name']}: {verb}", "stack": n, "backup": ", ".join(baks)}
     if action == "duplicate":
         import copy
         clone = copy.deepcopy(entry)
@@ -4447,85 +4966,236 @@ def op_modify(body: dict) -> dict:
 
 
 def _verified_roll_assessment(key: str, entry: dict, *, apply: bool) -> dict:
-    """Preflight or apply the same proven seed rules as one-item Perfect Roll."""
+    """Preflight/apply verified rolls and the native x999 stack maximum.
+
+    Roll seeds and quantities are independent actions but share one atomic
+    preview/write.  A malformed roll or stack blocks the whole container.
+    """
 
     if not isinstance(entry, dict) or not isinstance(entry.get("data"), dict):
         return {"status": "blocked", "name": key, "reason": "malformed item data"}
-    item = resolve(key, entry["data"])
-    name = str(item.get("name") or key)
-    if item.get("skillSelector"):
-        return {
-            "status": "skipped", "name": name,
-            "reason": "skill/class identity must be chosen explicitly",
-        }
-    profile = item.get("rollProfile")
-    if not profile:
-        return {
-            "status": "skipped", "name": name,
-            "reason": "no verified profile for this exact item address",
-        }
-    if profile.get("mode") == "fixed":
-        return {"status": "skipped", "name": name, "reason": "stats are fixed"}
-    field_seeds = effective_roll_field_seeds(profile)
     data = entry["data"]
-    applicable = {
-        field: seed for field, seed in field_seeds.items()
-        if field != "s" or "s" in data
-    }
-    if not applicable:
+    item = resolve(key, data)
+    name = str(item.get("name") or key)
+
+    stack_info = native_stackable_info(key, data)
+    stack_current = native_stack_count(data) if stack_info else None
+    if stack_info and stack_current is None:
         return {
-            "status": "skipped", "name": name,
-            "reason": "no active verified seed field",
+            "status": "blocked", "name": name,
+            "reason": "native stack quantity is malformed",
         }
-    max_sockets = roll_profile_max_sockets(profile)
-    if max_sockets is not None:
-        excess = [
-            f"s{index}" for index in range(max_sockets + 1, 7)
-            if f"s{index}" in data
-        ]
-        if excess:
-            return {
-                "status": "blocked", "name": name,
-                "reason": (
-                    f"socket payload {', '.join(excess)} exceeds verified "
-                    f"maximum {max_sockets}"
-                ),
-            }
-        if data.get("zz") is not None and not isinstance(data.get("zz"), dict):
-            return {
-                "status": "blocked", "name": name,
-                "reason": "socket metadata is malformed",
-            }
-    socket_applied = (
-        max_sockets is None
-        or (
-            isinstance(data.get("zz"), dict)
-            and isinstance(data["zz"].get("sockets"), (int, float))
-            and not isinstance(data["zz"].get("sockets"), bool)
-            and float(data["zz"]["sockets"]) == float(max_sockets)
-        )
+    stack_changed = bool(
+        stack_info and stack_current != int(stack_info["maxStack"])
     )
-    already = socket_applied and all(
-        isinstance(data.get(field), (int, float))
-        and not isinstance(data.get(field), bool)
-        and float(data[field]) == float(seed)
-        for field, seed in applicable.items()
-    )
-    mode = str(profile.get("mode") or "best")
-    if already:
-        return {
-            "status": "already", "name": name, "mode": mode,
-            "label": effective_roll_label(profile),
+
+    profile = item.get("rollProfile")
+    roll_actionable = False
+    roll_changed = False
+    roll_already = False
+    roll_reason = "no verified profile for this exact item address"
+    mode = None
+    label = None
+    detail = None
+    applicable: dict[str, float] = {}
+    max_sockets = None
+
+    if item.get("skillSelector"):
+        roll_reason = "skill/class identity must be chosen explicitly"
+    elif not profile:
+        roll_reason = "no verified profile for this exact item address"
+    elif profile.get("mode") == "fixed":
+        roll_reason = "stats are fixed"
+    else:
+        field_seeds = effective_roll_field_seeds(profile)
+        applicable = {
+            field: seed for field, seed in field_seeds.items()
+            if field != "s" or "s" in data
         }
+        if not applicable:
+            roll_reason = "no active verified seed field"
+        else:
+            roll_actionable = True
+            max_sockets = roll_profile_max_sockets(profile)
+            if max_sockets is not None:
+                excess = [
+                    f"s{index}" for index in range(max_sockets + 1, 7)
+                    if f"s{index}" in data
+                ]
+                if excess:
+                    return {
+                        "status": "blocked", "name": name,
+                        "reason": (
+                            f"socket payload {', '.join(excess)} exceeds verified "
+                            f"maximum {max_sockets}"
+                        ),
+                    }
+                if data.get("zz") is not None and not isinstance(data.get("zz"), dict):
+                    return {
+                        "status": "blocked", "name": name,
+                        "reason": "socket metadata is malformed",
+                    }
+            socket_applied = (
+                max_sockets is None
+                or (
+                    isinstance(data.get("zz"), dict)
+                    and isinstance(data["zz"].get("sockets"), (int, float))
+                    and not isinstance(data["zz"].get("sockets"), bool)
+                    and float(data["zz"]["sockets"]) == float(max_sockets)
+                )
+            )
+            roll_already = socket_applied and all(
+                isinstance(data.get(field), (int, float))
+                and not isinstance(data.get(field), bool)
+                and float(data[field]) == float(seed)
+                for field, seed in applicable.items()
+            )
+            roll_changed = not roll_already
+            mode = str(profile.get("mode") or "best")
+            label = effective_roll_label(profile)
+            detail = effective_roll_detail(profile)
+
     if apply:
-        data.update(applicable)
-        if max_sockets is not None:
-            data.setdefault("zz", {})["sockets"] = float(max_sockets)
-    return {
-        "status": "changed", "name": name, "mode": mode,
-        "label": effective_roll_label(profile),
-        "detail": effective_roll_detail(profile),
+        if roll_changed:
+            data.update(applicable)
+            if max_sockets is not None:
+                data.setdefault("zz", {})["sockets"] = float(max_sockets)
+        if stack_changed:
+            data["o"] = float(FULL_STACK_AMOUNT)
+
+    result = {
+        "name": name,
+        "mode": mode,
+        "label": label,
+        "detail": detail,
+        "rollChanged": roll_changed,
+        "rollAlready": roll_already,
+        "stackChanged": stack_changed,
+        "stackAlready": bool(stack_info and not stack_changed),
     }
+    if roll_changed or stack_changed:
+        return {**result, "status": "changed"}
+    if roll_actionable or stack_info:
+        return {**result, "status": "already"}
+    return {**result, "status": "skipped", "reason": roll_reason}
+
+
+def op_vault_roll(body: dict) -> dict:
+    """Preview/apply verified MAX or Best Possible to one Vault stash."""
+
+    if not isinstance(body, dict):
+        return {"err": "invalid Vault stash roll request"}
+    action = body.get("action")
+    if action not in {"preview", "apply"}:
+        return {"err": "Vault stash roll action must be preview or apply"}
+    if action == "apply" and game_running():
+        return {"err": "Game is running! Close it before changing item rolls."}
+    try:
+        collection_id = int(body.get("collectionId"))
+        page_index = int(body.get("pageIndex"))
+        if collection_id <= 0 or page_index < 0:
+            raise ValueError
+    except (TypeError, ValueError):
+        return {"err": "a concrete Vault category and stash are required"}
+    try:
+        store = vault_store()
+        pages = store.list_stash_pages(collection_id)
+        if not any(page.page_index == page_index for page in pages):
+            return {"err": "Vault stash was not found"}
+        records = [
+            record for record in store.list_all_available_items(collection=collection_id)
+            if record.page_index == page_index
+        ]
+        records.sort(key=lambda record: record.id)
+        fingerprint = canonical_request_hash({
+            "kind": "vault_stash_verified_roll_preview",
+            "collectionId": collection_id,
+            "pageIndex": page_index,
+            "items": [
+                {"id": record.id, "sha256": record.raw_sha256}
+                for record in records
+            ],
+        })
+        if action == "apply":
+            token = body.get("previewToken")
+            if not isinstance(token, str) or token.lower() != fingerprint:
+                return {
+                    "err": "Vault stash changed after preview. Review the new plan; nothing was changed.",
+                    "code": "preview_stale",
+                }
+
+        decoded = [(record, record.decoded_item()) for record in records]
+        assessments = [
+            _verified_roll_assessment(
+                record.source_item_key or "0-0-0--1", entry, apply=False
+            )
+            for record, entry in decoded
+        ]
+        blocked = [row for row in assessments if row["status"] == "blocked"]
+        changed = [row for row in assessments if row["status"] == "changed"]
+        already = [row for row in assessments if row["status"] == "already"]
+        skipped = [row for row in assessments if row["status"] == "skipped"]
+        exact_count = sum(
+            row.get("rollChanged") and row.get("mode") == "exact" for row in changed
+        )
+        best_count = sum(
+            row.get("rollChanged") and row.get("mode") == "best" for row in changed
+        )
+        stack_count = sum(bool(row.get("stackChanged")) for row in changed)
+        base = {
+            "previewToken": fingerprint,
+            "totalCount": len(assessments),
+            "changeCount": len(changed),
+            "alreadyCount": len(already),
+            "skippedCount": len(skipped),
+            "blockedCount": len(blocked),
+            "exactCount": exact_count,
+            "bestCount": best_count,
+            "stackMaxCount": stack_count,
+            "blocked": blocked[:20],
+            "skipped": skipped[:20],
+            "canRun": bool(changed and not blocked and not game_running()),
+        }
+        if action == "preview":
+            return base
+        if blocked:
+            return {
+                **base,
+                "err": "A blocked Vault item was found; nothing was changed.",
+            }
+        if not changed:
+            return {
+                **base, "ok": "Every actionable item in this stash is already optimized",
+                "backup": "",
+            }
+        updates = []
+        for record, entry in decoded:
+            result = _verified_roll_assessment(
+                record.source_item_key or "0-0-0--1", entry, apply=True
+            )
+            if result["status"] != "changed":
+                continue
+            updates.append({
+                "itemId": record.id,
+                "expectedSha256": record.raw_sha256,
+                "rawItemJson": json.dumps(
+                    entry, ensure_ascii=False, separators=(",", ":")
+                ),
+            })
+        store.update_stash_item_payloads(collection_id, page_index, updates)
+        return {
+            **base,
+            "ok": (
+                f"Optimized {len(updates)} Vault items "
+                f"({exact_count} Exact MAX, {best_count} Best Possible, "
+                f"{stack_count} stacks set to x{FULL_STACK_AMOUNT})"
+            ),
+            "backup": Path(str(VAULT_DB_FILE) + ".bak").name,
+        }
+    except VaultError as exc:
+        return {"err": str(exc)}
+    except (TypeError, ValueError, json.JSONDecodeError) as exc:
+        return {"err": f"Vault stash roll failed safely: {exc}"}
 
 
 def op_bulk_roll(body: dict) -> dict:
@@ -4538,8 +5208,6 @@ def op_bulk_roll(body: dict) -> dict:
         return {"err": "bulk roll action must be preview or apply"}
     if action == "apply" and game_running():
         return {"err": "Game is running! Close it before changing item rolls."}
-    if not ROLL_DB.available:
-        return {"err": roll_database_message() + "; no items changed"}
     target = body.get("target")
     if not isinstance(target, dict):
         return {"err": "invalid bulk roll target"}
@@ -4580,8 +5248,13 @@ def op_bulk_roll(body: dict) -> dict:
     changed = [row for row in assessments if row["status"] == "changed"]
     already = [row for row in assessments if row["status"] == "already"]
     skipped = [row for row in assessments if row["status"] == "skipped"]
-    exact_count = sum(row.get("mode") == "exact" for row in changed)
-    best_count = sum(row.get("mode") == "best" for row in changed)
+    exact_count = sum(
+        row.get("rollChanged") and row.get("mode") == "exact" for row in changed
+    )
+    best_count = sum(
+        row.get("rollChanged") and row.get("mode") == "best" for row in changed
+    )
+    stack_count = sum(bool(row.get("stackChanged")) for row in changed)
     base = {
         "previewToken": fingerprint,
         "totalCount": len(assessments),
@@ -4591,6 +5264,7 @@ def op_bulk_roll(body: dict) -> dict:
         "blockedCount": len(blocked),
         "exactCount": exact_count,
         "bestCount": best_count,
+        "stackMaxCount": stack_count,
         "blocked": blocked[:20],
         "skipped": skipped[:20],
         "canRun": bool(changed and not blocked and not game_running()),
@@ -4614,7 +5288,8 @@ def op_bulk_roll(body: dict) -> dict:
         **base,
         "ok": (
             f"Optimized {len(changed)} items in one write "
-            f"({exact_count} Exact MAX, {best_count} Best Possible)"
+            f"({exact_count} Exact MAX, {best_count} Best Possible, "
+            f"{stack_count} stacks set to x{FULL_STACK_AMOUNT})"
         ),
         "backup": ", ".join(backups),
     }
@@ -5252,27 +5927,8 @@ def _relic_key_by_b(b) -> str:
 #   Key/Gem:   {"n":0,"w":1,"o":<qty>,"a":0,"e":0,"d":0,"b":<base>,"c":0}
 #   Material:  {"o":<qty>,"a":<seed>,"e":0,"d":0,"b":<base>,"c":0}
 # (Potion 11 = codex/potion-belt mix; Consumable 18 = m:1 singleton -> not included.)
-STACKABLE_CLS = {
-    12: "Key",
-    13: "Boss Part / Tarot",
-    14: "Material",
-    15: "Rune / Gem / Orb",
-}
-
-# The native Season 10 stash produced by the game/editor uses 999 as a full
-# stack.  The generic right-click editor intentionally accepts larger manual
-# values, but the one-click fill operation stays on this conservative native
-# amount instead of treating a numeric save-field limit as a game stack limit.
-FULL_STACK_AMOUNT = 999
-
-# These addresses are stored as individual records in native Season 10 stash
-# data.  Adding an ``o`` quantity turns them into an unproven shape, so the fill
-# operation ensures one record exists but never invents a stack for them.
-MATERIAL_SINGLETON_ADDRESSES = frozenset({
-    *((13, base) for base in range(58, 65)),
-    (14, 59),  # Reflection of Tarethiel
-    (14, 67),  # Blessed Dice
-})
+# The native stack rules live beside the class map so MAX, Add Stack and
+# generation all share the same catalog-backed allowlist.
 
 
 def stackable_list() -> list:
@@ -6761,10 +7417,14 @@ class H(BaseHTTPRequestHandler):
             self._json(op_vault_resolve_batch(body))
         elif path == "/api/vault/collections":
             self._json(op_vault_collections(body))
+        elif path == "/api/vault/stashes":
+            self._json(op_vault_stashes(body))
         elif path == "/api/vault/item":
             self._json(op_vault_item(body))
         elif path == "/api/vault/layout":
             self._json(op_vault_layout(body))
+        elif path == "/api/vault/roll":
+            self._json(op_vault_roll(body))
         elif path == "/api/vault/undo":
             self._json(op_vault_undo(body))
         else:
@@ -7025,8 +7685,9 @@ input,select{background:#0b111a;color:#dfe7f0;border-color:#2d3b50;border-radius
 .stash-tab-head{display:flex;align-items:end;justify-content:space-between;gap:12px;max-width:1120px;margin-top:14px}.stash-tab-head h2{margin:0 0 6px}.stash-head-actions{display:flex;align-items:center;gap:6px}.stash-fill,.stash-roll{min-height:31px;margin:0 0 6px;padding:6px 11px;border:1px solid rgba(82,221,169,.44);border-radius:8px;background:linear-gradient(180deg,rgba(38,126,91,.28),rgba(23,73,55,.3));color:#91ebc4;cursor:pointer;font-size:10px;font-weight:850;letter-spacing:.35px}.stash-roll{border-color:rgba(241,184,75,.48);background:linear-gradient(180deg,rgba(137,91,26,.3),rgba(83,57,22,.3));color:#f3d18d}.stash-fill:hover{border-color:#62e3b3;background:rgba(38,126,91,.38)}.stash-roll:hover{border-color:#f1c66f;background:rgba(137,91,26,.42)}.stash-fill:disabled,.stash-roll:disabled{opacity:.38;cursor:not-allowed}
 .vault-collection-tabs{max-width:1120px;margin:0 0 13px}.vault-collection-tabs button{white-space:nowrap}.vault-collection-tabs button.vault-drop-target{border-color:#54e87a;color:#d9ffe5;box-shadow:0 0 0 2px rgba(84,232,122,.18)}.vault-toolbar.grid-mode{grid-template-columns:minmax(220px,1fr) minmax(190px,260px) auto}.vault-grid-pages{display:flex;flex-direction:column;gap:18px;max-width:1120px}.vault-grid-page{padding:12px 13px 14px;border:1px solid #2b3b50;border-radius:12px;background:linear-gradient(145deg,rgba(18,27,39,.94),rgba(10,16,25,.97));box-shadow:0 9px 24px rgba(0,0,0,.16)}.vault-grid-head{align-items:center;margin:0 0 8px}.vault-grid-head h2{font-size:14px!important;margin:0!important}.vault-grid-head span:last-child{color:#718198;font-size:9px}.vault-grid-scroll{max-width:100%;overflow-x:auto;padding:2px 2px 7px}.vault-grid{margin:0}.item.vault-grid-item{cursor:context-menu;outline:none}.item.vault-grid-item[draggable="true"]{cursor:grab}.item.vault-grid-item.vault-dragging{opacity:.38;cursor:grabbing}.item.vault-grid-item:focus-visible{z-index:8;box-shadow:0 0 0 2px #53d7ef,0 0 18px rgba(83,215,239,.45)}.item.vault-grid-item.compare-selected{z-index:7;border-color:#efbd60!important;box-shadow:0 0 0 2px rgba(241,184,75,.52),0 0 18px rgba(241,184,75,.26)}.item.vault-grid-item.busy{opacity:.45;pointer-events:none;filter:saturate(.4)}.vault-grid-mark{position:absolute;left:2px;top:2px;display:grid;place-items:center;width:12px;height:12px;border:1px solid rgba(241,184,75,.62);border-radius:50%;background:#37270f;color:#ffe09c;font-size:8px;font-weight:900;box-shadow:0 2px 5px rgba(0,0,0,.55)}.vault-grid-note{margin:8px 1px 0;color:#718198;font-size:9px}.vault-grid-note b{color:#9ab1c7}.vault-pager-info{display:flex;align-items:center;padding:0 8px;color:#77879b;font-size:10px}.vault-history-list{display:flex;flex-direction:column;gap:6px;max-height:390px;overflow:auto;margin-top:12px}.vault-history-row{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:10px;padding:9px 10px;border:1px solid #2d3d51;border-radius:8px;background:#0b121b}.vault-history-row b{display:block;color:#dce7f2;font-size:11px}.vault-history-row span{color:#738398;font-size:9px}.vault-undo-preview{margin:12px 0;padding:11px;border:1px solid rgba(241,184,75,.38);border-radius:9px;background:rgba(137,91,26,.1);color:#edca86;font-size:11px}#ctxmenu div.disabled{opacity:.4;cursor:not-allowed}#ctxmenu div.disabled:hover{background:transparent;color:inherit}
 .vault-page-head{display:flex;align-items:center;justify-content:space-between;gap:14px;max-width:1120px;margin:0 0 13px}.vault-page-head h2{margin:0!important}.vault-primary-actions{display:flex;align-items:center;gap:8px}.vault-transfer-button{min-height:38px;padding:8px 16px!important;border-color:rgba(84,185,255,.58)!important;background:linear-gradient(180deg,rgba(42,108,157,.38),rgba(25,67,102,.42))!important;color:#c5edff!important;font-size:10px!important}.vault-tools{position:relative}.vault-tools summary{display:grid;place-items:center;min-width:40px;min-height:38px;border:1px solid #34485f;border-radius:8px;background:#142033;color:#b9d8e4;cursor:pointer;font-size:17px;font-weight:900;letter-spacing:2px;list-style:none}.vault-tools summary::-webkit-details-marker{display:none}.vault-tools[open] summary,.vault-tools summary:hover{border-color:#55bad0;color:#effcff}.vault-tools-menu{position:absolute;right:0;top:44px;z-index:30;display:grid;gap:8px;width:min(310px,80vw);padding:11px;border:1px solid #3a4d65;border-radius:10px;background:#101722;box-shadow:0 20px 48px rgba(0,0,0,.55)}.vault-tools-menu label{display:grid;gap:5px;color:#8292a7;font-size:9px;font-weight:800;letter-spacing:.45px}.vault-tools-menu select{width:100%;height:36px}.vault-tool-row{display:grid;grid-template-columns:1fr 1fr;gap:7px}.vault-tool-row .vault-mini{width:100%}.vault-toolbar.grid-mode{grid-template-columns:minmax(220px,1fr);margin-bottom:5px}.vault-summary{margin:5px 0 11px}.vault-compare-bar{padding:8px 9px}.vault-compare-slots{font-size:11px}.vault-compare-clear{min-width:33px;padding:6px!important;font-size:13px!important}.vault-transfer-options{display:grid;grid-template-columns:1fr 1fr;gap:11px;margin-top:13px}.vault-transfer-card{display:flex;flex-direction:column;gap:9px;padding:13px;border:1px solid #30435a;border-radius:10px;background:#0b121c}.vault-transfer-card h4{margin:0;color:#eff5fb;font-size:13px}.vault-transfer-card p{min-height:30px;margin:0;color:#7d8da2;font-size:10px;line-height:1.45}.vault-transfer-card label{display:grid;gap:5px;color:#8292a7;font-size:9px;font-weight:800}.vault-transfer-card select{width:100%;min-height:38px}.vault-transfer-card button{width:100%;margin:2px 0 0}.vault-transfer-card .vault-transfer-spacer{flex:1}.vault-transfer-close{margin-top:11px;text-align:right}.vault-transfer-close button{margin:0}
+.vault-category-bar{display:grid;grid-template-columns:auto minmax(220px,430px) auto auto;gap:8px;align-items:center;max-width:1120px;margin:0 0 16px}.vault-category-bar select{height:40px;min-width:0;border-color:#3b526b;background:#0d1622;color:#edf6ff;font-size:12px;font-weight:750}.vault-category-add,.vault-stash-add{height:40px;padding:0 14px;border:1px solid #3a607d;border-radius:8px;background:#14283a;color:#c8eaff;cursor:pointer;font-size:10px;font-weight:900;letter-spacing:.35px}.vault-category-add:hover,.vault-stash-add:hover{border-color:#56c7e4;background:#19364d;color:#f1fcff}.vault-stash-add{border-color:rgba(82,221,169,.45);background:rgba(37,126,92,.18);color:#9aebc9}.vault-stash-add:hover{border-color:#62e3b3;background:rgba(38,126,91,.32)}.vault-category-add:disabled,.vault-stash-add:disabled{opacity:.4;cursor:not-allowed}.vault-stash-title{display:flex;align-items:center;min-width:0}.vault-stash-name{width:min(280px,38vw);min-width:110px;padding:5px 7px;border:1px solid transparent;border-radius:6px;background:transparent;color:#f1c66f;font:850 14px/1.2 inherit}.vault-stash-name:hover{border-color:#3b4e65;background:#0d1621}.vault-stash-name:focus{outline:none;border-color:#55bad0;background:#09121c;box-shadow:0 0 0 2px rgba(85,186,208,.15)}.vault-stash-name:disabled{opacity:.55}.vault-stash-send{border-color:rgba(84,185,255,.48);background:linear-gradient(180deg,rgba(42,108,157,.28),rgba(25,67,102,.3));color:#bfeaff}.vault-stash-send:hover{border-color:#54b9ff;background:rgba(42,108,157,.4)}
 @media(max-width:1260px){body{grid-template-columns:232px minmax(500px,1fr) 350px}.top-actions{min-width:280px}.brand{min-width:195px}.version{max-width:175px}#mid{padding-left:17px;padding-right:17px}.finder-bar{grid-template-columns:1fr 1fr}.finder-bar #ofq,.finder-bar #ofgo{grid-column:1/-1}.access-grid{grid-template-columns:1fr}.vault-compare-grid{grid-template-columns:1fr}}
-@media(max-width:760px){.vault-page-head{align-items:flex-start}.vault-transfer-options{grid-template-columns:1fr}.vault-compare-bar{flex-wrap:wrap}.vault-compare-slots{flex-basis:100%}}
+@media(max-width:760px){.vault-page-head{align-items:flex-start}.vault-category-bar{grid-template-columns:1fr auto auto}.vault-category-add{grid-column:1/-1}.vault-stash-name{width:min(240px,52vw)}.vault-grid-head{align-items:flex-start;flex-direction:column}.stash-head-actions{flex-wrap:wrap}.vault-transfer-options{grid-template-columns:1fr}.vault-compare-bar{flex-wrap:wrap}.vault-compare-slots{flex-basis:100%}}
 </style></head><body>
 <header id="topbar">
   <div class="brand">
@@ -7079,7 +7740,7 @@ input,select{background:#0b111a;color:#dfe7f0;border-color:#2d3b50;border-radius
 <script>
 let CAT=[], SETS_DB=[], RW_DB=[], chars=[], view=null, sel=null, curChar=null, charData=null, stashData=null, GAME_RUNNING=false;
 let advancedMode=false;
-let vaultState={collectionId:'all',q:'',offset:0,limit:500,withdrawTab:'stash_tab_1',queryToken:0,highlightItem:null,persistentLayout:false};
+let vaultState={collectionId:null,q:'',offset:0,limit:5000,withdrawTab:'stash_tab_1',queryToken:0,highlightItem:null,persistentLayout:true,rows:[]};
 let vaultBulkBusy=false;
 let previewModels=new Map(),previewSequence=0;
 const vaultCompareItems=new Map();
@@ -7098,9 +7759,10 @@ function isOrdinarySmallCharm(row){
 const CLS={0:"Helmet",1:"Body Armor",2:"Boots",3:"Weapon",4:"Gloves",5:"Amulet",6:"Shield",7:"Ring",8:"Belt",10:"Charm",11:"Potion / Codex",12:"Key",13:"Boss Part / Tarot",14:"Material",15:"Rune / Gem / Orb",16:"Relic",18:"Flask",19:"Essence Vault","-2":"Runeword"};
 const SLOTS={0:"Helmet",1:"Body Armor",2:"Boots",3:"Weapon I",4:"Gloves",5:"Amulet",6:"Offhand I",7:"Ring I",8:"Belt",9:"Ring II",10:"Relic 1",11:"Relic 2",12:"Relic 3",13:"Relic 4",14:"Relic 5",16:"Weapon II",17:"Offhand II"};
 const DIMS={inventory_tab:[15,6],inventory_charms:[3,11],inventory_key_tab:[15,6],inventory_material_tab:[15,6],inventory_socket_tab:[15,6],inventory_relic_tab:[15,6],inventory_tarot_tab:[15,6],inventory_vault_tab:[15,6],inventory_vault_active:[15,6],stash_tab:[17,18],material_tab:[17,18],socket_tab:[17,18],potions:[5,2],personal_stash:[17,18]};
+const VIRTUAL_COLLECTION_TABS=new Set(['inventory_relic_tab','inventory_tarot_tab']);
 const BAG_LABELS={inventory_tab_0:"Main",inventory_tab_1:"Extra 1",inventory_tab_2:"Extra 2",inventory_tab_3:"Extra 3",inventory_tab_4:"Extra 4",inventory_socket_tab:"Runes & Gems",inventory_material_tab:"Materials",inventory_key_tab:"Keys",inventory_relic_tab:"Relics",inventory_tarot_tab:"Tarot",inventory_vault_tab:"Essence Vaults",inventory_vault_active_0:"Active Vault",inventory_charms:"Charms",personal_stash:"Personal Stash"};
 const CELL=26;
-function tipBarHTML(){return `<div class="tipbar">&#128161; <b>Right-click any item</b> for: Store in Infinite Vault, Verified MAX / Best Roll, skill target, compatible sockets and Delete${advancedMode?' · Random reroll, Duplicate and Edit stack':''} &nbsp;&middot;&nbsp; <b>Drag</b> items to move them or drop onto an equipment slot</div>`}
+function tipBarHTML(){return `<div class="tipbar">&#128161; <b>Right-click any item</b> for: Store in Infinite Vault, Verified MAX / Best Roll, Add stack, skill target, compatible sockets and Delete${advancedMode?' · Random reroll, Duplicate and Edit stack':''} &nbsp;&middot;&nbsp; <b>Drag</b> items to move them or drop onto an equipment slot</div>`}
 const STASH_DRAG_TIP=`<div class="tipbar">&#8597; <b>Moving between stash tabs:</b> while holding an item, use the mouse wheel or keep the pointer near the top/bottom edge to auto-scroll. The item is saved only when dropped on a valid cell.</div>`;
 async function j(u,opt={}){
   const cfg={...opt};
@@ -7183,10 +7845,19 @@ function applyEditorMode(){
   document.body.classList.toggle('advanced-mode',advancedMode);
   const button=document.getElementById('mode-toggle');if(button){button.textContent=advancedMode?'ADVANCED MODE':'SIMPLE MODE';button.setAttribute('aria-pressed',String(advancedMode))}
 }
-function dims(tab){const b=tab.replace(/_\d+$/,'');return DIMS[b]||(b.startsWith('inventory_')?[15,6]:[17,18])}
+function dims(tab,items=[]){
+  const b=tab.replace(/_\d+$/,'');
+  const base=DIMS[b]||(b.startsWith('inventory_')?[15,6]:[17,18]);
+  if(!VIRTUAL_COLLECTION_TABS.has(tab))return base;
+  const bottom=(items||[]).reduce((highest,item)=>{
+    const p=Array.isArray(item.pos)?item.pos:[0,0];
+    return Math.max(highest,(Number.parseInt(p[1],10)||0)+(Number.parseInt(item.h,10)||1));
+  },0);
+  return [base[0],Math.max(base[1],bottom)];
+}
 let gridReg={}, gridSeq=0;
 function gridHTML(tab,items,delTarget){
-  const [c,r]=dims(tab);
+  const [c,r]=dims(tab,items);
   const gid='g'+(gridSeq++);
   gridReg[gid]={tab,target:delTarget,items,cols:c,rows:r};
   let h=`<div class="grid" id="${gid}" data-gid="${gid}" style="width:${c*CELL+2}px;height:${r*CELL+2}px">`;
@@ -7196,14 +7867,14 @@ function gridHTML(tab,items,delTarget){
     const rr=it.rar&&it.rar!=='?'?it.rar:'_';
     const previewId=registerPreviewModel(it.gameTooltip);
     const inner=it.spr?`<img src="/icons/${attr(it.spr)}.png?v=2" loading="lazy">`:esc(short(it.name));
-    h+=`<div class="item b-${attr(rr)}" draggable="true" title="" data-i="${i}" data-preview-id="${attr(previewId)}" data-del='${attr(JSON.stringify(delTarget))}' data-key="${attr(it.key)}" data-w="${it.w||1}" data-h="${it.h||1}" data-cid="${it.cid??''}" data-rwcid="${it.rwcid??''}" data-socket-limit="${it.socketLimit??0}" data-socket-count="${it.socketCount??''}" data-roll="${attr(JSON.stringify(it.rollProfile||null))}" data-skill="${attr(JSON.stringify(it.skillSelector||null))}" data-raw='${attr(JSON.stringify(it.raw||{}))}'
+    h+=`<div class="item b-${attr(rr)}" draggable="true" title="" data-i="${i}" data-preview-id="${attr(previewId)}" data-del='${attr(JSON.stringify(delTarget))}' data-key="${attr(it.key)}" data-w="${it.w||1}" data-h="${it.h||1}" data-cid="${it.cid??''}" data-rwcid="${it.rwcid??''}" data-virtual-pos="${it.virtualPos?'1':'0'}" data-stackable="${it.stackable?'1':'0'}" data-stack="${it.stack??1}" data-socket-limit="${it.socketLimit??0}" data-socket-count="${it.socketCount??''}" data-roll="${attr(JSON.stringify(it.rollProfile||null))}" data-skill="${attr(JSON.stringify(it.skillSelector||null))}" data-raw='${attr(JSON.stringify(it.raw||{}))}'
       style="left:${p[0]*CELL}px;top:${p[1]*CELL}px;width:${(it.w||1)*CELL-2}px;height:${(it.h||1)*CELL-2}px">${inner}${it.stack?`<span class="stk">x${it.stack}</span>`:''}</div>`;
   });
   return h+'</div>';
 }
 function uniqueListHTML(items,delTarget){
   if(!items.length)return '<div class="muted">This auto-sorted tab is empty.</div>';
-  return `<div class="unique-list">${items.map(it=>`<div class="unique-card" data-item-preview data-preview-id="${attr(registerPreviewModel(it.gameTooltip))}" data-del='${attr(JSON.stringify(delTarget))}' data-key="${attr(it.key)}" data-cid="${it.cid??''}" data-rwcid="${it.rwcid??''}" data-socket-limit="${it.socketLimit??0}" data-socket-count="${it.socketCount??''}" data-roll="${attr(JSON.stringify(it.rollProfile||null))}" data-skill="${attr(JSON.stringify(it.skillSelector||null))}" data-raw='${attr(JSON.stringify(it.raw||{}))}'>${it.spr?`<img src="/icons/${attr(it.spr)}.png?v=2" loading="lazy">`:'<div class="found-icon">&#9671;</div>'}<div><div class="r-${attr(it.rar||'_')}">${esc(it.name)}</div><div class="muted">right-click for actions</div></div></div>`).join('')}</div>`;
+  return `<div class="unique-list">${items.map(it=>`<div class="unique-card" data-item-preview data-preview-id="${attr(registerPreviewModel(it.gameTooltip))}" data-del='${attr(JSON.stringify(delTarget))}' data-key="${attr(it.key)}" data-cid="${it.cid??''}" data-rwcid="${it.rwcid??''}" data-stackable="${it.stackable?'1':'0'}" data-stack="${it.stack??1}" data-socket-limit="${it.socketLimit??0}" data-socket-count="${it.socketCount??''}" data-roll="${attr(JSON.stringify(it.rollProfile||null))}" data-skill="${attr(JSON.stringify(it.skillSelector||null))}" data-raw='${attr(JSON.stringify(it.raw||{}))}'>${it.spr?`<img src="/icons/${attr(it.spr)}.png?v=2" loading="lazy">`:'<div class="found-icon">&#9671;</div>'}<div><div class="r-${attr(it.rar||'_')}">${esc(it.name)}</div><div class="muted">right-click for actions</div></div></div>`).join('')}</div>`;
 }
 const VAULT_GRID_COLS=17,VAULT_GRID_ROWS=18;
 function vaultGridSpot(page,w,h){
@@ -7240,7 +7911,7 @@ function packVaultGridPages(items,persistent=false){
   }
   return pages;
 }
-function vaultGridPageHTML(page,index,persistent=false){
+function vaultGridPageHTML(page,index,persistent=false,stash=null){
   const pageIndex=Number.isInteger(page.pageIndex)?page.pageIndex:index;
   let grid=`<div class="grid vault-grid" data-vault-page="${pageIndex}" style="width:${VAULT_GRID_COLS*CELL+2}px;height:${VAULT_GRID_ROWS*CELL+2}px">`;
   for(let y=0;y<VAULT_GRID_ROWS;y++)for(let x=0;x<VAULT_GRID_COLS;x++)grid+=`<div class="cell" style="left:${x*CELL}px;top:${y*CELL}px;width:${CELL}px;height:${CELL}px"></div>`;
@@ -7251,10 +7922,13 @@ function vaultGridPageHTML(page,index,persistent=false){
     grid+=`<div class="item vault-grid-item b-${attr(rr)}${selected?' compare-selected':''}" tabindex="0" role="button" aria-label="${attr(label)}. Right-click for Vault actions." ${persistent?'draggable="true"':''} data-item-preview data-preview-id="${attr(previewId)}" data-vault-id="${attr(row.id)}" data-cid="${row.cid??''}" data-rwcid="${row.rwcid??''}" data-vault-page="${pageIndex}" data-x="${packed.pos[0]}" data-y="${packed.pos[1]}" data-w="${packed.w}" data-h="${packed.h}" data-updated-at="${attr(row.updatedAt||'')}" style="left:${packed.pos[0]*CELL}px;top:${packed.pos[1]*CELL}px;width:${packed.w*CELL-2}px;height:${packed.h*CELL-2}px">${inner}${row.customName?'<span class="vault-grid-mark" aria-hidden="true">N</span>':''}${row.stack?`<span class="stk">x${row.stack}</span>`:''}</div>`;
   }
   grid+='</div>';
-  const collections=[...new Set(page.items.map(item=>item.row.collectionName).filter(Boolean))];
-  const collectionLabel=!page.items.length?'Empty grid':collections.length===1?collections[0]:`${collections.length} collections`;
-  const guidance=persistent?'<b>Drag to organize.</b> Positions are saved automatically. Right-click for item actions.':'<b>Combined view.</b> Open one collection to arrange items by drag and drop.';
-  return `<section class="vault-grid-page"><div class="stash-tab-head vault-grid-head"><h2>Vault Grid ${pageIndex+1} <span class="muted">(${page.items.length})</span></h2><span>${esc(collectionLabel)}</span></div><div class="vault-grid-scroll">${grid}</div><div class="vault-grid-note">${guidance}</div></section>`;
+  const stashName=stash&&stash.name?stash.name:`Stash ${pageIndex+1}`;
+  const stashItemCount=stash&&Number.isInteger(+stash.itemCount)?+stash.itemCount:page.items.length;
+  const title=persistent
+    ?`<input class="vault-stash-name" data-vault-stash-name="${pageIndex}" value="${attr(stashName)}" maxlength="128" aria-label="Stash name"> <span class="muted">(${stashItemCount})</span>`
+    :`<h2>Vault Grid ${pageIndex+1} <span class="muted">(${page.items.length})</span></h2>`;
+  const actions=persistent?`<div class="stash-head-actions"><button class="stash-roll" data-vault-stash-roll="${pageIndex}" ${stashItemCount&&!GAME_RUNNING?'':'disabled'}>MAX / BEST</button><button class="stash-fill vault-stash-send" data-vault-stash-send="${pageIndex}" ${stashItemCount&&!GAME_RUNNING?'':'disabled'}>SEND TO SHARED STASH</button></div>`:'';
+  return `<section class="vault-grid-page" data-vault-stash-section="${pageIndex}"><div class="stash-tab-head vault-grid-head"><div class="vault-stash-title">${title}</div>${actions}</div><div class="vault-grid-scroll">${grid}</div></section>`;
 }
 function occFree(g,x,y,w,h,skipKey){
   if(x<0||y<0||x+w>g.cols||y+h>g.rows)return false;
@@ -7738,65 +8412,55 @@ async function openVault(reset=true){
   view='vault';curChar=null;gridReg={};gridSeq=0;
   resetPreviewModels();
   document.querySelectorAll('.charbtn').forEach(b=>b.classList.remove('sel'));
-  if(reset)vaultState.offset=0;
+  if(reset){vaultState.offset=0;vaultCompareItems.clear()}
   try{vaultState.withdrawTab=localStorage.getItem('hsVaultWithdrawTab')||vaultState.withdrawTab}catch(e){}
   const md=document.getElementById('mid');
-  md.innerHTML='<h2>Infinite Vault</h2><div class="tool-intro"><b>Opening your local vault...</b> Items are stored in a separate SQLite database beside your Hero Siege data.</div>';
+  md.innerHTML='<h2>Infinite Vault</h2><div class="vault-empty">Opening...</div>';
   vaultMeta=await j('/api/vault/meta');
   if(vaultMeta.err){
     md.innerHTML=`<h2>Infinite Vault</h2><div class="vault-warning">${esc(vaultMeta.err)}</div>${vaultMeta.recoveryAvailable?'<button class="act recovery-button" id="vaulthealth" style="margin-top:12px">OPEN SAVE HEALTH CHECK</button>':''}`;
     const health=document.getElementById('vaulthealth');if(health)health.onclick=openHealth;return
   }
-  if(vaultState.collectionId!=='all'&&!(vaultMeta.collections||[]).some(c=>String(c.id)===String(vaultState.collectionId)))vaultState.collectionId='all';
+  const collections=vaultMeta.collections||[];
+  if(!collections.length){md.innerHTML='<h2>Infinite Vault</h2><div class="vault-warning">No Vault category is available.</div>';return}
+  if(!collections.some(c=>String(c.id)===String(vaultState.collectionId))){
+    let saved=null;try{saved=localStorage.getItem('hsVaultCategoryId')}catch(e){}
+    const mostUsed=[...collections].sort((a,b)=>(b.itemCount||0)-(a.itemCount||0)||a.id-b.id)[0];
+    const chosen=collections.find(c=>String(c.id)===String(saved))||mostUsed||collections.find(c=>String(c.id)===String(vaultMeta.defaultCollectionId))||collections[0];
+    vaultState.collectionId=chosen.id;
+  }
   const transferTabs=vaultMeta.transferTabs||[];
   if(!transferTabs.some(row=>row.tab===vaultState.withdrawTab))vaultState.withdrawTab=transferTabs.length?transferTabs[0].tab:'';
-  const returnOptions=transferTabs.map(row=>`<option value="${attr(row.tab)}" ${vaultState.withdrawTab===row.tab?'selected':''}>Return to ${esc(row.label)}</option>`).join('');
-  const bulkStaticLocked=!!(vaultMeta.pending||vaultMeta.conflicts);
-  const bulkLocked=!!(vaultMeta.gameRunning||bulkStaticLocked);
   const vaultRecoveryBatches=vaultMeta.recoveryBatches||[];
   const vaultRecoveryWarnings=vaultMeta.recoveryWarnings||[];
   const vaultRecoveryMarkup=vaultRecoveryBatches.map(row=>`<div class="recovery-card"><h3>&#9888; Ambiguous ${row.direction==='deposit'?'stash-to-Vault deposit':'Vault-to-stash return'} (${row.itemCount} items)</h3><p>${esc(row.error||'The journal could not prove which side completed.')}</p><p><b>Ownership-safe choice:</b> keep every protected record available in Infinite Vault. Shared Stash will not be changed; duplicates may remain.</p><button class="act recovery-button" data-vault-batch-resolve="${attr(row.requestId)}" data-count="${row.itemCount}" data-direction="${attr(row.direction)}" ${vaultMeta.gameRunning?'disabled':''}>PRESERVE VAULT OWNERSHIP</button></div>`).join('');
   const vaultWarningMarkup=vaultRecoveryWarnings.map(row=>`<div class="vault-warning"><b>Vault ownership preserved for ${row.itemCount} items.</b> ${esc(row.message||'Shared Stash may contain duplicate copies.')}</div>`).join('');
-  const collectionTabs=[{id:'all',name:'All Items',itemCount:vaultMeta.total||0},...(vaultMeta.collections||[])].map(collection=>`<button type="button" class="${String(collection.id)===String(vaultState.collectionId)?'on':''}" data-vault-collection="${attr(collection.id)}">${esc(collection.name)} (${collection.itemCount||0})</button>`).join('');
-  let h=`<div class="vault-page-head"><h2>Infinite Vault <span class="muted">(${vaultMeta.total||0})</span></h2><div class="vault-primary-actions">
-      <button type="button" class="vault-bulk-button vault-transfer-button" id="vaultdesk" data-static-disabled="${bulkStaticLocked?'1':'0'}" ${bulkLocked?'disabled':''}>TRANSFER ITEMS</button>
-      <details class="vault-tools"><summary aria-label="More Vault options" title="More Vault options">&#8230;</summary><div class="vault-tools-menu">
-        <label>DEFAULT SINGLE-ITEM RETURN<select id="vaultreturn" title="Return individual items to this Shared Stash tab" ${returnOptions?'':'disabled'}>${returnOptions||'<option>No compatible stash grid found</option>'}</select></label>
-        <div class="vault-tool-row"><button class="vault-mini" id="vaultnew">NEW COLLECTION</button><button class="vault-mini" id="vaultrefresh">REFRESH</button></div>
-        <div class="vault-tool-row"><button class="vault-mini" id="vaultrename" ${vaultState.collectionId==='all'?'disabled':''}>RENAME COLLECTION</button><button class="vault-mini danger" id="vaultdelete" ${vaultState.collectionId==='all'?'disabled':''}>DELETE EMPTY</button></div>
-        <div class="vault-tool-row"><button class="vault-mini" id="vaultnewgrid" ${vaultState.collectionId==='all'||vaultState.q.trim()?'disabled':''}>ADD EMPTY GRID</button><button class="vault-mini" id="vaultcompact" ${vaultState.collectionId==='all'||vaultState.q.trim()?'disabled':''}>COMPACT GRIDS</button></div>
+  const categoryOptions=collections.map(category=>`<option value="${category.id}" ${String(category.id)===String(vaultState.collectionId)?'selected':''}>${esc(category.name)} · ${category.stashCount||1} stash${Number(category.stashCount||1)===1?'':'es'}</option>`).join('');
+  let h=`<div class="vault-page-head"><h2>Infinite Vault <span class="muted">(${vaultMeta.total||0})</span></h2></div>
+    <div class="vault-category-bar">
+      <button type="button" class="vault-category-add" id="vaultnew">+ CATEGORY</button>
+      <select id="vaultcategory" aria-label="Vault category">${categoryOptions}</select>
+      <button type="button" class="vault-stash-add" id="vaultnewgrid">+ STASH</button>
+      <details class="vault-tools"><summary aria-label="More category options" title="More category options">&#8230;</summary><div class="vault-tools-menu">
+        <div class="vault-tool-row"><button class="vault-mini" id="vaultrename">RENAME CATEGORY</button><button class="vault-mini danger" id="vaultdelete">DELETE EMPTY</button></div>
+        <div class="vault-tool-row"><button class="vault-mini" id="vaultrefresh">REFRESH</button><button class="vault-mini" id="vaultcompact">COMPACT ITEMS</button></div>
         <button class="vault-mini" id="vaulthistory">HISTORY / UNDO</button>
       </div></details>
-    </div></div>
+    </div>
     ${vaultMeta.gameRunning?'<div class="vault-warning">Hero Siege is running. Your vault is viewable, but transfers are locked until the game is closed.</div>':''}
     ${vaultWarningMarkup}
     ${(vaultMeta.pending||vaultMeta.conflicts)?`<div class="vault-warning"><b>${vaultMeta.pending||vaultMeta.conflicts} transfer operation needs attention.</b> No item was discarded. Review the ownership-safe recovery below.</div>${vaultRecoveryMarkup}`:''}
-    <div class="bagtabs vault-collection-tabs" id="vaultcollectiontabs">${collectionTabs}</div>
-    <div class="vault-toolbar grid-mode">
-      <input id="vaultq" value="${attr(vaultState.q)}" placeholder="Search this vault..." aria-label="Search Infinite Vault">
-    </div>
-    <div class="vault-summary"><span id="vaultcount">Loading items...</span></div>
-    <div class="vault-compare-bar" id="vaultcomparebar" hidden><div class="vault-compare-slots" id="vaultcompareslots"></div><button class="vault-mini" id="vaultselectedmove">MOVE</button><button class="vault-mini" id="vaultselectedreturn">RETURN</button><button class="vault-mini" id="vaultcompareopen" hidden>COMPARE</button><button class="vault-mini vault-compare-clear" id="vaultcompareclear" title="Clear selection" aria-label="Clear selection">&#10005;</button></div>
-    <div id="vaultitems"><div class="vault-empty">Loading...</div></div>`;
+    <div id="vaultitems"><div class="vault-empty">Loading stashes...</div></div>`;
   md.innerHTML=h;
   md.querySelectorAll('[data-vault-batch-resolve]').forEach(button=>button.onclick=()=>preserveVaultBatchOwnership(button.dataset.vaultBatchResolve,+button.dataset.count,button.dataset.direction,'vault'));
-  let timer=null;
-  document.getElementById('vaultq').oninput=e=>{vaultState.q=e.target.value;vaultState.offset=0;clearTimeout(timer);timer=setTimeout(loadVaultItems,220)};
-  md.querySelectorAll('[data-vault-collection]').forEach(button=>button.onclick=()=>{const id=button.dataset.vaultCollection;vaultState.collectionId=id==='all'?'all':+id;vaultState.offset=0;openVault(false)});
-  document.getElementById('vaultreturn').onchange=e=>{vaultState.withdrawTab=e.target.value;try{localStorage.setItem('hsVaultWithdrawTab',vaultState.withdrawTab)}catch(err){}};
+  document.getElementById('vaultcategory').onchange=e=>{vaultState.collectionId=+e.target.value;vaultState.offset=0;vaultCompareItems.clear();try{localStorage.setItem('hsVaultCategoryId',String(vaultState.collectionId))}catch(err){}openVault(false)};
   document.getElementById('vaultrefresh').onclick=()=>openVault(false);
-  document.getElementById('vaultdesk').onclick=openVaultTransferDesk;
   document.getElementById('vaultnew').onclick=()=>manageVaultCollection('create');
   document.getElementById('vaultrename').onclick=()=>manageVaultCollection('rename');
   document.getElementById('vaultdelete').onclick=()=>manageVaultCollection('delete');
   document.getElementById('vaultnewgrid').onclick=addEmptyVaultGrid;
   document.getElementById('vaultcompact').onclick=compactVaultGrids;
   document.getElementById('vaulthistory').onclick=openVaultHistory;
-  document.getElementById('vaultcompareopen').onclick=openVaultCompare;
-  document.getElementById('vaultselectedmove').onclick=moveSelectedVaultItems;
-  document.getElementById('vaultselectedreturn').onclick=openVaultSelectionReturn;
-  document.getElementById('vaultcompareclear').onclick=()=>{vaultCompareItems.clear();renderVaultCompareBar();document.querySelectorAll('.vault-grid-item.compare-selected').forEach(item=>item.classList.remove('compare-selected'))};
-  renderVaultCompareBar();
   await loadVaultItems();
 }
 function vaultBulkSessionKey(direction,sourceTab='all',collectionId='all',destinationTab='auto'){return `hsVaultBulk:${direction}:${sourceTab}:${collectionId}:${destinationTab}`}
@@ -7889,55 +8553,69 @@ async function openVaultBulk(direction,defaults={}){
 }
 async function loadVaultItems(){
   const token=++vaultState.queryToken;
-  const persistent=vaultState.collectionId!=='all'&&!vaultState.q.trim();
-  if(persistent){
-    const ready=await j('/api/vault/layout',{method:'POST',body:JSON.stringify({action:'ensure',collectionId:+vaultState.collectionId})});
-    if(token!==vaultState.queryToken||view!=='vault')return;
-    if(ready.err){renderVaultItems({err:ready.err});return}
-  }
-  const params=new URLSearchParams({q:vaultState.q,offset:String(vaultState.offset),limit:String(vaultState.limit)});
-  if(vaultState.collectionId!=='all')params.set('collectionId',String(vaultState.collectionId));
-  const payload=await j('/api/vault/items?'+params.toString());
+  const ready=await j('/api/vault/layout',{method:'POST',body:JSON.stringify({action:'ensure',collectionId:+vaultState.collectionId})});
   if(token!==vaultState.queryToken||view!=='vault')return;
-  renderVaultItems(payload);
+  if(ready.err){renderVaultItems({err:ready.err});return}
+  let offset=0,rows=[],payload=null;
+  do{
+    const params=new URLSearchParams({offset:String(offset),limit:String(vaultState.limit),collectionId:String(vaultState.collectionId)});
+    payload=await j('/api/vault/items?'+params.toString());
+    if(token!==vaultState.queryToken||view!=='vault')return;
+    if(payload.err){renderVaultItems(payload);return}
+    const batch=payload.items||[];rows.push(...batch);offset+=batch.length;
+    if(payload.hasMore&&!batch.length){renderVaultItems({err:'Vault item paging stopped safely because the server returned no progress.'});return}
+  }while(payload.hasMore);
+  renderVaultItems({...payload,items:rows,offset:0,stashes:ready.stashes||payload.stashes});
 }
+function emptyVaultGridPage(pageIndex){return {pageIndex,occupied:Array.from({length:VAULT_GRID_ROWS},()=>Array(VAULT_GRID_COLS).fill(false)),items:[]}}
 function renderVaultItems(payload){
-  const host=document.getElementById('vaultitems'),count=document.getElementById('vaultcount');if(!host||!count)return;
+  const host=document.getElementById('vaultitems');if(!host)return;
   resetPreviewModels();
-  if(payload.err){count.textContent='Vault query failed';host.innerHTML=`<div class="vault-warning">${esc(payload.err)}</div>`;renderVaultCompareBar();return}
-  const rows=payload.items||[],total=payload.total||0;
-  const start=total?payload.offset+1:0,end=Math.min(total,payload.offset+rows.length);
-  const resultPage=Math.floor((payload.offset||0)/Math.max(1,payload.limit||vaultState.limit))+1;
-  count.textContent=`Result page ${resultPage} · showing ${start}-${end} of ${total}`;
-  if(!rows.length){host.innerHTML='<div class="vault-empty">No items match this collection or search.</div>';renderVaultCompareBar();return}
-  vaultState.persistentLayout=!!payload.persistentLayout;
-  const pages=packVaultGridPages(rows,vaultState.persistentLayout),grids=pages.map((page,index)=>vaultGridPageHTML(page,index,vaultState.persistentLayout)).join('');
-  host.innerHTML=`<div class="vault-grid-pages">${grids}</div>
-    <div class="vault-pager"><button class="vault-mini" id="vaultprev" ${payload.offset<=0?'disabled':''}>PREVIOUS PAGE</button><span class="vault-pager-info">${pages.length} grid${pages.length===1?'':'s'} in this result page</span><button class="vault-mini" id="vaultnext" ${payload.offset+rows.length>=total?'disabled':''}>NEXT PAGE</button></div>`;
+  if(payload.err){host.innerHTML=`<div class="vault-warning">${esc(payload.err)}</div>`;return}
+  const rows=payload.items||[],stashes=[...(payload.stashes||[])].sort((a,b)=>a.pageIndex-b.pageIndex);
+  vaultState.rows=rows;vaultState.persistentLayout=true;
+  const packed=packVaultGridPages(rows,true),byPage=new Map(packed.map(page=>[page.pageIndex,page]));
+  const grids=stashes.map((stash,index)=>vaultGridPageHTML(byPage.get(stash.pageIndex)||emptyVaultGridPage(stash.pageIndex),index,true,stash)).join('');
+  host.innerHTML=`<div class="vault-grid-pages">${grids}</div>`;
   const byId=new Map(rows.map(row=>[String(row.id),row]));
   host.querySelectorAll('.vault-grid-item').forEach(item=>{
     const row=byId.get(item.dataset.vaultId);
     item.oncontextmenu=e=>{e.preventDefault();showVaultCtx(e.clientX,e.clientY,row,item)};
-    item.onclick=e=>{if(e.button===0&&!vaultIgnoreSelectionClick)toggleVaultCompare(row,item)};
     item.onkeydown=e=>{
       if(e.key==='ContextMenu'||(e.shiftKey&&e.key==='F10')){e.preventDefault();const rect=item.getBoundingClientRect();showVaultCtx(rect.left+Math.min(rect.width,24),rect.top+Math.min(rect.height,24),row,item)}
-      else if(e.key==='Enter'||e.key===' '){e.preventDefault();toggleVaultCompare(row,item)}
+      else if(e.key==='Enter'||e.key===' '){e.preventDefault();item.click()}
     };
-    if(vaultState.persistentLayout){
-      item.ondragstart=e=>{
-        e.stopPropagation();
-        vaultIgnoreSelectionClick=true;
-        vaultDragInfo={itemId:String(row.id),w:+item.dataset.w,h:+item.dataset.h,updatedAt:item.dataset.updatedAt||'',source:item};
-        e.dataTransfer.effectAllowed='move';e.dataTransfer.setData('text/plain',String(row.id));
-        requestAnimationFrame(()=>item.classList.add('vault-dragging'));
-      };
-      item.ondragend=()=>finishVaultDrag();
-    }
+    item.ondragstart=e=>{
+      e.stopPropagation();
+      vaultIgnoreSelectionClick=true;
+      vaultDragInfo={itemId:String(row.id),w:+item.dataset.w,h:+item.dataset.h,updatedAt:item.dataset.updatedAt||'',source:item};
+      e.dataTransfer.effectAllowed='move';e.dataTransfer.setData('text/plain',String(row.id));
+      requestAnimationFrame(()=>item.classList.add('vault-dragging'));
+    };
+    item.ondragend=()=>finishVaultDrag();
   });
-  if(vaultState.persistentLayout)bindVaultGridDnD(host);
-  document.getElementById('vaultprev').onclick=()=>{vaultState.offset=Math.max(0,vaultState.offset-vaultState.limit);loadVaultItems()};
-  document.getElementById('vaultnext').onclick=()=>{vaultState.offset+=vaultState.limit;loadVaultItems()};
-  renderVaultCompareBar();
+  bindVaultGridDnD(host);
+  host.querySelectorAll('[data-vault-stash-name]').forEach(input=>{
+    let original=input.value;
+    input.onfocus=()=>input.select();
+    input.onkeydown=e=>{if(e.key==='Enter'){e.preventDefault();input.blur()}else if(e.key==='Escape'){e.preventDefault();input.value=original;input.blur()}};
+    input.onblur=async()=>{
+      const name=input.value.trim();if(!name||name===original){input.value=original;return}
+      input.disabled=true;
+      const result=await j('/api/vault/stashes',{method:'POST',body:JSON.stringify({action:'rename',collectionId:+vaultState.collectionId,pageIndex:+input.dataset.vaultStashName,name})});
+      input.disabled=false;flash(result);
+      if(result.err){input.value=original;return}
+      original=result.stash.name;input.value=original;
+    };
+  });
+  host.querySelectorAll('[data-vault-stash-roll]').forEach(button=>button.onclick=()=>{
+    const pageIndex=+button.dataset.vaultStashRoll,input=host.querySelector(`[data-vault-stash-name="${pageIndex}"]`);
+    openVaultStashRoll(pageIndex,input?input.value:`Stash ${pageIndex+1}`);
+  });
+  host.querySelectorAll('[data-vault-stash-send]').forEach(button=>button.onclick=()=>{
+    const pageIndex=+button.dataset.vaultStashSend,input=host.querySelector(`[data-vault-stash-name="${pageIndex}"]`),stashRows=rows.filter(row=>+row.pageIndex===pageIndex);
+    openVaultSelectionReturn(stashRows,input?input.value:`Stash ${pageIndex+1}`);
+  });
   if(vaultState.highlightItem){const item=[...host.querySelectorAll('[data-vault-id]')].find(el=>el.dataset.vaultId===vaultState.highlightItem);if(item){item.scrollIntoView({behavior:'smooth',block:'center'});item.classList.add('found-pulse');setTimeout(()=>item.classList.remove('found-pulse'),3800);vaultState.highlightItem=null}}
 }
 let vaultDragInfo=null,vaultIgnoreSelectionClick=false;
@@ -7988,20 +8666,15 @@ function bindVaultGridDnD(host){
     };
   });
 }
-function addEmptyVaultGrid(){
-  if(vaultState.collectionId==='all'||vaultState.q.trim()){flash({err:'Open one collection and clear search before adding a grid.'});return}
-  const host=document.getElementById('vaultitems');if(!host)return;
-  let pages=host.querySelector('.vault-grid-pages');
-  if(!pages){host.innerHTML='<div class="vault-grid-pages"></div>';pages=host.querySelector('.vault-grid-pages')}
-  const indexes=[...pages.querySelectorAll('[data-vault-page]')].map(el=>+el.dataset.vaultPage).filter(Number.isInteger),pageIndex=indexes.length?Math.max(...indexes)+1:0;
-  const blank={pageIndex,occupied:Array.from({length:VAULT_GRID_ROWS},()=>Array(VAULT_GRID_COLS).fill(false)),items:[]},wrapper=document.createElement('div');
-  wrapper.innerHTML=vaultGridPageHTML(blank,pageIndex,true);pages.appendChild(wrapper.firstElementChild);bindVaultGridDnD(host);
-  const created=pages.querySelector(`[data-vault-page="${pageIndex}"]`);if(created)created.scrollIntoView({behavior:'smooth',block:'center'});
-  flash({ok:`Vault Grid ${pageIndex+1} is ready. Drag an item onto it to keep the page.`});
+async function addEmptyVaultGrid(){
+  const button=document.getElementById('vaultnewgrid');if(button)button.disabled=true;
+  const result=await j('/api/vault/stashes',{method:'POST',body:JSON.stringify({action:'add',collectionId:+vaultState.collectionId})});flash(result);
+  if(result.err){if(button)button.disabled=false;return}
+  await openVault(false);
+  const created=document.querySelector(`[data-vault-stash-section="${result.stash.pageIndex}"]`);if(created)created.scrollIntoView({behavior:'smooth',block:'center'});
 }
 async function compactVaultGrids(){
-  if(vaultState.collectionId==='all'||vaultState.q.trim())return;
-  if(!confirm('Compact this collection into the fewest possible Vault grids?\n\nItem data is unchanged. Only Vault page positions are reorganized.'))return;
+  if(!confirm('Compact this category into its first stashes?\n\nStash names and item data stay unchanged. Only item positions are reorganized.'))return;
   const result=await j('/api/vault/layout',{method:'POST',body:JSON.stringify({action:'compact',collectionId:+vaultState.collectionId})});flash(result);if(!result.err)await loadVaultItems();
 }
 function vaultHistoryLabel(event){
@@ -8028,12 +8701,14 @@ function showVaultCtx(x,y,row,el){
     {label:row.customName?'Edit custom name...':'Set custom name...',action:'name'},
     {label:selected?'Remove from selection':'Select item',action:'compare'}
   ];
+  if(row.stackable)actions.splice(1,0,{label:'Add stack...',action:'addstack'});
   menu.innerHTML=actions.map(action=>`<div class="${action.disabled?'disabled':''}" data-vault-action="${action.action}">${esc(action.label)}</div>`).join('');
   menu.querySelectorAll('[data-vault-action]').forEach(option=>option.onclick=async event=>{
     event.stopPropagation();
     const action=actions.find(candidate=>candidate.action===option.dataset.vaultAction);if(!action||action.disabled)return;
     menu.style.display='none';
     if(action.action==='return')await withdrawVaultItem(row.id,el);
+    else if(action.action==='addstack')openStackAmountDialog({name:row.customName||row.name,current:row.stack||1,mode:'add',submit:amount=>j('/api/vault/item',{method:'POST',body:JSON.stringify({action:'addStack',itemId:row.id,count:amount})}),onSuccess:()=>openVault(false)});
     else if(action.action==='move')await moveVaultItem(row.id,+row.collectionId);
     else if(action.action==='name')await editVaultCustomName(row);
     else toggleVaultCompare(row,el);
@@ -8084,13 +8759,38 @@ async function moveSelectedVaultItems(){
     go.disabled=false;cancel.disabled=false;target.disabled=false;go.textContent='MOVE SELECTED';
   };target.focus();
 }
-async function openVaultSelectionReturn(){
-  const rows=[...vaultCompareItems.values()];if(!rows.length)return;if(GAME_RUNNING){flash({err:'Hero Siege is running. Close it before returning items.'});return}
+async function openVaultStashRoll(pageIndex,stashName){
+  if(GAME_RUNNING){flash({err:'Hero Siege is running. Close it before changing item rolls.'});return}
+  const previous=document.getElementById('sockmodal');if(previous)previous.remove();
+  const modal=document.createElement('div');modal.id='sockmodal';
+  modal.innerHTML=`<div id="sockbox" role="dialog" aria-modal="true" aria-labelledby="vaultrolltitle" style="width:min(680px,92vw)"><h3 id="vaultrolltitle">MAX / Best Possible · ${esc(stashName)}</h3><div class="muted" style="margin:6px 0 10px">Verified equipment rolls are optimized and every proven stackable becomes x999. Fixed stats and skill selectors stay untouched. One malformed item blocks the entire stash.</div><div id="vaultrollpreview" class="vault-bulk-preview"><strong>Checking every item…</strong><div class="vault-bulk-note">Nothing is being changed.</div></div><div class="vault-bulk-actions"><button class="act vault-bulk-confirm" id="vaultrollgo" disabled>APPLY MAX</button><button class="act" id="vaultrollcancel">CANCEL</button></div></div>`;
+  document.body.appendChild(modal);
+  const host=document.getElementById('vaultrollpreview'),go=document.getElementById('vaultrollgo'),cancel=document.getElementById('vaultrollcancel');let preview=null,busy=false;
+  const close=()=>{if(!busy)modal.remove()};cancel.onclick=close;modal.onclick=e=>{if(e.target===modal)close()};modal.onkeydown=e=>{if(e.key==='Escape')close()};
+  const load=async()=>{
+    preview=null;go.disabled=true;go.textContent='CHECKING…';host.innerHTML='<strong>Checking every item…</strong><div class="vault-bulk-note">Nothing is being changed.</div>';
+    let result;try{result=await j('/api/vault/roll',{method:'POST',body:JSON.stringify({action:'preview',collectionId:+vaultState.collectionId,pageIndex})})}catch(error){host.innerHTML='<strong>Preview interrupted</strong><div class="vault-bulk-note warn">Nothing was changed. Try again.</div>';go.textContent='RETRY PREVIEW';go.disabled=false;return}
+    if(result.err){host.innerHTML=`<strong>Preview unavailable</strong><div class="vault-bulk-note warn">${esc(result.err)}</div>`;go.textContent='RETRY PREVIEW';go.disabled=false;return}
+    preview=result;const blocked=(result.blocked||[]).map(row=>`${row.name}: ${row.reason}`).slice(0,5),skipped=(result.skipped||[]).map(row=>`${row.name}: ${row.reason}`).slice(0,3);
+    host.innerHTML=`<strong>${result.changeCount} item${result.changeCount===1?'':'s'} ready · ${result.exactCount} Exact MAX · ${result.bestCount} Best Possible · ${result.stackMaxCount||0} stacks → x999</strong><div class="vault-bulk-tabs"><span>${result.alreadyCount} already optimized</span><span>${result.skippedCount} safely skipped</span><span>${result.blockedCount} blocked</span></div>${blocked.length?`<div class="vault-bulk-note warn"><b>Fix before applying:</b><br>${blocked.map(esc).join('<br>')}</div>`:''}${skipped.length?`<div class="vault-bulk-note">Skipped by design:<br>${skipped.map(esc).join('<br>')}</div>`:''}<div class="vault-bulk-note">The whole stash uses one preview token, one Vault backup and one database transaction.</div>`;
+    go.textContent=result.changeCount?`APPLY TO ${result.changeCount} ITEMS`:'NOTHING TO CHANGE';go.disabled=!result.canRun;
+  };
+  go.onclick=async()=>{
+    if(!preview){load();return}busy=true;go.disabled=true;cancel.disabled=true;go.textContent='APPLYING…';
+    let result;try{result=await j('/api/vault/roll',{method:'POST',body:JSON.stringify({action:'apply',collectionId:+vaultState.collectionId,pageIndex,previewToken:preview.previewToken})})}catch(error){result={err:'Connection interrupted before confirmation. Build a fresh preview to verify the Vault.'}}flash(result);
+    if(!result.err){busy=false;close();await openVault(false);return}
+    busy=false;cancel.disabled=false;if(result.code==='preview_stale'){preview=null;go.textContent='BUILD NEW PREVIEW';go.disabled=false}else{go.textContent='RETRY SAFELY';go.disabled=false}
+  };
+  cancel.focus();load();
+}
+async function openVaultSelectionReturn(explicitRows=null,stashName=''){
+  const rows=Array.isArray(explicitRows)?explicitRows:[...vaultCompareItems.values()];if(!rows.length)return;if(GAME_RUNNING){flash({err:'Hero Siege is running. Close it before returning items.'});return}
   const previous=document.getElementById('sockmodal');if(previous)previous.remove();
   const destinations=(vaultMeta.bulkWithdrawalTabs||[]).length?vaultMeta.bulkWithdrawalTabs:[{tab:'auto',label:'Automatic (original tabs + safe routing)'}];
   let selected='auto';try{const saved=localStorage.getItem('hsVaultBulkDestinationTab');if(destinations.some(row=>row.tab===saved))selected=saved}catch(e){}
   const options=destinations.map(row=>`<option value="${attr(row.tab)}" ${row.tab===selected?'selected':''}>${esc(row.label)}</option>`).join(''),modal=document.createElement('div');modal.id='sockmodal';
-  modal.innerHTML=`<div id="sockbox" role="dialog" aria-modal="true" aria-labelledby="vaultselectiontitle"><h3 id="vaultselectiontitle">Return ${rows.length} selected item${rows.length===1?'':'s'}</h3><div class="muted" style="margin:6px 0 12px">First the editor proves that every selected item fits. If one cannot fit, nothing moves.</div><div class="jlrow"><label for="vaultselectiontarget">Destination</label><select id="vaultselectiontarget">${options}</select></div><div id="vaultselectionpreview" class="vault-bulk-preview" role="status" aria-live="polite"><strong>Building exact preview…</strong><div class="vault-bulk-note">No data is being changed.</div></div><div class="vault-bulk-actions"><button class="act vault-bulk-confirm out" id="vaultselectiongo" disabled>RETURN SELECTED</button><button class="act" id="vaultselectioncancel">CANCEL</button></div></div>`;
+  const title=stashName?`Send ${stashName} to Shared Stash`:`Return ${rows.length} selected item${rows.length===1?'':'s'}`;
+  modal.innerHTML=`<div id="sockbox" role="dialog" aria-modal="true" aria-labelledby="vaultselectiontitle"><h3 id="vaultselectiontitle">${esc(title)}</h3><div class="muted" style="margin:6px 0 12px">Choose the Shared Stash. The editor first proves that every item fits; if one cannot fit, nothing moves.</div><div class="jlrow"><label for="vaultselectiontarget">Shared Stash</label><select id="vaultselectiontarget">${options}</select></div><div id="vaultselectionpreview" class="vault-bulk-preview" role="status" aria-live="polite"><strong>Building exact preview…</strong><div class="vault-bulk-note">No data is being changed.</div></div><div class="vault-bulk-actions"><button class="act vault-bulk-confirm out" id="vaultselectiongo" disabled>SEND STASH</button><button class="act" id="vaultselectioncancel">CANCEL</button></div></div>`;
   document.body.appendChild(modal);const target=document.getElementById('vaultselectiontarget'),previewHost=document.getElementById('vaultselectionpreview'),go=document.getElementById('vaultselectiongo'),cancel=document.getElementById('vaultselectioncancel'),itemIds=rows.map(row=>String(row.id));let preview=null,busy=false,stableId=requestId();
   const close=()=>{if(!busy)modal.remove()};cancel.onclick=close;modal.onclick=e=>{if(e.target===modal)close()};modal.onkeydown=e=>{if(e.key==='Escape')close()};
   const loadPreview=async()=>{if(busy)return;preview=null;go.disabled=true;go.textContent='CHECKING SPACE…';previewHost.innerHTML='<strong>Building exact preview…</strong><div class="vault-bulk-note">No data is being changed.</div>';
@@ -8152,13 +8852,31 @@ async function moveVaultItem(itemId,currentId){
   const target=choices.find(c=>c.name.toLocaleLowerCase()===name.trim().toLocaleLowerCase());if(!target){flash({err:'Collection not found.'});return}
   const r=await j('/api/vault/item',{method:'POST',body:JSON.stringify({action:'move',itemId,collectionId:target.id})});flash(r);if(!r.err){if(r.item&&vaultCompareItems.has(String(itemId)))vaultCompareItems.set(String(itemId),r.item);await openVault(false)}
 }
+function askVaultCategoryName(title,current=''){
+  return new Promise(resolve=>{
+    const previous=document.getElementById('sockmodal');if(previous)previous.remove();
+    const modal=document.createElement('div');modal.id='sockmodal';
+    modal.innerHTML=`<div id="sockbox" role="dialog" aria-modal="true" aria-labelledby="vaultcategorytitle" style="width:min(430px,92vw)"><h3 id="vaultcategorytitle">${esc(title)}</h3><div class="jlrow" style="margin-top:13px"><label for="vaultcategoryname">Name</label><input id="vaultcategoryname" maxlength="128" autocomplete="off" style="flex:1;min-width:0"></div><div class="vault-bulk-actions"><button class="act vault-bulk-confirm" id="vaultcategorysave" type="button">SAVE</button><button class="act" id="vaultcategorycancel" type="button">CANCEL</button></div></div>`;
+    document.body.appendChild(modal);
+    const input=document.getElementById('vaultcategoryname'),save=document.getElementById('vaultcategorysave'),cancel=document.getElementById('vaultcategorycancel');input.value=current;
+    let settled=false;const finish=value=>{if(settled)return;settled=true;modal.remove();resolve(value)};
+    const submit=()=>{const name=input.value.trim();if(!name){input.setCustomValidity('Enter a category name.');input.reportValidity();return}input.setCustomValidity('');finish(name)};
+    save.onclick=submit;cancel.onclick=()=>finish(null);modal.onclick=e=>{if(e.target===modal)finish(null)};modal.onkeydown=e=>{if(e.key==='Escape'){e.preventDefault();finish(null)}else if(e.key==='Enter'){e.preventDefault();submit()}};
+    input.focus();input.select();
+  });
+}
 async function manageVaultCollection(action){
   let body={action};
   const current=(vaultMeta.collections||[]).find(c=>String(c.id)===String(vaultState.collectionId));
-  if(action==='create'){const name=prompt('New collection name:');if(name==null)return;body.name=name}
-  else if(action==='rename'){if(!current)return;const name=prompt('Rename collection:',current.name);if(name==null)return;body.collectionId=current.id;body.name=name}
-  else{if(!current||!confirm(`Delete empty collection "${current.name}"?`))return;body.collectionId=current.id}
-  const r=await j('/api/vault/collections',{method:'POST',body:JSON.stringify(body)});flash(r);if(!r.err){if(action==='delete')vaultState.collectionId='all';openVault(false)}
+  if(action==='create'){const name=await askVaultCategoryName('New Category');if(name==null)return;body.name=name}
+  else if(action==='rename'){if(!current)return;const name=await askVaultCategoryName('Rename Category',current.name);if(name==null)return;body.collectionId=current.id;body.name=name}
+  else{if(!current||!confirm(`Delete empty category "${current.name}"?`))return;body.collectionId=current.id}
+  const r=await j('/api/vault/collections',{method:'POST',body:JSON.stringify(body)});flash(r);if(!r.err){
+    if(action==='create')vaultState.collectionId=r.collection.id;
+    else if(action==='delete')vaultState.collectionId=null;
+    try{if(vaultState.collectionId==null)localStorage.removeItem('hsVaultCategoryId');else localStorage.setItem('hsVaultCategoryId',String(vaultState.collectionId))}catch(e){}
+    openVault(false);
+  }
 }
 async function openVaultDepositDialog(target,key,el){
   const old=document.getElementById('sockmodal');if(old)old.remove();
@@ -8208,20 +8926,53 @@ async function fillStashTab(tab,button,spec){
 async function openBulkRollDialog(target,label){
   const returnView=view,returnCharacter=curChar;
   const previous=document.getElementById('sockmodal');if(previous)previous.remove();const modal=document.createElement('div');modal.id='sockmodal';
-  modal.innerHTML=`<div id="sockbox" role="dialog" aria-modal="true" aria-labelledby="bulkrolltitle" style="width:min(680px,92vw)"><h3 id="bulkrolltitle">Verified MAX / Best Possible · ${esc(label)}</h3><div class="muted" style="margin:6px 0 10px">The editor changes only proven seed fields. Fixed items and skill/class selectors are left alone. Any malformed item blocks the complete write.</div><div id="bulkrollpreview" class="vault-bulk-preview"><strong>Checking every item…</strong><div class="vault-bulk-note">No item is being changed.</div></div><div class="vault-bulk-actions"><button class="act vault-bulk-confirm" id="bulkrollgo" disabled>APPLY VERIFIED ROLLS</button><button class="act" id="bulkrollcancel">CANCEL</button></div></div>`;
+  modal.innerHTML=`<div id="sockbox" role="dialog" aria-modal="true" aria-labelledby="bulkrolltitle" style="width:min(680px,92vw)"><h3 id="bulkrolltitle">Verified MAX / Best Possible · ${esc(label)}</h3><div class="muted" style="margin:6px 0 10px">Verified equipment rolls are optimized and every proven stackable becomes x999. Fixed items and skill/class selectors are left alone. Any malformed item blocks the complete write.</div><div id="bulkrollpreview" class="vault-bulk-preview"><strong>Checking every item…</strong><div class="vault-bulk-note">No item is being changed.</div></div><div class="vault-bulk-actions"><button class="act vault-bulk-confirm" id="bulkrollgo" disabled>APPLY MAX</button><button class="act" id="bulkrollcancel">CANCEL</button></div></div>`;
   document.body.appendChild(modal);const host=document.getElementById('bulkrollpreview'),go=document.getElementById('bulkrollgo'),cancel=document.getElementById('bulkrollcancel');let preview=null,busy=false;
   const close=()=>{if(!busy)modal.remove()};cancel.onclick=close;modal.onclick=e=>{if(e.target===modal)close()};modal.onkeydown=e=>{if(e.key==='Escape')close()};
   const load=async()=>{preview=null;go.disabled=true;go.textContent='CHECKING…';host.innerHTML='<strong>Checking every item…</strong><div class="vault-bulk-note">No item is being changed.</div>';
     let result;try{result=await j('/api/roll/bulk',{method:'POST',body:JSON.stringify({action:'preview',target})})}catch(error){host.innerHTML='<strong>Preview interrupted</strong><div class="vault-bulk-note warn">Nothing was changed. Try again.</div>';go.textContent='RETRY PREVIEW';go.disabled=false;return}
     if(result.err){host.innerHTML=`<strong>Preview unavailable</strong><div class="vault-bulk-note warn">${esc(result.err)}</div>`;go.textContent='RETRY PREVIEW';go.disabled=false;return}
     preview=result;const blocked=(result.blocked||[]).map(row=>`${row.name}: ${row.reason}`).slice(0,5),skipped=(result.skipped||[]).map(row=>`${row.name}: ${row.reason}`).slice(0,3);
-    host.innerHTML=`<strong>${result.changeCount} item${result.changeCount===1?'':'s'} ready · ${result.exactCount} Exact MAX · ${result.bestCount} Best Possible</strong><div class="vault-bulk-tabs"><span>${result.alreadyCount} already optimized</span><span>${result.skippedCount} safely skipped</span><span>${result.blockedCount} blocked</span></div>${blocked.length?`<div class="vault-bulk-note warn"><b>Fix before applying:</b><br>${blocked.map(esc).join('<br>')}</div>`:''}${skipped.length?`<div class="vault-bulk-note">Skipped by design:<br>${skipped.map(esc).join('<br>')}</div>`:''}<div class="vault-bulk-note">One preflight token, one backup, one file write. If the tab changes after this preview, the operation is cancelled.</div>`;
+    host.innerHTML=`<strong>${result.changeCount} item${result.changeCount===1?'':'s'} ready · ${result.exactCount} Exact MAX · ${result.bestCount} Best Possible · ${result.stackMaxCount||0} stacks → x999</strong><div class="vault-bulk-tabs"><span>${result.alreadyCount} already optimized</span><span>${result.skippedCount} safely skipped</span><span>${result.blockedCount} blocked</span></div>${blocked.length?`<div class="vault-bulk-note warn"><b>Fix before applying:</b><br>${blocked.map(esc).join('<br>')}</div>`:''}${skipped.length?`<div class="vault-bulk-note">Skipped by design:<br>${skipped.map(esc).join('<br>')}</div>`:''}<div class="vault-bulk-note">One preflight token, one backup, one file write. If the tab changes after this preview, the operation is cancelled.</div>`;
     go.textContent=result.changeCount?`APPLY TO ${result.changeCount} ITEMS`:'NOTHING TO CHANGE';go.disabled=!result.canRun;
   };
   go.onclick=async()=>{if(!preview){load();return}busy=true;go.disabled=true;cancel.disabled=true;go.textContent='APPLYING…';let result;try{result=await j('/api/roll/bulk',{method:'POST',body:JSON.stringify({action:'apply',target,previewToken:preview.previewToken})})}catch(error){result={err:'Connection interrupted before confirmation. Rebuild the preview to verify the current file.'}}flash(result);
     if(!result.err){busy=false;close();if(returnView==='stash')await openStash();else if(returnView==='char')await openChar(returnCharacter,document.querySelector('.charbtn.sel'));return}
     busy=false;cancel.disabled=false;if(result.code==='preview_stale'){preview=null;go.textContent='BUILD NEW PREVIEW';go.disabled=false}else{go.textContent='RETRY SAFELY';go.disabled=false}
   };cancel.focus();load();
+}
+async function openSharedStashVaultTransfer(sourceTab,sourceLabel,itemCount){
+  if(GAME_RUNNING){flash({err:'Hero Siege is running. Close it before moving a Shared Stash.'});return}
+  if(!itemCount){flash({err:'This Shared Stash is empty.'});return}
+  const previous=document.getElementById('sockmodal');if(previous)previous.remove();
+  const meta=await j('/api/vault/meta');if(meta.err){flash(meta);return}
+  const collections=(meta.collections||[]).filter(row=>(row.stashes||[]).length);
+  if(!collections.length){flash({err:'Create an Infinite Vault category first.'});return}
+  let selectedId=meta.defaultCollectionId;try{const saved=localStorage.getItem('hsVaultCategoryId');if(collections.some(row=>String(row.id)===String(saved)))selectedId=+saved}catch(e){}
+  if(!collections.some(row=>String(row.id)===String(selectedId)))selectedId=collections[0].id;
+  const modal=document.createElement('div');modal.id='sockmodal';
+  modal.innerHTML=`<div id="sockbox" role="dialog" aria-modal="true" aria-labelledby="sharedvaulttitle" style="width:min(680px,92vw)"><h3 id="sharedvaulttitle">Send ${esc(sourceLabel)} to Infinite Vault</h3><div class="muted" style="margin:6px 0 12px">Choose the exact category and stash. All ${itemCount} items move together; if one does not fit, nothing moves.</div><div class="jlrow"><label for="sharedvaultcategory">Category</label><select id="sharedvaultcategory">${vaultCollectionOptions(collections,selectedId)}</select></div><div class="jlrow"><label for="sharedvaultstash">Stash</label><select id="sharedvaultstash"></select></div><div id="sharedvaultpreview" class="vault-bulk-preview" role="status" aria-live="polite"><strong>Building exact preview…</strong><div class="vault-bulk-note">No item is being changed.</div></div><div class="vault-bulk-actions"><button class="act vault-bulk-confirm" id="sharedvaultgo" disabled>MOVE STASH</button><button class="act" id="sharedvaultcancel">CANCEL</button></div></div>`;
+  document.body.appendChild(modal);
+  const category=document.getElementById('sharedvaultcategory'),stash=document.getElementById('sharedvaultstash'),host=document.getElementById('sharedvaultpreview'),go=document.getElementById('sharedvaultgo'),cancel=document.getElementById('sharedvaultcancel');
+  let preview=null,busy=false,loading=false,stableId='',stableKey='';
+  const selectedCollection=()=>collections.find(row=>String(row.id)===String(category.value));
+  const fillStashes=()=>{const rows=(selectedCollection()&&selectedCollection().stashes)||[];stash.innerHTML=rows.map(row=>`<option value="${row.pageIndex}">${esc(row.name)} · ${row.itemCount||0} item${Number(row.itemCount||0)===1?'':'s'}</option>`).join('')};
+  const close=()=>{if(!busy)modal.remove()};cancel.onclick=close;modal.onclick=e=>{if(e.target===modal)close()};modal.onkeydown=e=>{if(e.key==='Escape')close()};
+  const loadPreview=async()=>{if(loading||busy)return;loading=true;preview=null;stableId='';stableKey='';go.disabled=true;go.textContent='CHECKING SPACE…';host.innerHTML='<strong>Building exact preview…</strong><div class="vault-bulk-note">No item is being changed.</div>';
+    try{const params=new URLSearchParams({direction:'stash-to-vault',collectionId:category.value,sourceTab,destinationPageIndex:stash.value}),result=await j('/api/vault/bulk-preview?'+params.toString());
+      if(result.err){host.innerHTML=`<strong>Transfer unavailable</strong><div class="vault-bulk-note warn">${esc(result.err)}</div>`;go.textContent='RETRY PREVIEW';go.disabled=false;return}
+      preview=result;host.innerHTML=`<strong>${result.itemCount} item${result.itemCount===1?'':'s'} → ${esc(result.collectionName)} / ${esc(result.destinationStashName||('Stash '+(+result.destinationPageIndex+1)))}</strong><div class="vault-bulk-note">The source tab is emptied only after one backup and one atomic Vault journal are ready.</div>`;go.textContent=`MOVE ${result.itemCount} ITEM${result.itemCount===1?'':'S'}`;go.disabled=!result.canRun;
+    }catch(error){host.innerHTML='<strong>Preview interrupted</strong><div class="vault-bulk-note warn">Nothing was changed. Try again.</div>';go.textContent='RETRY PREVIEW';go.disabled=false}finally{loading=false}}
+  category.onchange=()=>{try{localStorage.setItem('hsVaultCategoryId',category.value)}catch(e){}fillStashes();loadPreview()};stash.onchange=loadPreview;
+  go.onclick=async()=>{if(!preview){loadPreview();return}busy=true;go.disabled=true;category.disabled=true;stash.disabled=true;cancel.disabled=true;go.textContent='MOVING ATOMICALLY…';
+    stableKey=`hsVaultStashDeposit:${sourceTab}:${preview.collectionId}:${preview.destinationPageIndex}`;try{stableId=sessionStorage.getItem(stableKey)||requestId();sessionStorage.setItem(stableKey,stableId)}catch(e){stableId=stableId||requestId()}
+    try{const result=await j('/api/vault/bulk',{method:'POST',body:JSON.stringify({direction:'stash-to-vault',collectionId:+preview.collectionId,sourceTab,destinationPageIndex:+preview.destinationPageIndex,requestId:stableId,previewToken:preview.previewToken})});flash(result);if(result.terminal){try{sessionStorage.removeItem(stableKey)}catch(e){}}
+      if(!result.err){busy=false;modal.remove();await openStash();return}
+      if(result.code==='preview_stale'){preview=null;stableId='';go.textContent='BUILD NEW PREVIEW'}else go.textContent=result.retryable?'RETRY SAME TRANSFER':'REVIEW AGAIN';
+    }catch(error){flash({err:'Connection interrupted. The atomic journal protects the whole tab; retry the same transfer.'});go.textContent='RETRY SAME TRANSFER'}
+    busy=false;category.disabled=false;stash.disabled=false;cancel.disabled=false;go.disabled=false;
+  };
+  fillStashes();category.focus();loadPreview();
 }
 async function openStash(){
   resetPreviewModels();
@@ -8238,7 +8989,7 @@ async function openStash(){
   for(const tab of order){
     const items=stashData[tab];
     const fill=stashFillSpec(tab);
-    h+=`<div class="stash-tab-head"><h2 data-find-tab="${attr(tab)}">${esc(tab)} <span class="muted">(${items.length})</span></h2><div class="stash-head-actions">${items.length?`<button class="stash-roll" data-roll-stash="${attr(tab)}" ${GAME_RUNNING?'disabled':''}>MAX / BEST THIS TAB</button>`:''}${fill?`<button class="stash-fill" data-fill-stash="${attr(tab)}" title="${attr(fill.detail)}" ${GAME_RUNNING?'disabled':''}>${esc(fill.button)}</button>`:''}</div></div>`;
+    h+=`<div class="stash-tab-head"><h2 data-find-tab="${attr(tab)}">${esc(tab)} <span class="muted">(${items.length})</span></h2><div class="stash-head-actions">${items.length?`<button class="stash-roll" data-roll-stash="${attr(tab)}" ${GAME_RUNNING?'disabled':''}>MAX / BEST THIS TAB</button>`:''}${items.length&&isVaultTransferTab(tab)?`<button class="stash-fill stash-vault-transfer" data-vault-stash-source="${attr(tab)}" ${GAME_RUNNING?'disabled':''}>TO INFINITE VAULT</button>`:''}${fill?`<button class="stash-fill" data-fill-stash="${attr(tab)}" title="${attr(fill.detail)}" ${GAME_RUNNING?'disabled':''}>${esc(fill.button)}</button>`:''}</div></div>`;
     if(tab==='unique_items'){
       h+=`<div class="muted" style="margin-bottom:7px">auto-sorted tab &middot; ${items.length} records (no grid positions)</div>`;
       h+=uniqueListHTML(items,{type:'stash',tab});
@@ -8252,6 +9003,7 @@ async function openStash(){
     button.onclick=()=>fillStashTab(tab,button,spec);
   });
   md.querySelectorAll('.stash-roll').forEach(button=>button.onclick=()=>openBulkRollDialog({type:'stash',tab:button.dataset.rollStash},button.dataset.rollStash));
+  md.querySelectorAll('[data-vault-stash-source]').forEach(button=>button.onclick=()=>{const tab=button.dataset.vaultStashSource;openSharedStashVaultTransfer(tab,vaultTabLabel(tab),(stashData[tab]||[]).length)});
   bindDelete(); renderTargets();
 }
 // slot -> kabul edilen sinif idleri
@@ -8319,6 +9071,7 @@ function renderChar(){
     return `<button class="${bagTab===t?'on':''}" onclick="bagSwap('${t}')">${l}${n?` (${n})`:''}</button>`}).join('')}</div>`;
   const visibleBagCount=bagTab==='personal_stash'?charData.personal_stash.length:((charData.bags||{})[bagTab]||[]).length;
   h+=`<div class="stash-tab-head"><h2>${esc(BAG_LABELS[bagTab]||bagTab)} <span class="muted">(${visibleBagCount})</span></h2>${visibleBagCount?`<button class="stash-roll" id="rollVisibleBag" ${GAME_RUNNING?'disabled':''}>MAX / BEST VISIBLE BAG</button>`:''}</div>`;
+  if(VIRTUAL_COLLECTION_TABS.has(bagTab))h+=`<div class="tipbar"><b>Auto-arranged collection:</b> Hero Siege stores these entries without grid coordinates. Their positions here are display-only and are never written into the save.</div>`;
   if(bagTab==='personal_stash'){
     h+=gridHTML('personal_stash',charData.personal_stash,{type:'personal_stash',slot});
   }else{
@@ -8702,6 +9455,20 @@ function bindDelete(){
     };
   });
 }
+function openStackAmountDialog({name,current,mode='add',submit,onSuccess}){
+  const previous=document.getElementById('sockmodal');if(previous)previous.remove();
+  const adding=mode==='add',safeCurrent=Math.max(1,Math.trunc(Number(current)||1)),modal=document.createElement('div');modal.id='sockmodal';
+  modal.innerHTML=`<div id="sockbox" role="dialog" aria-modal="true" aria-labelledby="stackamounttitle" style="width:min(520px,92vw)"><h3 id="stackamounttitle">${adding?'Add stack':'Edit stack'} · ${esc(name||'Stackable item')}</h3><div class="muted" style="margin:6px 0 12px">Current stack: <b>x${safeCurrent}</b></div><div class="jlrow"><label for="stackamountinput">${adding?'Amount to add':'New stack count'}</label><input id="stackamountinput" type="number" inputmode="numeric" min="1" max="99999999" step="1" value="${adding?1:safeCurrent}" style="width:150px"></div><div id="stackamountresult" class="vault-bulk-note"></div><div class="flex" style="margin-top:14px"><button class="act" id="stackamountgo" type="button" style="margin:0;background:#234a2a;border-color:#3da55e">${adding?'ADD':'SAVE'}</button><button class="act" id="stackamountcancel" type="button" style="margin:0">CANCEL</button></div></div>`;
+  document.body.appendChild(modal);const input=document.getElementById('stackamountinput'),result=document.getElementById('stackamountresult'),go=document.getElementById('stackamountgo'),cancel=document.getElementById('stackamountcancel');let busy=false;
+  const close=()=>{if(!busy)modal.remove()},update=()=>{const amount=Math.trunc(Number(input.value)||0),next=adding?safeCurrent+amount:amount,valid=amount>=1&&next<=99999999;result.classList.toggle('warn',!valid);result.textContent=valid?(adding?`x${safeCurrent} + ${amount} = x${next}`:`New stack: x${next}`):'Enter a positive whole number up to the safe limit.';go.disabled=!valid};
+  cancel.onclick=close;modal.onclick=e=>{if(e.target===modal)close()};modal.onkeydown=e=>{if(e.key==='Escape')close();else if(e.key==='Enter'&&document.activeElement===input){e.preventDefault();go.click()}};input.oninput=update;
+  go.onclick=async()=>{const amount=Math.trunc(Number(input.value)||0),next=adding?safeCurrent+amount:amount;if(amount<1||next>99999999)return;busy=true;go.disabled=true;cancel.disabled=true;input.disabled=true;go.textContent=adding?'ADDING…':'SAVING…';let response;
+    try{response=await submit(amount)}catch(error){response={err:'Stack update was interrupted; verify the item and retry.'}}flash(response);
+    if(!response.err){busy=false;modal.remove();if(onSuccess)await onSuccess(response);return}
+    busy=false;cancel.disabled=false;input.disabled=false;go.textContent=adding?'ADD':'SAVE';update();input.focus();input.select();
+  };
+  update();input.focus();input.select();
+}
 let ctxEl=null;
 function showCtx(x,y,target,key,el){
   let m=document.getElementById('ctxmenu');
@@ -8709,6 +9476,7 @@ function showCtx(x,y,target,key,el){
     document.addEventListener('click',()=>{m.style.display='none'});}
   const isEq=target.type==='equipped';
   const acts=[];
+  const stackable=!!(el&&el.dataset&&el.dataset.stackable==='1'),currentStack=Math.max(1,Math.trunc(Number(el&&el.dataset&&el.dataset.stack)||1));
   if(target.type==='stash'&&isVaultTransferTab(target.tab))acts.push(['Store in Infinite Vault...','VAULT','']);
   if(advancedMode&&!isEq)acts.push(['Duplicate','duplicate','']);
   let rollProfile=null;
@@ -8720,7 +9488,8 @@ function showCtx(x,y,target,key,el){
   if(advancedMode)acts.push(['Random reroll','reroll','']);
   const socketLimit=Number.parseInt((el&&el.dataset&&el.dataset.socketLimit)||'0',10);
   if(Number.isFinite(socketLimit)&&socketLimit>0)acts.push(['Edit sockets...','SOCKETS','']);
-  if(advancedMode&&!isEq)acts.push(['Edit stack...','setstack','']);
+  if(stackable&&!isEq)acts.push(['Add stack...','addstack','']);
+  if(advancedMode&&stackable&&!isEq)acts.push(['Edit stack...','setstack','']);
   acts.push(['Delete','DELETE','danger']);
   m.innerHTML=acts.map(([lbl,act,cls])=>`<div class="${cls}" data-act="${act}">${lbl}</div>`).join('');
   m.querySelectorAll('div').forEach(d=>{
@@ -8737,10 +9506,8 @@ function showCtx(x,y,target,key,el){
         openSocketEditor(target,key,el);return;
       }else if(act==='SKILL'){
         openSkillTargetEditor(target,key,skillSelector);return;
-      }else if(act==='setstack'){
-        const n=prompt('New stack count:','999');
-        if(n==null)return;
-        r=await j('/api/modify',{method:'POST',body:JSON.stringify({action:'setstack',target,key,count:+n})});
+      }else if(act==='addstack'||act==='setstack'){
+        openStackAmountDialog({name:el&&el.textContent?el.textContent.trim():'Stackable item',current:currentStack,mode:act==='addstack'?'add':'set',submit:amount=>j('/api/modify',{method:'POST',body:JSON.stringify({action:act,target,key,count:amount})}),onSuccess:()=>refresh()});return;
       }else{
         r=await j('/api/modify',{method:'POST',body:JSON.stringify({action:act,target,key})});
       }

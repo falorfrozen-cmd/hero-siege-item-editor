@@ -51,6 +51,9 @@ class InfiniteVaultTests(unittest.TestCase):
         collections = self.vault.list_collections()
         self.assertEqual([record.name for record in collections], ["Vault"])
         self.assertEqual(collections[0].item_count, 0)
+        self.assertEqual(collections[0].stash_count, 1)
+        pages = self.vault.list_stash_pages("Vault")
+        self.assertEqual([(page.page_index, page.name) for page in pages], [(0, "Stash 1")])
         connection = sqlite3.connect(self.path)
         try:
             self.assertEqual(
@@ -65,6 +68,63 @@ class InfiniteVaultTests(unittest.TestCase):
             )
         finally:
             connection.close()
+
+    def test_category_creation_adds_exactly_one_named_stash(self):
+        category = self.vault.create_collection("Sets")
+        self.assertEqual(category.stash_count, 1)
+        self.assertEqual(
+            [(page.page_index, page.name) for page in self.vault.list_stash_pages(category.id)],
+            [(0, "Stash 1")],
+        )
+        added = self.vault.add_stash_page(category.id)
+        self.assertEqual((added.page_index, added.name), (1, "Stash 2"))
+        self.assertEqual(len(self.vault.list_stash_pages(category.id)), 2)
+
+    def test_stash_names_are_quickly_renamed_and_unique_per_category(self):
+        second = self.vault.add_stash_page("Vault")
+        renamed = self.vault.rename_stash_page("Vault", 0, "  Boss Sets  ")
+        self.assertEqual(renamed.name, "Boss Sets")
+        reopened = vault_module.InfiniteVault(self.path)
+        self.assertEqual(reopened.list_stash_pages("Vault")[0].name, "Boss Sets")
+        with self.assertRaises(vault_module.VaultConflictError):
+            reopened.rename_stash_page("Vault", second.page_index, "boss sets")
+
+    def test_stash_payload_updates_are_atomic_and_reject_stale_preview(self):
+        first = self.vault.deposit("Vault", RAW_SWORD)
+        second = self.vault.deposit("Vault", RAW_HELM)
+        self.vault.set_item_layouts("Vault", [
+            {"itemId": first.id, "pageIndex": 0, "x": 0, "y": 0},
+            {"itemId": second.id, "pageIndex": 0, "x": 2, "y": 0},
+        ])
+        updated_first = json.dumps(
+            {"pos": [1.0, 2.0], "data": {"b": 52.0, "a": 999.0, "name": "Kılıç"}},
+            ensure_ascii=False,
+            separators=(",", ":"),
+        )
+        updated_second = json.dumps(
+            {"data": {"b": 91.0, "a": 999.0, "name": "Storm Helm", "note": "100%"}},
+            separators=(",", ":"),
+        )
+        with self.assertRaises(vault_module.VaultConflictError):
+            self.vault.update_stash_item_payloads("Vault", 0, [
+                {
+                    "itemId": first.id,
+                    "expectedSha256": first.raw_sha256,
+                    "rawItemJson": updated_first,
+                },
+                {
+                    "itemId": second.id,
+                    "expectedSha256": "0" * 64,
+                    "rawItemJson": updated_second,
+                },
+            ])
+        self.assertEqual(self.vault.get_item(first.id).raw_item_json, RAW_SWORD)
+        changed = self.vault.update_stash_item_payloads("Vault", 0, [{
+            "itemId": first.id,
+            "expectedSha256": first.raw_sha256,
+            "rawItemJson": updated_first,
+        }])
+        self.assertEqual(changed[0].decoded_item()["data"]["a"], 999.0)
 
     def test_deposit_preserves_raw_json_exactly(self):
         record = self.vault.deposit(
@@ -325,12 +385,16 @@ class InfiniteVaultTests(unittest.TestCase):
 
         migrated = vault_module.InfiniteVault(legacy_path)
         reopened = migrated.get_item(item.id)
-        self.assertEqual(migrated.schema_version, 5)
+        self.assertEqual(migrated.schema_version, 6)
         self.assertIsNone(reopened.page_index)
         self.assertIsNone(reopened.layout_x)
         self.assertIsNone(reopened.layout_y)
         self.assertEqual(reopened.raw_item_json, RAW_HELM)
         self.assertEqual(reopened.raw_sha256, item.raw_sha256)
+        self.assertEqual(
+            [(page.page_index, page.name) for page in migrated.list_stash_pages("Vault")],
+            [(0, "Stash 1")],
+        )
 
         backup = sqlite3.connect(Path(str(legacy_path) + ".bak"))
         try:
@@ -343,6 +407,48 @@ class InfiniteVaultTests(unittest.TestCase):
         self.assertNotIn("page_index", columns)
         self.assertNotIn("layout_x", columns)
         self.assertNotIn("layout_y", columns)
+
+    def test_v5_database_migrates_existing_grid_pages_to_named_stashes(self):
+        legacy_path = self.directory / "legacy-v5.sqlite3"
+        legacy = vault_module.InfiniteVault(legacy_path)
+        item = legacy.deposit("Vault", RAW_HELM)
+        legacy.ensure_stash_page_count("Vault", 4)
+        legacy.set_item_layouts("Vault", [{
+            "itemId": item.id, "pageIndex": 3, "x": 4, "y": 5,
+        }])
+        connection = sqlite3.connect(legacy_path)
+        try:
+            connection.execute("DROP TABLE stash_pages")
+            connection.execute(
+                "UPDATE schema_meta SET value='5' WHERE key='schema_version'"
+            )
+            connection.execute("PRAGMA user_version = 5")
+            connection.commit()
+        finally:
+            connection.close()
+
+        migrated = vault_module.InfiniteVault(legacy_path)
+        self.assertEqual(migrated.schema_version, 6)
+        self.assertEqual(
+            [(page.page_index, page.name) for page in migrated.list_stash_pages("Vault")],
+            [(0, "Stash 1"), (1, "Stash 2"), (2, "Stash 3"), (3, "Stash 4")],
+        )
+        reopened = migrated.get_item(item.id)
+        self.assertEqual(
+            (reopened.page_index, reopened.layout_x, reopened.layout_y),
+            (3, 4, 5),
+        )
+        backup = sqlite3.connect(Path(str(legacy_path) + ".bak"))
+        try:
+            self.assertEqual(backup.execute("PRAGMA user_version").fetchone()[0], 5)
+            tables = {
+                row[0] for row in backup.execute(
+                    "SELECT name FROM sqlite_master WHERE type='table'"
+                ).fetchall()
+            }
+        finally:
+            backup.close()
+        self.assertNotIn("stash_pages", tables)
 
     def test_special_item_without_base_identity_is_preserved_opaquely(self):
         raw = '{"pos":[0,0],"data":{"a":123,"future":{"kind":"special"}}}'
@@ -407,6 +513,7 @@ class InfiniteVaultTests(unittest.TestCase):
     def test_move_item_between_unlimited_named_collections(self):
         item = self.vault.deposit("Vault", RAW_SWORD)
         destinations = [self.vault.create_collection(f"Page {index}") for index in range(80)]
+        self.vault.ensure_stash_page_count("Vault", 4)
         positioned = self.vault.set_item_layouts("Vault", [{
             "itemId": item.id, "pageIndex": 3, "x": 4, "y": 5,
         }])[0]
@@ -425,6 +532,7 @@ class InfiniteVaultTests(unittest.TestCase):
     def test_persistent_layout_preserves_payload_and_audits_changes(self):
         sword = self.vault.deposit("Vault", RAW_SWORD)
         helm = self.vault.deposit("Vault", RAW_HELM)
+        self.vault.ensure_stash_page_count("Vault", 2)
         original = {
             row.id: (row.raw_item_json, row.raw_sha256)
             for row in (sword, helm)
@@ -554,6 +662,7 @@ class InfiniteVaultTests(unittest.TestCase):
     def test_move_and_layout_undo_restore_previous_collection_grid(self):
         destination = self.vault.create_collection("Build")
         item = self.vault.deposit("Vault", RAW_HELM)
+        self.vault.ensure_stash_page_count("Vault", 3)
         self.vault.set_item_layouts("Vault", [{
             "itemId": item.id, "pageIndex": 2, "x": 4, "y": 5,
         }])
