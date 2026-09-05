@@ -190,7 +190,7 @@ def _resource_base() -> Path:
 BASE = _resource_base()
 CATALOG_FILE = BASE / "hs_full_catalog.json"
 PORT = 8765
-APP_VERSION = "2.15.0-s10"
+APP_VERSION = "2.15.1-s10"
 APPLICATION_ID = "hero-siege-item-editor"
 CATALOG_PROFILE = "Season 10"
 MAX_POST_BYTES = 2 * 1024 * 1024
@@ -8051,7 +8051,7 @@ HTML = r"""<!DOCTYPE html>
 #right{width:380px;background:var(--panel);border-left:1px solid var(--line);padding:12px;display:flex;flex-direction:column}
 h1{font-size:17px;color:var(--gold);margin:0 0 10px;letter-spacing:1px}
 h2{font-size:14px;color:var(--gold);margin:14px 0 6px}
-.charbtn,.tabbtn[hidden],.iconbtn[hidden],[hidden]{display:none!important}.tabbtn{display:block;width:100%;text-align:left;background:var(--card);border:1px solid var(--line);color:var(--tx);padding:7px 9px;margin:3px 0;cursor:pointer;border-radius:4px}
+.tabbtn[hidden],.iconbtn[hidden],[hidden]{display:none!important}.charbtn,.tabbtn{display:block;width:100%;text-align:left;background:var(--card);border:1px solid var(--line);color:var(--tx);padding:7px 9px;margin:3px 0;cursor:pointer;border-radius:4px}
 .charbtn:hover,.tabbtn:hover{border-color:var(--gold)}
 .charbtn.sel,.tabbtn.sel{border-color:var(--gold);background:#33211c}
 .muted{color:#937f6a;font-size:12px}
@@ -8353,7 +8353,10 @@ async function boot(){
   CAT.forEach(r=>(r.stats||[]).forEach(([l,v])=>labels.add(l)));
   const dl=document.getElementById('statlist');
   [...labels].sort().forEach(l=>{const o=document.createElement('option');o.value=l;dl.appendChild(o)});
-  const ov=await j('/api/overview'); chars=ov.chars;
+  // The character list must survive one slow or failed request: retry the overview a few
+  // times at boot, and the 5 s poll below re-renders the sidebar whenever the list changes.
+  let ov=null;for(let attempt=0;attempt<4&&!ov;attempt++){try{ov=await j('/api/overview')}catch(error){await new Promise(r=>setTimeout(r,1500))}}
+  ov=ov||{};chars=Array.isArray(ov.chars)?ov.chars:[];
   GAME_RUNNING=!!ov.gameRunning;
   document.getElementById('version').textContent=`${ov.profile||'Season 10'} · v${ov.version||''} · ${ov.catalogItems||0} items`;
   const rollStatus=document.getElementById('rollstatus'), rpdb=ov.rollProfiles||{};
@@ -8378,15 +8381,19 @@ async function boot(){
   rollStatus.style.color=allCapabilitiesReady?'#74ee98':(anyCapabilityReady?'#ffd080':'#ff9b83');
   document.getElementById('status').textContent=ov.gameRunning?'GAME RUNNING - VIEW ONLY, WRITING LOCKED':'GAME CLOSED - EDITING ENABLED';
   document.getElementById('status').className=ov.gameRunning?'warn':'';
-  const cd=document.getElementById('chars'); cd.innerHTML='';
-  chars.forEach(c=>{const b=document.createElement('button');b.className='charbtn';
-    b.dataset.slot=c.slot;
-    b.innerHTML=`<b>${c.name}</b><br><span class="muted">${c.cls} - Lv. ${c.level} (slot ${c.slot})</span>`;
-    b.onclick=()=>{document.querySelectorAll('.tabbtn').forEach(x=>x.classList.remove('sel'));openChar(c.slot,b)}; cd.appendChild(b)});
+  function renderChars(list){const cd=document.getElementById('chars');if(!cd)return;const selected=cd.querySelector('.charbtn.sel')?.dataset.slot;cd.innerHTML='';
+    list.forEach(c=>{const b=document.createElement('button');b.className='charbtn'+(String(c.slot)===selected?' sel':'');
+      b.dataset.slot=c.slot;
+      b.innerHTML=`<b>${esc(c.name)}</b><br><span class="muted">${esc(c.cls)} - Lv. ${c.level} (slot ${c.slot})</span>`;
+      b.onclick=()=>{document.querySelectorAll('.tabbtn').forEach(x=>x.classList.remove('sel'));openChar(c.slot,b)}; cd.appendChild(b)});
+    if(!list.length){const n=document.createElement('div');n.className='muted';n.style.cssText='padding:8px 12px;font-size:12px';n.textContent='No characters found yet. The list refreshes every few seconds; the game keeps its saves in Hero_Siege\hs2saves.';cd.appendChild(n)}}
+  renderChars(chars);
   const fc=document.getElementById('fcls');
   Object.entries(CLS).forEach(([k,v])=>{const o=document.createElement('option');o.value=k;o.textContent=v;fc.appendChild(o)});
   search();
-  setInterval(async()=>{const o=await j('/api/overview');const wasRunning=GAME_RUNNING;GAME_RUNNING=!!o.gameRunning;
+  setInterval(async()=>{let o=null;try{o=await j('/api/overview')}catch(error){return}if(!o||typeof o!=='object')return;
+    if(Array.isArray(o.chars)&&JSON.stringify(o.chars)!==JSON.stringify(chars)){chars=o.chars;renderChars(chars)}
+    const wasRunning=GAME_RUNNING;GAME_RUNNING=!!o.gameRunning;
     if(wasRunning!==GAME_RUNNING&&FORGE_SESSION?.app.isConnected)FORGE_SESSION.update?.();
     document.getElementById('status').textContent=o.gameRunning?'GAME RUNNING - VIEW ONLY, WRITING LOCKED':'GAME CLOSED - EDITING ENABLED';
     document.getElementById('status').className=o.gameRunning?'warn':'';

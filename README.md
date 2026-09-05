@@ -8,9 +8,15 @@ A local/offline save editor for **Hero Siege** (Pixel Prone Games). Manage items
 
 Single file, no install, no Python needed. Just run it.
 
-## What's new in v2.15.0
+## What's new in v2.15.1
 
-Pairs with ForgePact 1.3.9. Download `HeroSiegeItemEditor-v2.15.0-s10.exe` from the
+A quick fix: the character list in the sidebar was invisible in 2.15.0 (a style rule meant
+for two hidden menu entries also caught the character buttons). It also retries and refreshes
+itself now. See [the v2.15.1 release notes](RELEASE_NOTES_v2.15.1.md).
+
+## Previously added in v2.15.0
+
+Pairs with ForgePact 1.3.9. Download the latest `HeroSiegeItemEditor-v2.15.x-s10.exe` from the
 Releases page; the source UI runs with `py hs_item_editor_gui.py`.
 
 - **Item Forge workspace:** Choose item → Customize → Review & save on one page, entered
