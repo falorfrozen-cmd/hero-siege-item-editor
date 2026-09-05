@@ -1,4 +1,4 @@
-﻿#!/usr/bin/env python3
+#!/usr/bin/env python3
 """Hero Siege Item Editor GUI - local web interface.
 
 Run with:  py hs_item_editor_gui.py   ->  http://127.0.0.1:8765 in a browser
@@ -144,6 +144,33 @@ except ModuleNotFoundError:
         _build_exact_tooltip_model = None
         _load_tooltip_model_database = None
 
+try:
+    from custom_item_forge import (
+        CustomForgeError,
+        CustomForgeStore,
+        item_selector as custom_forge_item_selector,
+        load_custom_forge_catalog,
+        selector_id as custom_forge_selector_id,
+    )
+except ModuleNotFoundError:
+    from HSItemEditor.custom_item_forge import (
+        CustomForgeError,
+        CustomForgeStore,
+        item_selector as custom_forge_item_selector,
+        load_custom_forge_catalog,
+        selector_id as custom_forge_selector_id,
+    )
+
+try:
+    from stat_semantics import load_stat_semantics
+except ModuleNotFoundError:
+    from HSItemEditor.stat_semantics import load_stat_semantics
+
+try:
+    from custom_forge_runtime import runtime_status as _custom_forge_runtime_status
+except ModuleNotFoundError:
+    from HSItemEditor.custom_forge_runtime import runtime_status as _custom_forge_runtime_status
+
 ROOT = Path.home() / "AppData" / "Local" / "Hero_Siege"
 SAVES = ROOT / "hs2saves"
 VAULT_DB_FILE = ROOT / "hs_infinite_vault.sqlite3"
@@ -163,7 +190,7 @@ def _resource_base() -> Path:
 BASE = _resource_base()
 CATALOG_FILE = BASE / "hs_full_catalog.json"
 PORT = 8765
-APP_VERSION = "2.12.0-s10"
+APP_VERSION = "2.15.0-s10"
 APPLICATION_ID = "hero-siege-item-editor"
 CATALOG_PROFILE = "Season 10"
 MAX_POST_BYTES = 2 * 1024 * 1024
@@ -216,6 +243,12 @@ TOOLTIP_MODEL_DB = (
     if _load_tooltip_model_database is not None
     else None
 )
+STAT_SEMANTICS = load_stat_semantics(
+    BASE, expected_exe_sha256=EXPECTED_GAME_EXE_SHA256
+)
+CUSTOM_FORGE_CATALOG = STAT_SEMANTICS.decorate_catalog(
+    load_custom_forge_catalog(BASE)
+)
 
 # GetItemSeed emits this inclusive save-field range in the clean S10 build.
 # CPR's later masked internal-state domain is different; it must not be used
@@ -231,6 +264,9 @@ SAVE_WRITE_LOCK = threading.RLock()
 _VAULT_STORE = None
 _VAULT_STORE_PATH = None
 _VAULT_STORE_LOCK = threading.RLock()
+_CUSTOM_FORGE_STORE = None
+_CUSTOM_FORGE_STORE_PATH = None
+_CUSTOM_FORGE_STORE_LOCK = threading.RLock()
 # Runtime peer checks are enabled only by ``main`` after this process has
 # acquired its listening port.  Keeping the default disabled makes imported
 # library/unit-test operations deterministic and side-effect free.
@@ -424,26 +460,61 @@ def encode_hss(text: str) -> str:
 CREATE_NO_WINDOW = 0x08000000  # subprocess'in konsol penceresi acmasini engeller
 
 
+_GAME_RUNNING_CACHE: dict = {"at": 0.0, "value": None}
+
+
+def game_running_cached() -> bool:
+    """game_running() memoised for 1.5 s, for read-only hot paths such as opening an item in
+    the Item Forge: process detection costs ~0.3 s per call.  Writes keep using the
+    uncached check."""
+    now = time.monotonic()
+    if _GAME_RUNNING_CACHE["value"] is not None and now - _GAME_RUNNING_CACHE["at"] < 1.5:
+        return _GAME_RUNNING_CACHE["value"]
+    value = game_running()
+    _GAME_RUNNING_CACHE.update(at=now, value=value)
+    return value
+
+
 def game_running() -> bool:
     """Return True when Hero Siege is running *or detection is unavailable*.
 
-    Save mutations must fail closed.  Treating a tasklist timeout/failure as
-    "game is not running" would otherwise disable the editor's main safety
-    guarantee exactly when Windows process state could not be established.
+    Save mutations must fail closed.  Treating a detection failure as "game is
+    not running" would otherwise disable the editor's main safety guarantee
+    exactly when Windows process state could not be established.
+
+    Detection is deliberately tolerant of localized Windows: ``tasklist`` prints
+    its "no tasks" notice in the OEM code page of the system language, and
+    decoding that strictly with the ANSI code page raised UnicodeDecodeError on
+    e.g. German or Turkish systems, which made every player there see "GAME
+    RUNNING" forever.  Output is read as bytes and decoded leniently; the CSV
+    layout keeps the check language-independent, and PowerShell is tried before
+    giving up.
     """
+    checks = 0
     try:
-        r = subprocess.run(["tasklist", "/FI", "IMAGENAME eq Hero_Siege.exe"],
-                           capture_output=True, text=True, timeout=10,
-                           creationflags=CREATE_NO_WINDOW)
-        if r.returncode != 0:
-            return True
-        return any(
-            line.split(None, 1)[0].casefold() == "hero_siege.exe"
-            for line in r.stdout.splitlines()
-            if line.strip()
-        )
+        r = subprocess.run(["tasklist", "/FI", "IMAGENAME eq Hero_Siege.exe", "/FO", "CSV", "/NH"],
+                           capture_output=True, timeout=10, creationflags=CREATE_NO_WINDOW)
+        if r.returncode == 0:
+            checks += 1
+            raw = r.stdout
+            text = raw.decode("utf-8", "replace") if isinstance(raw, (bytes, bytearray)) else str(raw or "")
+            if "hero_siege.exe" in text.casefold():
+                return True
     except Exception:
-        return True
+        pass
+    try:
+        r = subprocess.run(["powershell", "-NoProfile", "-NonInteractive", "-Command",
+                            "(Get-Process -Name Hero_Siege -ErrorAction SilentlyContinue | Measure-Object).Count"],
+                           capture_output=True, timeout=15, creationflags=CREATE_NO_WINDOW)
+        if r.returncode == 0:
+            checks += 1
+            raw = r.stdout
+            text = (raw.decode("utf-8", "replace") if isinstance(raw, (bytes, bytearray)) else str(raw or "")).strip()
+            if text.isdigit() and int(text) > 0:
+                return True
+    except Exception:
+        pass
+    return checks == 0
 
 
 def backup(path: Path) -> str:
@@ -489,6 +560,45 @@ def vault_store() -> InfiniteVault:
             _VAULT_STORE = InfiniteVault(path)
             _VAULT_STORE_PATH = path
         return _VAULT_STORE
+
+
+def custom_forge_store() -> CustomForgeStore:
+    """Return a lazy store so imports/tests never create user data."""
+
+    global _CUSTOM_FORGE_STORE, _CUSTOM_FORGE_STORE_PATH
+    path = Path(ROOT).expanduser().resolve()
+    with _CUSTOM_FORGE_STORE_LOCK:
+        if _CUSTOM_FORGE_STORE is None or _CUSTOM_FORGE_STORE_PATH != path:
+            _CUSTOM_FORGE_STORE = CustomForgeStore(
+                path, CUSTOM_FORGE_CATALOG, STAT_SEMANTICS
+            )
+            _CUSTOM_FORGE_STORE_PATH = path
+        return _CUSTOM_FORGE_STORE
+
+
+def _attach_custom_forge(item: dict, configured_items: dict | None = None) -> dict:
+    """Attach a small UI marker without altering the native tooltip model."""
+
+    try:
+        selector = custom_forge_item_selector(item.get("cls"), item.get("raw", {}))
+        if configured_items is None:
+            configuration = custom_forge_store().get(selector)
+        else:
+            configuration = configured_items.get(custom_forge_selector_id(selector))
+        if isinstance(configuration, dict):
+            stats = configuration.get("stats")
+            item["customForge"] = {
+                "active": True,
+                "statCount": len(stats) if isinstance(stats, dict) else 0,
+                "keepNative": configuration.get("keepNative", True) is not False,
+                "name": configuration.get("name") or None,
+            }
+            tooltip = item.get("gameTooltip")
+            if isinstance(tooltip, dict):
+                tooltip["customForge"] = dict(item["customForge"])
+    except (CustomForgeError, OSError, ValueError):
+        pass
+    return item
 
 
 def _file_sha256(path: Path) -> str:
@@ -625,7 +735,67 @@ def _vault_source_display(source: str | None) -> str:
     return source or "Shared Stash"
 
 
+def _catalog_label_names() -> dict[str, str]:
+    """Catalog stat-line label -> code-verified name from the semantics database.
+
+    The catalog was written with the pre-semantics labels ('Stat #313', 'All Talents',
+    'Hp P'...).  'Stat #N' maps straight to the key; a legacy label maps only when every key it
+    ever stood for (raw forge catalog + tooltip model labels) shares one verified name, so an
+    ambiguous label such as 'Attack Damage' keeps its text."""
+    names: dict[str, str] = {}
+    try:
+        keys_by_label: dict[str, set[int]] = {}
+        try:
+            for row in load_custom_forge_catalog(BASE).get("stats", []):
+                label = str(row.get("label") or "").strip()
+                if label and isinstance(row.get("key"), int):
+                    keys_by_label.setdefault(label, set()).add(int(row["key"]))
+        except Exception:
+            pass
+        model_labels = getattr(TOOLTIP_MODEL_DB, "_stat_labels", None)
+        if not isinstance(model_labels, dict):
+            try:
+                model_labels = json.loads((BASE / "hs_tooltip_roll_models.json").read_text(encoding="utf-8")).get("statLabels", {})
+            except Exception:
+                model_labels = {}
+        for raw_key, meta in (model_labels or {}).items():
+            label = str((meta or {}).get("label") or "").strip() if isinstance(meta, dict) else ""
+            if label and str(raw_key).isdigit():
+                keys_by_label.setdefault(label, set()).add(int(raw_key))
+        for label, keys in keys_by_label.items():
+            verified = {STAT_SEMANTICS.display_name(key) for key in keys}
+            verified.discard("")
+            if len(verified) == 1:
+                name = next(iter(verified))
+                if not name.startswith("Stat #") and name != label:
+                    names[label] = name
+        for key in range(0, 1000):
+            name = STAT_SEMANTICS.display_name(key)
+            if not name.startswith("Stat #"):
+                names.setdefault(f"Stat #{key}", name)
+    except Exception:
+        return {}
+    return names
+
+
+def _rename_catalog_lines(rows: list, names: dict[str, str]) -> int:
+    """Rename stat-line labels in place; returns the number of lines changed."""
+    changed = 0
+    if not names:
+        return 0
+    for row in rows:
+        for line in (row.get("stats") or []) if isinstance(row, dict) else []:
+            if isinstance(line, list) and len(line) == 2:
+                new = names.get(str(line[0]).strip())
+                if new:
+                    line[0] = new
+                    changed += 1
+    return changed
+
+
 CAT = json.loads(CATALOG_FILE.read_text(encoding="utf-8"))
+CATALOG_LABEL_NAMES = _catalog_label_names()
+CATALOG_LINES_RENAMED = _rename_catalog_lines(CAT, CATALOG_LABEL_NAMES)
 SETS_FILE = BASE / "hs_sets.json"
 SETS = json.loads(SETS_FILE.read_text(encoding="utf-8")) if SETS_FILE.exists() else []
 RW_FILE = BASE / "hs_runewords.json"
@@ -1478,13 +1648,17 @@ def _attach_game_tooltip(item: dict, build_status: dict | None = None) -> dict:
     return item
 
 
-def _vault_item_payload(record, build_status: dict | None = None) -> dict:
+def _vault_item_payload(
+    record, build_status: dict | None = None, configured_items: dict | None = None
+) -> dict:
     entry = record.decoded_item()
     key = record.source_item_key or "0-0-0--1"
     item = resolve(key, entry.get("data", {}))
     game_tooltip = _game_tooltip_model(
         item, custom_name=record.custom_name, build_status=build_status
     )
+    item["gameTooltip"] = game_tooltip
+    _attach_custom_forge(item, configured_items)
     return {
         "id": record.id,
         "collectionId": record.collection_id,
@@ -1509,6 +1683,7 @@ def _vault_item_payload(record, build_status: dict | None = None) -> dict:
             else None
         ),
         "gameTooltip": game_tooltip,
+        "customForge": item.get("customForge"),
         "fingerprint": game_tooltip.get("fingerprint"),
         "sourceLabel": _vault_source_display(record.source),
         "sourceItemKey": record.source_item_key,
@@ -1551,6 +1726,10 @@ def read_char(slot: int) -> dict:
             "code": "build_check_failed",
             "message": "Game build could not be verified.",
         }
+    try:
+        configured_forge_items = custom_forge_store().load()["items"]
+    except (CustomForgeError, OSError):
+        configured_forge_items = {}
     out = {"equipped": [], "potions": [], "personal_stash": []}
     for k, v in inv.get("equipped_items", {}).items():
         it = resolve(k, v["data"])
@@ -1559,12 +1738,14 @@ def read_char(slot: int) -> dict:
         if v["data"].get("o") is not None:
             it["relicLevel"] = int(float(v["data"]["o"]))
         _attach_game_tooltip(it, tooltip_build_status)
+        _attach_custom_forge(it, configured_forge_items)
         out["equipped"].append(it)
     for sec in ("potions", "personal_stash"):
         for k, v in inv.get(sec, {}).items():
             it = resolve(k, v["data"])
             it["pos"] = v.get("pos", [0, 0])
             _attach_game_tooltip(it, tooltip_build_status)
+            _attach_custom_forge(it, configured_forge_items)
             out[sec].append(it)
     # bag file
     bags = {}
@@ -1589,6 +1770,7 @@ def read_char(slot: int) -> dict:
                     else:
                         it["pos"] = v.get("pos", [0, 0])
                     _attach_game_tooltip(it, tooltip_build_status)
+                    _attach_custom_forge(it, configured_forge_items)
                     lst.append(it)
                 bags[tab] = lst
         except Exception:
@@ -1607,6 +1789,10 @@ def read_stash() -> dict:
             "code": "build_check_failed",
             "message": "Game build could not be verified.",
         }
+    try:
+        configured_forge_items = custom_forge_store().load()["items"]
+    except (CustomForgeError, OSError):
+        configured_forge_items = {}
     out = {}
     for tab, items in d.items():
         if not isinstance(items, dict) or tab == "stash_tab_data":
@@ -1619,6 +1805,7 @@ def read_stash() -> dict:
             if "pos" in v:
                 it["pos"] = v["pos"]
             _attach_game_tooltip(it, tooltip_build_status)
+            _attach_custom_forge(it, configured_forge_items)
             lst.append(it)
         out[tab] = lst
     return out
@@ -3702,8 +3889,15 @@ def vault_items(query: dict) -> dict:
             "code": "build_check_failed",
             "message": "Game build could not be verified.",
         }
+    try:
+        configured_forge_items = custom_forge_store().load()["items"]
+    except (CustomForgeError, OSError):
+        configured_forge_items = {}
     return {
-        "items": [_vault_item_payload(row, tooltip_build_status) for row in rows],
+        "items": [
+            _vault_item_payload(row, tooltip_build_status, configured_forge_items)
+            for row in rows
+        ],
         "total": total,
         "offset": offset,
         "limit": limit,
@@ -4760,6 +4954,23 @@ def op_addmany(body: dict) -> dict:
     return {"ok": f"added {len(added)}: " + ", ".join(added), "backup": bk}
 
 
+def _retarget_custom_forge_after_seed_change(
+    item: dict, old_data: dict, new_data: dict
+) -> str:
+    """Keep a configured item forged when an editor action changes its seeds."""
+
+    try:
+        old_selector = custom_forge_item_selector(item.get("cls"), old_data)
+        store = custom_forge_store()
+        if store.get(old_selector) is None:
+            return ""
+        new_selector = custom_forge_item_selector(item.get("cls"), new_data)
+        result = store.retarget(old_selector, new_selector)
+        return str(result.get("backup") or "")
+    except CustomForgeError:
+        raise
+
+
 def op_modify(body: dict) -> dict:
     """Validated operations on one existing item."""
     if game_running():
@@ -4812,8 +5023,12 @@ def op_modify(body: dict) -> dict:
             }
         # The runtime recreates the selected identity from ``a``.  Never inject
         # stat 202/203/419/420 or touch i/s/zz/socket payloads.
+        old_data = dict(data)
         data["a"] = float(target["seed"])
         baks = ctx.save_all()
+        forge_backup = _retarget_custom_forge_after_seed_change(it, old_data, data)
+        if forge_backup:
+            baks.append(forge_backup)
         if selector.get("targetKind") == "class":
             changed_label = (
                 f"All Skills class -> {target['name']} "
@@ -4831,10 +5046,14 @@ def op_modify(body: dict) -> dict:
         }
     if action == "reroll":
         d0 = entry.setdefault("data", {})
+        old_data = dict(d0)
         d0["a"] = random_item_seed()
         if "i" in d0: d0["i"] = random_item_seed()
         if "s" in d0: d0["s"] = random_item_seed()
         baks = ctx.save_all()
+        forge_backup = _retarget_custom_forge_after_seed_change(it, old_data, d0)
+        if forge_backup:
+            baks.append(forge_backup)
         return {"ok": f"{it['name']}: stats rerolled (new seeds)", "backup": ", ".join(baks)}
     if action == "perfect":
         if it.get("skillSelector"):
@@ -4915,11 +5134,15 @@ def op_modify(body: dict) -> dict:
         if already_applied:
             return {"ok": f"{it['name']}: already {mode} ({detail})",
                     "backup": ""}
+        old_data = dict(data)
         data.update(applicable_field_seeds)
         if max_sockets is not None:
             zz = data.setdefault("zz", {})
             zz["sockets"] = float(max_sockets)
         baks = ctx.save_all()
+        forge_backup = _retarget_custom_forge_after_seed_change(it, old_data, data)
+        if forge_backup:
+            baks.append(forge_backup)
         return {"ok": (f"{it['name']}: {mode} applied ({detail}; "
                        f"{seed_detail})"),
                 "backup": ", ".join(baks)}
@@ -4963,6 +5186,340 @@ def op_modify(body: dict) -> dict:
         baks = ctx.save_all()
         return {"ok": f"{it['name']}: duplicated", "backup": ", ".join(baks)}
     return {"err": "unknown action"}
+
+
+_ITEM_STATS_CACHE: dict = {"path": None, "mtime": None, "items": {}}
+
+
+def _runtime_item_stats_file() -> Path | None:
+    r"""bp_ipc\itemstats.json of the ForgePact game folder, if any."""
+    try:
+        from custom_forge_runtime import forgepact_game_exe, running_game_exe
+        root = Path(os.path.expandvars(r"%LOCALAPPDATA%")) / "Hero_Siege"
+        exe = running_game_exe() or forgepact_game_exe(root)
+        if not exe:
+            return None
+        path = Path(exe).parent / "bp_ipc" / "itemstats.json"
+        return path if path.is_file() else None
+    except Exception:
+        return None
+
+
+def _runtime_item_stats(timestamp: str) -> dict | None:
+    """The finished itemStatStruct the game built for the item with this itemTimeStamp."""
+    path = _runtime_item_stats_file()
+    if path is None:
+        return None
+    try:
+        mtime = path.stat().st_mtime
+        cache = _ITEM_STATS_CACHE
+        if cache["path"] != str(path) or cache["mtime"] != mtime:
+            payload = json.loads(path.read_text(encoding="utf-8", errors="replace"))
+            items = payload.get("items") if isinstance(payload, dict) else None
+            cache.update(path=str(path), mtime=mtime, items=items if isinstance(items, dict) else {})
+        found = cache["items"].get(str(timestamp))
+        return found if isinstance(found, dict) else None
+    except Exception:
+        return None
+
+
+def _forge_base_stats(item: dict, allowed: set, key: str | None = None) -> tuple[dict, dict, str]:
+    """(baseStats, baseLabels, source) of one owned item.
+
+    source "runtime": the stat struct the game itself built (exact, includes every rolled
+    affix); "model": the editor's tooltip model (base rows only) when the item has not been
+    loaded in the game with ForgePact yet.  Only keys the Custom Forge may write are kept, so
+    every base row shown in the Item Forge can also be overridden."""
+    stats: dict = {}
+    labels: dict = {}
+    timestamp = None
+    if isinstance(key, str):
+        parts = key.split("-")
+        if len(parts) >= 3 and parts[2].isdigit():
+            timestamp = parts[2]
+    runtime = _runtime_item_stats(timestamp) if timestamp else None
+    if runtime:
+        for raw_key, value in runtime.items():
+            if isinstance(value, bool) or not isinstance(value, (int, float)) or not math.isfinite(float(value)):
+                continue
+            if str(raw_key) not in allowed:
+                continue
+            stats[str(raw_key)] = float(value) if not float(value).is_integer() else int(value)
+        return stats, labels, "runtime"
+    try:
+        model = item.get("gameTooltip")
+        if not isinstance(model, dict):
+            model = _attach_game_tooltip(item).get("gameTooltip")
+        rows = model.get("stats") if isinstance(model, dict) else None
+        for row in rows or []:
+            if not isinstance(row, dict):
+                continue
+            key, value = row.get("statKey"), row.get("value")
+            if isinstance(key, bool) or not isinstance(key, int):
+                continue
+            if isinstance(value, bool) or not isinstance(value, (int, float)) or not math.isfinite(float(value)):
+                continue
+            if str(key) not in allowed:
+                continue
+            stats[str(key)] = float(value) if not float(value).is_integer() else int(value)
+            labels[str(key)] = str(row.get("label") or "")
+    except Exception:
+        return {}, {}, "model"
+    return stats, labels, "model"
+
+
+def _normalize_forge_target(target: dict) -> dict:
+    """Fill in the section tab the save reader needs for character-side targets.
+
+    The character screen addresses equipped items as {type: "equipped", slot, tab:
+    "equipped_items"}; pickers that only know type and slot get the tab derived here."""
+    if not isinstance(target, dict):
+        return target
+    kind = target.get("type")
+    if kind in ("equipped", "potions", "personal_stash") and not target.get("tab"):
+        return {**target, "tab": "equipped_items" if kind == "equipped" else kind}
+    return target
+
+
+SIGNATURE_ITEMS_FILE = BASE / "hs_signature_items.json"
+
+
+from custom_item_forge import MECHANICS
+
+
+def load_signature_items(path: Path | None = None) -> list[dict]:
+    """Ready-made Custom Forge items shipped with the editor (hs_signature_items.json).
+
+    Each entry names a catalog base (class + catalog key) and a full forge configuration;
+    entries whose configuration the Custom Forge store would reject are dropped, so the
+    page never offers something the plugin cannot apply."""
+    path = path or SIGNATURE_ITEMS_FILE
+    try:
+        payload = json.loads(Path(path).read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return []
+    rows = payload.get("items") if isinstance(payload, dict) else None
+    result = []
+    for row in rows or []:
+        if not isinstance(row, dict):
+            continue
+        base, config = row.get("base"), row.get("config")
+        if not isinstance(base, dict) or not isinstance(config, dict):
+            continue
+        if not isinstance(row.get("id"), str) or not isinstance(row.get("name"), str):
+            continue
+        if not isinstance(config.get("stats"), dict) or not config["stats"]:
+            continue
+        mechanic = config.get("mechanic")
+        if mechanic is not None and mechanic not in MECHANICS:
+            continue
+        result.append({
+            "id": row["id"], "name": row["name"],
+            "base": {"cls": base.get("cls"), "key": base.get("key"), "name": base.get("name")},
+            "tagline": str(row.get("tagline") or ""), "needs": str(row.get("needs") or ""),
+            "config": {
+                "keepNative": config.get("keepNative", True) is not False,
+                "stats": {str(k): v for k, v in config["stats"].items()},
+                "name": config.get("name"), "rarity": config.get("rarity"), "mechanic": mechanic,
+                "affix": config.get("affix"), "lore": config.get("lore"),
+                "presetIds": [], "excludedKeys": [],
+            },
+        })
+    return result
+
+
+def _custom_forge_target(body: dict) -> tuple[dict, dict, str]:
+    """Resolve one native/Vault item to the identity ForgePact can observe."""
+
+    vault_item_id = body.get("vaultItemId")
+    if vault_item_id is not None:
+        record = vault_store().get_item(vault_item_id)
+        entry = record.decoded_item()
+        key = record.source_item_key
+        if not key:
+            raise CustomForgeError("Vault item has no native source key")
+        data = entry.get("data")
+        if not isinstance(data, dict):
+            raise CustomForgeError("Vault item data is malformed")
+        item = resolve(key, data)
+        item["sourceKey"] = key
+        selector = custom_forge_item_selector(item.get("cls"), data)
+        return selector, item, "vault"
+
+    target = _normalize_forge_target(body.get("target"))
+    key = body.get("key")
+    if not isinstance(target, dict) or not isinstance(key, str):
+        raise CustomForgeError("a concrete item target is required")
+    context = FileCtx()
+    items = context.items(target)
+    entry = items.get(key)
+    if not isinstance(entry, dict) or not isinstance(entry.get("data"), dict):
+        raise CustomForgeError("item not found")
+    item = resolve(key, entry["data"])
+    item["sourceKey"] = key
+    selector = custom_forge_item_selector(item.get("cls"), entry["data"])
+    return selector, item, "save"
+
+
+ITEM_FORGE_STASH_TAB = re.compile(r"stash_tab_\d{1,2}")
+
+
+def op_item_forge_create(body: dict) -> dict:
+    """Create one base item for the Item Forge page and say where it landed.
+
+    Uniques go to the Unique tab, everything else to the requested shared
+    stash tab. The response carries the exact target/key the Custom Forge API
+    needs, so the page can forge the new item without a second lookup.
+    """
+
+    try:
+        r = CAT[int(body["cid"])]
+    except (KeyError, TypeError, ValueError, IndexError):
+        return {"err": "unknown catalog item"}
+    if game_running():
+        return {"err": "Game is running! Close it first."}
+    if r.get("kind") == "runeword" or r.get("cls", 0) < 0:
+        return {"err": "Runewords can't be forged here - use the Runeword Forge."}
+    if not r.get("available", True):
+        return {"err": "This catalog address is not verified for Season 10."}
+    if catalog_skill_profile_id(r) is not None:
+        return {
+            "err": (
+                f"{r['name']} needs a verified skill or class target. Add it from the "
+                "Shared Stash first, then forge it here as an owned item."
+            )
+        }
+    try:
+        generation_roll_profile_for_request(r, None)
+    except (DiceSkillValidationError, TorchClassValidationError, ValueError) as exc:
+        return {"err": f"{r['name']}: {exc}"}
+    d = json.loads(decode_hss(SAVES / "stash.hss"))
+    if r["kind"] == "unique":
+        items = d.setdefault("unique_items", {})
+        key = fresh_key(r["cls"], items)
+        items[key] = {"data": make_data(r)}
+        api_target = {"type": "stash", "tab": "unique_items"}
+        where = "Unique tab"
+    else:
+        tab = str(body.get("tab") or "stash_tab_1")
+        if not ITEM_FORGE_STASH_TAB.fullmatch(tab):
+            return {"err": "choose a shared stash tab"}
+        items = d.setdefault(tab, {})
+        pos = find_free_pos(items, tab, r["w"], r["h"])
+        if pos is None:
+            return {"err": f"No free space in {tab}."}
+        key = fresh_key(r["cls"], items)
+        items[key] = {"pos": pos, "data": make_data(r)}
+        api_target = {"type": "stash", "tab": tab}
+        where = tab.replace("_", " ")
+    bk = write_stash(d)
+    return {
+        "ok": f"{r['name']} created in {where}",
+        "target": api_target,
+        "key": key,
+        "name": r["name"],
+        "backup": bk,
+    }
+
+
+def custom_forge_runtime_status() -> dict:
+    """Report whether the ForgePact runtime that applies forged stats is installed.
+
+    Diagnostics only: a failure here must never block editing, so every error
+    collapses into a warning payload the dialog can still render.
+    """
+
+    try:
+        return _custom_forge_runtime_status(ROOT)
+    except Exception as exc:  # noqa: BLE001 - status banner must degrade, not raise
+        return {
+            "code": "unknown", "level": "warn", "gameDir": None,
+            "message": f"ForgePact status could not be checked: {exc}",
+        }
+
+
+def op_custom_forge(body: dict) -> dict:
+    """Read or atomically replace one item's runtime stat override."""
+
+    try:
+        action = str(body.get("action") or "get")
+        selector, item, location = _custom_forge_target(body)
+        store = custom_forge_store()
+        if action == "get":
+            base = _forge_base_stats(item, {str(k) for k in store.allowed_stats}, item.get("sourceKey"))
+            return {
+                "item": {
+                    "name": item.get("name", "Unknown item"),
+                    "cls": item.get("cls"),
+                    "rar": item.get("rar"),
+                    "spr": item.get("spr"),
+                    "selector": selector,
+                    "location": location,
+                },
+                "configuration": store.get(selector),
+                "baseStats": base[0],
+                "baseLabels": base[1],
+                "baseSource": base[2],
+                "gameRunning": game_running_cached(),
+                "runtime": custom_forge_runtime_status(),
+            }
+        if game_running():
+            return {
+                "err": "Hero Siege is running. Close it before changing Custom Forge data."
+            }
+        _runtime_save_barrier()
+        if action == "remove":
+            result = store.remove(selector)
+            return {
+                "ok": (
+                    f"{item.get('name', 'Item')}: Custom Forge properties removed"
+                    if result["removed"]
+                    else f"{item.get('name', 'Item')}: no Custom Forge properties were active"
+                ),
+                "backup": result["backup"],
+                "restartRequired": True,
+            }
+        if action != "apply":
+            return {"err": "unknown Custom Forge action"}
+        prior = store.get(selector) or {}
+        preset_ids = body.get("presetIds") or []
+        excluded_keys = body.get("excludedKeys") or []
+        stats = store.merge_presets(
+            preset_ids,
+            body.get("stats") or {},
+            excluded_keys=excluded_keys,
+            trusted_stats=prior.get("stats") or {},
+            keep_native=body.get("keepNative", True) is not False,
+        )
+        result = store.apply(
+            selector,
+            label=str(item.get("name") or "Unknown item"),
+            stats=stats,
+            keep_native=body.get("keepNative", True) is not False,
+            preset_ids=preset_ids,
+            excluded_keys=excluded_keys,
+            lore=body.get("lore"),
+            rarity=body.get("rarity"),
+            mechanic=body.get("mechanic"),
+            name=body.get("name"),
+            affix=body.get("affix"),
+        )
+        return {
+            "ok": (
+                f"{item.get('name', 'Item')}: {len(stats)} Custom Forge stat key(s) saved. "
+                "Start Hero Siege with ForgePact to apply them."
+            ),
+            "configuration": result["entry"],
+            "backup": result["backup"],
+            "restartRequired": True,
+            "runtime": custom_forge_runtime_status(),
+            "identicalCopyWarning": (
+                "An exact duplicate with the same native definition fields will receive "
+                "the same properties; the editor never silently rerolls the original item."
+            ),
+        }
+    except (CustomForgeError, VaultError, KeyError, TypeError, ValueError, OSError) as exc:
+        return {"err": str(exc)}
 
 
 def _verified_roll_assessment(key: str, entry: dict, *, apply: bool) -> dict:
@@ -7282,6 +7839,12 @@ class H(BaseHTTPRequestHandler):
             })
         elif u.path == "/api/catalog":
             self._json(catalog_api_rows())
+        elif u.path == "/api/custom-forge/catalog":
+            self._json(CUSTOM_FORGE_CATALOG)
+        elif u.path == "/api/item-forge/signatures":
+            self._json({"items": load_signature_items()})
+        elif u.path == "/api/custom-forge/runtime":
+            self._json(custom_forge_runtime_status())
         elif u.path == "/api/dice-skills":
             profile_id = parse_qs(u.query).get("profile", [""])[0]
             selector = DICE_SKILL_DB.selector(profile_id)
@@ -7399,6 +7962,10 @@ class H(BaseHTTPRequestHandler):
             self._json(op_make_s10_access(body))
         elif path == "/api/modify":
             self._json(op_modify(body))
+        elif path == "/api/item-forge/create":
+            self._json(op_item_forge_create(body))
+        elif path == "/api/custom-forge":
+            self._json(op_custom_forge(body))
         elif path == "/api/delete":
             self._json(op_delete(body))
         elif path == "/api/health/fix":
@@ -7439,7 +8006,7 @@ class H(BaseHTTPRequestHandler):
         path = urlparse(self.path).path
         ordinary_save_routes = {
             "/api/add", "/api/move", "/api/addmany", "/api/stash/fill", "/api/forge",
-            "/api/restorebak", "/api/sockets",
+            "/api/item-forge/create", "/api/restorebak", "/api/sockets",
             "/api/makerelic", "/api/makestackable", "/api/makes10access",
             "/api/modify", "/api/delete", "/api/health/fix",
         }
@@ -7484,7 +8051,7 @@ HTML = r"""<!DOCTYPE html>
 #right{width:380px;background:var(--panel);border-left:1px solid var(--line);padding:12px;display:flex;flex-direction:column}
 h1{font-size:17px;color:var(--gold);margin:0 0 10px;letter-spacing:1px}
 h2{font-size:14px;color:var(--gold);margin:14px 0 6px}
-.charbtn,.tabbtn{display:block;width:100%;text-align:left;background:var(--card);border:1px solid var(--line);color:var(--tx);padding:7px 9px;margin:3px 0;cursor:pointer;border-radius:4px}
+.charbtn,.tabbtn[hidden],.iconbtn[hidden],[hidden]{display:none!important}.tabbtn{display:block;width:100%;text-align:left;background:var(--card);border:1px solid var(--line);color:var(--tx);padding:7px 9px;margin:3px 0;cursor:pointer;border-radius:4px}
 .charbtn:hover,.tabbtn:hover{border-color:var(--gold)}
 .charbtn.sel,.tabbtn.sel{border-color:var(--gold);background:#33211c}
 .muted{color:#937f6a;font-size:12px}
@@ -7554,7 +8121,7 @@ button.act:hover{background:#6f421a}
 .setadd:hover{background:#2d5e36}
 .setadd[disabled]{opacity:.4;cursor:default}
 .perfect-pill{display:inline-flex;align-items:center;gap:5px;margin-top:7px;padding:4px 8px;border:1px solid #3da55e;border-radius:999px;background:#122a1a;color:#74ee98;font-size:11px;font-weight:700;letter-spacing:.4px}
-#ctxmenu{position:fixed;z-index:120;display:none;background:#1c1013;border:1px solid #6a3a40;border-radius:6px;box-shadow:0 4px 16px rgba(0,0,0,.7);min-width:170px}
+#ctxmenu{position:fixed;z-index:260;display:none;background:#1c1013;border:1px solid #6a3a40;border-radius:6px;box-shadow:0 4px 16px rgba(0,0,0,.7);min-width:170px}
 #ctxmenu div{padding:8px 14px;font-size:13px;cursor:pointer}
 #ctxmenu div:hover{background:#3a1c22;color:var(--gold)}
 #ctxmenu div.danger:hover{background:#4a1414;color:#ff7060}
@@ -7569,6 +8136,7 @@ button.act:hover{background:#6f421a}
 .skill-select{width:100%;min-height:310px;padding:5px}
 .skill-current{margin:8px 0;padding:8px 10px;border:1px solid #30445c;border-radius:7px;background:#0b121c;color:#9ddff0;font-size:12px}
 .skill-proof{margin:8px 0;color:#7f8da1;font-size:11px;line-height:1.5}
+/* ITEM_FORGE_CSS */
 .rwcard{background:var(--card);border:1px solid var(--line);border-radius:6px;padding:8px 14px;margin:6px 0;max-width:1120px;display:grid;grid-template-columns:220px minmax(180px,1fr) minmax(250px,340px) 92px;align-items:center;gap:12px}
 .tipbar{background:#241a2e;border:1px solid #4a3a6a;border-radius:6px;padding:7px 12px;margin:0 0 12px;font-size:12px;color:#bfb3d6;max-width:920px}
 .tipbar b{color:#d8c9ff}
@@ -7598,6 +8166,7 @@ button.act:hover{background:#6f421a}
 .gtt-rule{height:1px;margin:8px 0;background:linear-gradient(90deg,transparent,#526177,transparent)}
 .gtt-stat{display:grid;grid-template-columns:minmax(44px,auto) minmax(0,1fr);gap:6px;padding:2px 5px;border-radius:4px;color:#9fc0ff;font-size:11px;line-height:1.35}
 .gtt-stat b{color:#f2f6fb;font-weight:750;text-align:right}.gtt-stat.unresolved b{color:#8896a9}.gtt-stat.missing{color:#708096;font-style:italic}.gtt-stat.missing b{color:#ffab72}.gtt-stat.gtt-diff{background:rgba(255,174,76,.13);box-shadow:inset 2px 0 #ffa64f}
+.gtt-forged{margin:0 3px 7px;padding:5px 7px;border:1px solid #9a6c24;border-radius:5px;background:#2b200e;color:#ffd77d;font-size:10px;font-weight:750;text-align:center}
 .gtt-identity,.gtt-socket{padding:2px 5px;color:#c7a4ff;font-size:10px}.gtt-identity b{color:#e0d0ff}.gtt-empty{padding:7px;color:#7f8da0;text-align:center;font-size:10px}
 .gtt-editor-meta{margin-top:8px;padding-top:7px;border-top:1px solid #344156;color:#8291a5;font-size:9px;line-height:1.5}
 .gtt-editor-meta b{color:#b8c7d8}.gtt-exact{color:#69e0ad!important}.gtt-partial{color:#ffb36f!important}.gtt-fingerprint{font-family:Consolas,monospace;letter-spacing:.6px}
@@ -7680,10 +8249,11 @@ input,select{background:#0b111a;color:#dfe7f0;border-color:#2d3b50;border-radius
 .recovery-card{max-width:920px;margin:0 0 15px;padding:15px;border:1px solid rgba(255,161,79,.5);border-left:4px solid #ff9f4d;border-radius:11px;background:linear-gradient(145deg,rgba(84,43,17,.35),rgba(25,22,24,.8))}.recovery-card h3{margin:0 0 6px;color:#ffb36f;font-size:15px}.recovery-card p{margin:5px 0;color:#d9c7ba;font-size:12px}.recovery-facts{display:flex;flex-wrap:wrap;gap:7px;margin:10px 0}.recovery-facts span{padding:5px 8px;border:1px solid #59412e;border-radius:7px;background:#191416;color:#e8d9c0;font-size:10px}.recovery-repairs{margin:8px 0 12px;padding-left:18px;color:#bfae9f;font-size:11px}.recovery-button{background:#6c351b!important;border-color:#c66c35!important;color:#fff1e7!important}.recovery-button:disabled{opacity:.45;cursor:not-allowed}
 .finder-bar{display:grid;grid-template-columns:minmax(190px,1fr) minmax(105px,135px) minmax(105px,135px) auto;gap:8px;max-width:980px;margin-bottom:14px}.finder-bar input,.finder-bar select{height:39px;min-width:0}.finder-count{margin:4px 0 11px;color:#77869a;font-size:11px}.finder-list{display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:8px;max-width:980px}.found-card{display:grid;grid-template-columns:38px minmax(0,1fr) auto;gap:10px;align-items:center;min-height:61px;padding:9px 10px;border:1px solid #2b394d;border-radius:10px;background:linear-gradient(145deg,#141d29,#0d141e)}.found-card img{width:34px;height:34px;object-fit:contain;image-rendering:pixelated;filter:drop-shadow(0 4px 7px rgba(0,0,0,.5))}.found-icon{width:34px;height:34px;display:grid;place-items:center;border:1px solid #34445a;border-radius:7px;color:#66768b}.found-name{font-weight:750;font-size:12px}.found-loc{margin-top:2px;color:#718096;font-size:10px}.locate-btn{padding:6px 9px;border:1px solid #3b526c;border-radius:7px;background:#162436;color:#a8ddec;cursor:pointer;font-size:10px;font-weight:800}.locate-btn:hover{border-color:#55bad0;background:#1d3348;color:#e2f9ff}.found-empty{max-width:920px;padding:28px;border:1px dashed #334258;border-radius:12px;text-align:center;color:#718096}
 .found-pulse{position:relative!important;z-index:15!important;animation:foundPulse 1.2s ease-in-out 3;box-shadow:0 0 0 2px #53d7ef,0 0 24px rgba(83,215,239,.65)!important}@keyframes foundPulse{50%{filter:brightness(1.65);transform:scale(1.04)}}
-.vault-toolbar{display:grid;grid-template-columns:minmax(180px,1fr) minmax(150px,220px) minmax(130px,180px) auto;gap:9px;align-items:center;max-width:1120px;margin:0 0 13px}.vault-toolbar input,.vault-toolbar select{height:39px;min-width:0}.vault-manage{display:flex;gap:7px;flex-wrap:wrap;max-width:1120px;margin-bottom:13px}.vault-mini{min-height:33px;padding:6px 10px;border:1px solid #33465e;border-radius:7px;background:#142033;color:#b9d8e4;cursor:pointer;font-size:10px;font-weight:800}.vault-mini:hover{border-color:#55bad0;color:#effcff}.vault-mini.danger{color:#ff999d;border-color:#643b45}.vault-summary{display:flex;align-items:center;justify-content:space-between;gap:12px;max-width:1120px;margin:8px 0 12px;color:#8190a5;font-size:11px}.vault-compare-bar{position:sticky;top:-12px;z-index:12;display:flex;align-items:center;gap:8px;max-width:1120px;margin:0 0 12px;padding:9px 10px;border:1px solid rgba(241,184,75,.32);border-radius:9px;background:rgba(15,23,34,.96);box-shadow:0 8px 22px rgba(0,0,0,.28)}.vault-compare-bar[hidden]{display:none}.vault-compare-slots{flex:1;min-width:0;overflow:hidden;color:#9caabd;font-size:10px;white-space:nowrap;text-overflow:ellipsis}.vault-compare-slots b{color:#f1c86f}.vault-list{display:grid;grid-template-columns:repeat(auto-fill,minmax(265px,1fr));gap:10px;max-width:1120px}.vault-card{position:relative;display:grid;grid-template-columns:54px minmax(0,1fr);gap:11px;min-height:92px;padding:12px;border:1px solid #2e3f55;border-radius:11px;background:radial-gradient(circle at 0 0,rgba(54,200,232,.055),transparent 38%),linear-gradient(145deg,#151f2d,#0d151f);box-shadow:0 8px 22px rgba(0,0,0,.16);transition:border-color .14s,transform .14s}.vault-card:hover{border-color:#536f8d;transform:translateY(-1px)}.vault-card.compare-selected{border-color:#e0ad52;box-shadow:0 0 0 1px rgba(241,184,75,.32),0 9px 25px rgba(0,0,0,.3)}.vault-card img,.vault-card-icon{width:52px;height:52px;object-fit:contain;image-rendering:pixelated;filter:drop-shadow(0 5px 8px rgba(0,0,0,.55))}.vault-card-icon{display:grid;place-items:center;border:1px solid #354860;border-radius:9px;color:#6c7f96;font-size:20px}.vault-card-copy{min-width:0;padding-right:52px}.vault-alias{margin-bottom:2px;color:#f2c76b;font-size:12px;font-weight:850;line-height:1.2}.vault-name{font-weight:800;font-size:13px;line-height:1.2}.vault-alias+.vault-name{font-size:10px;font-weight:700}.vault-fingerprint{font-family:Consolas,monospace;color:#617086}.vault-card-tool{position:absolute;top:7px;width:25px;height:25px;padding:0;border:1px solid #3a4d65;border-radius:6px;background:#111b28;color:#90a5bb;cursor:pointer;font-size:11px;font-weight:850}.vault-card-tool:hover{border-color:#efbd60;color:#ffe1a0}.vault-card-tool.name{right:38px}.vault-card-tool.compare{right:7px}.vault-card-tool.compare.on{border-color:#efbd60;background:#503a18;color:#ffe3a5}.vault-meta{margin-top:4px;color:#718198;font-size:10px;line-height:1.45}.vault-actions{grid-column:1/-1;display:flex;gap:6px;justify-content:flex-end;margin-top:2px}.vault-return{padding:6px 9px;border:1px solid rgba(82,221,169,.38);border-radius:7px;background:rgba(37,172,125,.09);color:#85e7bf;cursor:pointer;font-size:10px;font-weight:800}.vault-return:hover{background:rgba(37,172,125,.16);border-color:#52dda9}.vault-return:disabled{opacity:.4;cursor:not-allowed}.vault-pager{display:flex;justify-content:center;gap:8px;max-width:1120px;margin:16px 0}.vault-empty{max-width:1120px;padding:38px 24px;border:1px dashed #34465d;border-radius:13px;text-align:center;color:#75869c}.vault-warning{max-width:1120px;margin-bottom:13px;padding:10px 13px;border:1px solid rgba(255,153,76,.35);border-radius:9px;background:rgba(255,132,45,.07);color:#ffb47d;font-size:11px}.unique-list{display:grid;grid-template-columns:repeat(auto-fill,minmax(190px,1fr));gap:7px;max-width:1120px;margin-bottom:16px}.unique-card{display:grid;grid-template-columns:34px minmax(0,1fr);gap:8px;align-items:center;min-height:54px;padding:8px;border:1px solid #2b3b50;border-radius:8px;background:#101923;cursor:pointer}.unique-card:hover{border-color:#526b88}.unique-card img{width:32px;height:32px;object-fit:contain;image-rendering:pixelated}.unique-card .muted{font-size:9px}
+.vault-toolbar{display:grid;grid-template-columns:minmax(180px,1fr) minmax(150px,220px) minmax(130px,180px) auto;gap:9px;align-items:center;max-width:1120px;margin:0 0 13px}.vault-toolbar input,.vault-toolbar select{height:39px;min-width:0}.vault-manage{display:flex;gap:7px;flex-wrap:wrap;max-width:1120px;margin-bottom:13px}.vault-mini{min-height:33px;padding:6px 10px;border:1px solid #33465e;border-radius:7px;background:#142033;color:#b9d8e4;cursor:pointer;font-size:10px;font-weight:800}.vault-mini:hover{border-color:#55bad0;color:#effcff}.vault-mini.danger{color:#ff999d;border-color:#643b45}.vault-summary{display:flex;align-items:center;justify-content:space-between;gap:12px;max-width:1120px;margin:8px 0 12px;color:#8190a5;font-size:11px}.vault-compare-bar{position:sticky;top:-12px;z-index:12;display:flex;align-items:center;gap:8px;max-width:1120px;margin:0 0 12px;padding:9px 10px;border:1px solid rgba(241,184,75,.32);border-radius:9px;background:rgba(15,23,34,.96);box-shadow:0 8px 22px rgba(0,0,0,.28)}.vault-compare-bar[hidden]{display:none}.vault-compare-slots{flex:1;min-width:0;overflow:hidden;color:#9caabd;font-size:10px;white-space:nowrap;text-overflow:ellipsis}.vault-compare-slots b{color:#f1c86f}.vault-list{display:grid;grid-template-columns:repeat(auto-fill,minmax(265px,1fr));gap:10px;max-width:1120px}.vault-card{position:relative;display:grid;grid-template-columns:54px minmax(0,1fr);gap:11px;min-height:92px;padding:12px;border:1px solid #2e3f55;border-radius:11px;background:radial-gradient(circle at 0 0,rgba(54,200,232,.055),transparent 38%),linear-gradient(145deg,#151f2d,#0d151f);box-shadow:0 8px 22px rgba(0,0,0,.16);transition:border-color .14s,transform .14s}.vault-card:hover{border-color:#536f8d;transform:translateY(-1px)}.vault-card.compare-selected{border-color:#e0ad52;box-shadow:0 0 0 1px rgba(241,184,75,.32),0 9px 25px rgba(0,0,0,.3)}.vault-card img,.vault-card-icon{width:52px;height:52px;object-fit:contain;image-rendering:pixelated;filter:drop-shadow(0 5px 8px rgba(0,0,0,.55))}.vault-card-icon{display:grid;place-items:center;border:1px solid #354860;border-radius:9px;color:#6c7f96;font-size:20px}.vault-card-copy{min-width:0;padding-right:52px}.vault-alias{margin-bottom:2px;color:#f2c76b;font-size:12px;font-weight:850;line-height:1.2}.vault-name{font-weight:800;font-size:13px;line-height:1.2}.vault-alias+.vault-name{font-size:10px;font-weight:700}.vault-fingerprint{font-family:Consolas,monospace;color:#617086}.vault-card-tool{position:absolute;top:7px;width:25px;height:25px;padding:0;border:1px solid #3a4d65;border-radius:6px;background:#111b28;color:#90a5bb;cursor:pointer;font-size:11px;font-weight:850}.vault-card-tool:hover{border-color:#efbd60;color:#ffe1a0}.vault-card-tool.name{right:38px}.vault-card-tool.compare{right:7px}.vault-card-tool.compare.on{border-color:#efbd60;background:#503a18;color:#ffe3a5}.vault-meta{margin-top:4px;color:#718198;font-size:10px;line-height:1.45}.vault-actions{grid-column:1/-1;display:flex;gap:6px;justify-content:flex-end;margin-top:2px}.vault-return{padding:6px 9px;border:1px solid rgba(82,221,169,.38);border-radius:7px;background:rgba(37,172,125,.09);color:#85e7bf;cursor:pointer;font-size:10px;font-weight:800}.vault-return:hover{background:rgba(37,172,125,.16);border-color:#52dda9}.vault-return:disabled{opacity:.4;cursor:not-allowed}.vault-pager{display:flex;justify-content:center;gap:8px;max-width:1120px;margin:16px 0}.vault-empty{max-width:1120px;padding:38px 24px;border:1px dashed #34465d;border-radius:13px;text-align:center;color:#75869c}.vault-warning{max-width:1120px;margin-bottom:13px;padding:10px 13px;border:1px solid rgba(255,153,76,.35);border-radius:9px;background:rgba(255,132,45,.07);color:#ffb47d;font-size:11px}.unique-list{display:grid;grid-template-columns:repeat(auto-fill,minmax(190px,1fr));gap:7px;max-width:1120px;margin-bottom:16px}.unique-card{position:relative;display:grid;grid-template-columns:34px minmax(0,1fr);gap:8px;align-items:center;min-height:54px;padding:8px;border:1px solid #2b3b50;border-radius:8px;background:#101923;cursor:pointer}.unique-card:hover{border-color:#526b88}.unique-card img{width:32px;height:32px;object-fit:contain;image-rendering:pixelated}.unique-card .muted{font-size:9px}
 .vault-bulk-panel{display:grid;grid-template-columns:minmax(0,1fr) auto auto auto;gap:12px;align-items:center;max-width:1120px;margin:0 0 13px;padding:12px 13px;border:1px solid rgba(54,200,232,.28);border-radius:11px;background:linear-gradient(145deg,rgba(24,55,75,.32),rgba(16,24,36,.88))}.vault-bulk-copy b{display:block;color:#dff8ff;font-size:12px}.vault-bulk-copy span{display:block;margin-top:2px;color:#7f91a7;font-size:10px}.vault-bulk-button{min-height:37px;padding:7px 11px;border:1px solid rgba(82,221,169,.45);border-radius:8px;background:rgba(37,172,125,.1);color:#8ce6bf;cursor:pointer;font-size:9px;font-weight:900;letter-spacing:.25px}.vault-bulk-button.out{border-color:rgba(241,184,75,.5);background:rgba(163,111,30,.1);color:#f3ce83}.vault-bulk-button.desk{border-color:rgba(84,185,255,.5);background:rgba(45,112,164,.12);color:#a8ddff}.vault-bulk-button:hover{filter:brightness(1.18)}.vault-bulk-button:disabled{opacity:.36;cursor:not-allowed;filter:none}.vault-bulk-preview{margin:12px 0;padding:11px;border:1px solid #33465c;border-radius:9px;background:#0c141f}.vault-bulk-preview strong{display:block;color:#f0f5fb;font-size:14px}.vault-bulk-tabs{display:flex;flex-wrap:wrap;gap:5px;margin-top:9px}.vault-bulk-tabs span{padding:4px 7px;border:1px solid #32445a;border-radius:999px;color:#9eb0c5;font-size:9px}.vault-bulk-note{margin-top:9px;color:#8c9caf;font-size:10px;line-height:1.5}.vault-bulk-note.warn{color:#ffb47d}.vault-bulk-actions{display:flex;gap:7px;margin-top:14px}.vault-bulk-confirm{background:#24543e!important;border-color:#4aa77c!important;color:#c7ffe8!important}.vault-bulk-confirm.out{background:#62461e!important;border-color:#b88337!important;color:#ffe2a5!important}.vault-bulk-confirm:disabled{opacity:.4;cursor:not-allowed}.vault-desk-grid{display:grid;grid-template-columns:minmax(0,1fr) 42px minmax(0,1fr);gap:12px;align-items:stretch;margin-top:13px}.vault-desk-side{padding:13px;border:1px solid #30435a;border-radius:10px;background:#0b121c}.vault-desk-side h4{margin:0 0 4px;color:#eff5fb}.vault-desk-side p{min-height:31px;margin:0 0 11px;color:#7d8da2;font-size:10px}.vault-desk-side select{width:100%;min-height:38px}.vault-desk-arrow{display:grid;place-items:center;color:#69d7ef;font-size:24px;font-weight:900}.vault-desk-actions{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-top:12px}.vault-desk-actions button{margin:0}
 .stash-tab-head{display:flex;align-items:end;justify-content:space-between;gap:12px;max-width:1120px;margin-top:14px}.stash-tab-head h2{margin:0 0 6px}.stash-head-actions{display:flex;align-items:center;gap:6px}.stash-fill,.stash-roll{min-height:31px;margin:0 0 6px;padding:6px 11px;border:1px solid rgba(82,221,169,.44);border-radius:8px;background:linear-gradient(180deg,rgba(38,126,91,.28),rgba(23,73,55,.3));color:#91ebc4;cursor:pointer;font-size:10px;font-weight:850;letter-spacing:.35px}.stash-roll{border-color:rgba(241,184,75,.48);background:linear-gradient(180deg,rgba(137,91,26,.3),rgba(83,57,22,.3));color:#f3d18d}.stash-fill:hover{border-color:#62e3b3;background:rgba(38,126,91,.38)}.stash-roll:hover{border-color:#f1c66f;background:rgba(137,91,26,.42)}.stash-fill:disabled,.stash-roll:disabled{opacity:.38;cursor:not-allowed}
 .vault-collection-tabs{max-width:1120px;margin:0 0 13px}.vault-collection-tabs button{white-space:nowrap}.vault-collection-tabs button.vault-drop-target{border-color:#54e87a;color:#d9ffe5;box-shadow:0 0 0 2px rgba(84,232,122,.18)}.vault-toolbar.grid-mode{grid-template-columns:minmax(220px,1fr) minmax(190px,260px) auto}.vault-grid-pages{display:flex;flex-direction:column;gap:18px;max-width:1120px}.vault-grid-page{padding:12px 13px 14px;border:1px solid #2b3b50;border-radius:12px;background:linear-gradient(145deg,rgba(18,27,39,.94),rgba(10,16,25,.97));box-shadow:0 9px 24px rgba(0,0,0,.16)}.vault-grid-head{align-items:center;margin:0 0 8px}.vault-grid-head h2{font-size:14px!important;margin:0!important}.vault-grid-head span:last-child{color:#718198;font-size:9px}.vault-grid-scroll{max-width:100%;overflow-x:auto;padding:2px 2px 7px}.vault-grid{margin:0}.item.vault-grid-item{cursor:context-menu;outline:none}.item.vault-grid-item[draggable="true"]{cursor:grab}.item.vault-grid-item.vault-dragging{opacity:.38;cursor:grabbing}.item.vault-grid-item:focus-visible{z-index:8;box-shadow:0 0 0 2px #53d7ef,0 0 18px rgba(83,215,239,.45)}.item.vault-grid-item.compare-selected{z-index:7;border-color:#efbd60!important;box-shadow:0 0 0 2px rgba(241,184,75,.52),0 0 18px rgba(241,184,75,.26)}.item.vault-grid-item.busy{opacity:.45;pointer-events:none;filter:saturate(.4)}.vault-grid-mark{position:absolute;left:2px;top:2px;display:grid;place-items:center;width:12px;height:12px;border:1px solid rgba(241,184,75,.62);border-radius:50%;background:#37270f;color:#ffe09c;font-size:8px;font-weight:900;box-shadow:0 2px 5px rgba(0,0,0,.55)}.vault-grid-note{margin:8px 1px 0;color:#718198;font-size:9px}.vault-grid-note b{color:#9ab1c7}.vault-pager-info{display:flex;align-items:center;padding:0 8px;color:#77879b;font-size:10px}.vault-history-list{display:flex;flex-direction:column;gap:6px;max-height:390px;overflow:auto;margin-top:12px}.vault-history-row{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:10px;padding:9px 10px;border:1px solid #2d3d51;border-radius:8px;background:#0b121b}.vault-history-row b{display:block;color:#dce7f2;font-size:11px}.vault-history-row span{color:#738398;font-size:9px}.vault-undo-preview{margin:12px 0;padding:11px;border:1px solid rgba(241,184,75,.38);border-radius:9px;background:rgba(137,91,26,.1);color:#edca86;font-size:11px}#ctxmenu div.disabled{opacity:.4;cursor:not-allowed}#ctxmenu div.disabled:hover{background:transparent;color:inherit}
+.custom-forge-mark{position:absolute;left:2px;bottom:2px;display:grid;place-items:center;min-width:13px;height:13px;padding:0 2px;border:1px solid #e0a842;border-radius:4px;background:#3d2809;color:#ffe19a;font-size:8px;font-weight:900;z-index:4;box-shadow:0 2px 5px rgba(0,0,0,.7)}
 .vault-page-head{display:flex;align-items:center;justify-content:space-between;gap:14px;max-width:1120px;margin:0 0 13px}.vault-page-head h2{margin:0!important}.vault-primary-actions{display:flex;align-items:center;gap:8px}.vault-transfer-button{min-height:38px;padding:8px 16px!important;border-color:rgba(84,185,255,.58)!important;background:linear-gradient(180deg,rgba(42,108,157,.38),rgba(25,67,102,.42))!important;color:#c5edff!important;font-size:10px!important}.vault-tools{position:relative}.vault-tools summary{display:grid;place-items:center;min-width:40px;min-height:38px;border:1px solid #34485f;border-radius:8px;background:#142033;color:#b9d8e4;cursor:pointer;font-size:17px;font-weight:900;letter-spacing:2px;list-style:none}.vault-tools summary::-webkit-details-marker{display:none}.vault-tools[open] summary,.vault-tools summary:hover{border-color:#55bad0;color:#effcff}.vault-tools-menu{position:absolute;right:0;top:44px;z-index:30;display:grid;gap:8px;width:min(310px,80vw);padding:11px;border:1px solid #3a4d65;border-radius:10px;background:#101722;box-shadow:0 20px 48px rgba(0,0,0,.55)}.vault-tools-menu label{display:grid;gap:5px;color:#8292a7;font-size:9px;font-weight:800;letter-spacing:.45px}.vault-tools-menu select{width:100%;height:36px}.vault-tool-row{display:grid;grid-template-columns:1fr 1fr;gap:7px}.vault-tool-row .vault-mini{width:100%}.vault-toolbar.grid-mode{grid-template-columns:minmax(220px,1fr);margin-bottom:5px}.vault-summary{margin:5px 0 11px}.vault-compare-bar{padding:8px 9px}.vault-compare-slots{font-size:11px}.vault-compare-clear{min-width:33px;padding:6px!important;font-size:13px!important}.vault-transfer-options{display:grid;grid-template-columns:1fr 1fr;gap:11px;margin-top:13px}.vault-transfer-card{display:flex;flex-direction:column;gap:9px;padding:13px;border:1px solid #30435a;border-radius:10px;background:#0b121c}.vault-transfer-card h4{margin:0;color:#eff5fb;font-size:13px}.vault-transfer-card p{min-height:30px;margin:0;color:#7d8da2;font-size:10px;line-height:1.45}.vault-transfer-card label{display:grid;gap:5px;color:#8292a7;font-size:9px;font-weight:800}.vault-transfer-card select{width:100%;min-height:38px}.vault-transfer-card button{width:100%;margin:2px 0 0}.vault-transfer-card .vault-transfer-spacer{flex:1}.vault-transfer-close{margin-top:11px;text-align:right}.vault-transfer-close button{margin:0}
 .vault-category-bar{display:grid;grid-template-columns:auto minmax(220px,430px) auto auto;gap:8px;align-items:center;max-width:1120px;margin:0 0 16px}.vault-category-bar select{height:40px;min-width:0;border-color:#3b526b;background:#0d1622;color:#edf6ff;font-size:12px;font-weight:750}.vault-category-add,.vault-stash-add{height:40px;padding:0 14px;border:1px solid #3a607d;border-radius:8px;background:#14283a;color:#c8eaff;cursor:pointer;font-size:10px;font-weight:900;letter-spacing:.35px}.vault-category-add:hover,.vault-stash-add:hover{border-color:#56c7e4;background:#19364d;color:#f1fcff}.vault-stash-add{border-color:rgba(82,221,169,.45);background:rgba(37,126,92,.18);color:#9aebc9}.vault-stash-add:hover{border-color:#62e3b3;background:rgba(38,126,91,.32)}.vault-category-add:disabled,.vault-stash-add:disabled{opacity:.4;cursor:not-allowed}.vault-stash-title{display:flex;align-items:center;min-width:0}.vault-stash-name{width:min(280px,38vw);min-width:110px;padding:5px 7px;border:1px solid transparent;border-radius:6px;background:transparent;color:#f1c66f;font:850 14px/1.2 inherit}.vault-stash-name:hover{border-color:#3b4e65;background:#0d1621}.vault-stash-name:focus{outline:none;border-color:#55bad0;background:#09121c;box-shadow:0 0 0 2px rgba(85,186,208,.15)}.vault-stash-name:disabled{opacity:.55}.vault-stash-send{border-color:rgba(84,185,255,.48);background:linear-gradient(180deg,rgba(42,108,157,.28),rgba(25,67,102,.3));color:#bfeaff}.vault-stash-send:hover{border-color:#54b9ff;background:rgba(42,108,157,.4)}
 @media(max-width:1260px){body{grid-template-columns:232px minmax(500px,1fr) 350px}.top-actions{min-width:280px}.brand{min-width:195px}.version{max-width:175px}#mid{padding-left:17px;padding-right:17px}.finder-bar{grid-template-columns:1fr 1fr}.finder-bar #ofq,.finder-bar #ofgo{grid-column:1/-1}.access-grid{grid-template-columns:1fr}.vault-compare-grid{grid-template-columns:1fr}}
@@ -7697,7 +8267,7 @@ input,select{background:#0b111a;color:#dfe7f0;border-color:#2d3b50;border-radius
   <div class="top-health"><div id="status" role="status" aria-live="polite">CHECKING GAME STATE...</div></div>
   <div class="top-actions">
     <div class="version" id="version">SEASON 10</div>
-    <button type="button" class="iconbtn" id="mode-toggle" title="Show or hide technical and manual controls">SIMPLE MODE</button>
+    <button type="button" class="iconbtn" id="mode-toggle" title="Show or hide technical and manual controls" hidden>SIMPLE MODE</button>
     <button type="button" class="iconbtn" id="catalog-toggle" title="Show or hide the item catalog" aria-controls="right" aria-expanded="true">CATALOG ◫</button>
   </div>
 </header>
@@ -7709,10 +8279,12 @@ input,select{background:#0b111a;color:#dfe7f0;border-color:#2d3b50;border-radius
   <button class="tabbtn" data-view="vault">&#8734;&nbsp; Infinite Vault</button>
   <button class="tabbtn" data-view="sets">&#9876;&nbsp; Set Collection</button>
   <button class="tabbtn" data-view="runewords">&#10038;&nbsp; Runeword Forge</button>
+  <button class="tabbtn" data-view="itemforge">&#9874;&nbsp; Item Forge</button>
   <button class="tabbtn" data-view="relics">&#128302;&nbsp; Relic Lab</button>
   <button class="tabbtn" data-view="stackables">&#128230;&nbsp; Season 10 Access &amp; Materials</button>
-  <button class="tabbtn" data-view="health">&#128737;&nbsp; Save Health Check</button>
-  <button class="tabbtn" data-view="backups">&#128190;&nbsp; Recovery Vault</button>
+  <!-- Save Health Check and Recovery Vault stay wired (routes, handlers, tests) but are hidden from the sidebar: everyday users never need them. -->
+  <button class="tabbtn" data-view="health" hidden>&#128737;&nbsp; Save Health Check</button>
+  <button class="tabbtn" data-view="backups" hidden>&#128190;&nbsp; Recovery Vault</button>
   <div class="side-caption characters">CHARACTERS</div>
   <div id="chars"></div>
   <div class="side-foot"><b>Offline safety</b><br>Every write creates a recoverable backup. Editing locks automatically while Hero Siege is running.</div>
@@ -7738,8 +8310,8 @@ input,select{background:#0b111a;color:#dfe7f0;border-color:#2d3b50;border-radius
   </div>
 </aside>
 <script>
-let CAT=[], SETS_DB=[], RW_DB=[], chars=[], view=null, sel=null, curChar=null, charData=null, stashData=null, GAME_RUNNING=false;
-let advancedMode=false;
+let CAT=[], SETS_DB=[], RW_DB=[], CUSTOM_FORGE_DB=null, chars=[], view=null, sel=null, curChar=null, charData=null, stashData=null, GAME_RUNNING=false;
+let advancedMode=true;   // always advanced: the Simple/Advanced switch confused users, so it is hidden and every control stays visible
 let vaultState={collectionId:null,q:'',offset:0,limit:5000,withdrawTab:'stash_tab_1',queryToken:0,highlightItem:null,persistentLayout:true,rows:[]};
 let vaultBulkBusy=false;
 let previewModels=new Map(),previewSequence=0;
@@ -7772,7 +8344,7 @@ async function j(u,opt={}){
   const r=await fetch(u,cfg);return r.json()
 }
 async function boot(){
-  try{advancedMode=localStorage.getItem('hsEditorMode')==='advanced'}catch(e){}
+  advancedMode=true;   // the saved Simple/Advanced preference is ignored on purpose
   applyEditorMode();
   CAT=await j('/api/catalog'); SETS_DB=await j('/api/sets'); RW_DB=await j('/api/runewords');
   const fsetEl=document.getElementById('fset');
@@ -7814,7 +8386,8 @@ async function boot(){
   const fc=document.getElementById('fcls');
   Object.entries(CLS).forEach(([k,v])=>{const o=document.createElement('option');o.value=k;o.textContent=v;fc.appendChild(o)});
   search();
-  setInterval(async()=>{const o=await j('/api/overview');GAME_RUNNING=!!o.gameRunning;
+  setInterval(async()=>{const o=await j('/api/overview');const wasRunning=GAME_RUNNING;GAME_RUNNING=!!o.gameRunning;
+    if(wasRunning!==GAME_RUNNING&&FORGE_SESSION?.app.isConnected)FORGE_SESSION.update?.();
     document.getElementById('status').textContent=o.gameRunning?'GAME RUNNING - VIEW ONLY, WRITING LOCKED':'GAME CLOSED - EDITING ENABLED';
     document.getElementById('status').className=o.gameRunning?'warn':'';
     document.querySelectorAll('.stash-fill').forEach(button=>button.disabled=GAME_RUNNING);
@@ -7825,6 +8398,7 @@ async function boot(){
   document.querySelector('[data-view=finder]').onclick=openFinder;
   document.querySelector('[data-view=sets]').onclick=openSets;
   document.querySelector('[data-view=runewords]').onclick=openRunewords;
+  document.querySelector('[data-view=itemforge]').onclick=openItemForge;
   document.querySelector('[data-view=relics]').onclick=openRelics;
   document.querySelector('[data-view=stackables]').onclick=openStackables;
   document.querySelector('[data-view=health]').onclick=openHealth;
@@ -7868,13 +8442,13 @@ function gridHTML(tab,items,delTarget){
     const previewId=registerPreviewModel(it.gameTooltip);
     const inner=it.spr?`<img src="/icons/${attr(it.spr)}.png?v=2" loading="lazy">`:esc(short(it.name));
     h+=`<div class="item b-${attr(rr)}" draggable="true" title="" data-i="${i}" data-preview-id="${attr(previewId)}" data-del='${attr(JSON.stringify(delTarget))}' data-key="${attr(it.key)}" data-w="${it.w||1}" data-h="${it.h||1}" data-cid="${it.cid??''}" data-rwcid="${it.rwcid??''}" data-virtual-pos="${it.virtualPos?'1':'0'}" data-stackable="${it.stackable?'1':'0'}" data-stack="${it.stack??1}" data-socket-limit="${it.socketLimit??0}" data-socket-count="${it.socketCount??''}" data-roll="${attr(JSON.stringify(it.rollProfile||null))}" data-skill="${attr(JSON.stringify(it.skillSelector||null))}" data-raw='${attr(JSON.stringify(it.raw||{}))}'
-      style="left:${p[0]*CELL}px;top:${p[1]*CELL}px;width:${(it.w||1)*CELL-2}px;height:${(it.h||1)*CELL-2}px">${inner}${it.stack?`<span class="stk">x${it.stack}</span>`:''}</div>`;
+      style="left:${p[0]*CELL}px;top:${p[1]*CELL}px;width:${(it.w||1)*CELL-2}px;height:${(it.h||1)*CELL-2}px">${inner}${it.customForge&&it.customForge.active?'<span class="custom-forge-mark" aria-hidden="true">F</span>':''}${it.stack?`<span class="stk">x${it.stack}</span>`:''}</div>`;
   });
   return h+'</div>';
 }
 function uniqueListHTML(items,delTarget){
   if(!items.length)return '<div class="muted">This auto-sorted tab is empty.</div>';
-  return `<div class="unique-list">${items.map(it=>`<div class="unique-card" data-item-preview data-preview-id="${attr(registerPreviewModel(it.gameTooltip))}" data-del='${attr(JSON.stringify(delTarget))}' data-key="${attr(it.key)}" data-cid="${it.cid??''}" data-rwcid="${it.rwcid??''}" data-stackable="${it.stackable?'1':'0'}" data-stack="${it.stack??1}" data-socket-limit="${it.socketLimit??0}" data-socket-count="${it.socketCount??''}" data-roll="${attr(JSON.stringify(it.rollProfile||null))}" data-skill="${attr(JSON.stringify(it.skillSelector||null))}" data-raw='${attr(JSON.stringify(it.raw||{}))}'>${it.spr?`<img src="/icons/${attr(it.spr)}.png?v=2" loading="lazy">`:'<div class="found-icon">&#9671;</div>'}<div><div class="r-${attr(it.rar||'_')}">${esc(it.name)}</div><div class="muted">right-click for actions</div></div></div>`).join('')}</div>`;
+  return `<div class="unique-list">${items.map(it=>`<div class="unique-card" data-item-preview data-preview-id="${attr(registerPreviewModel(it.gameTooltip))}" data-del='${attr(JSON.stringify(delTarget))}' data-key="${attr(it.key)}" data-cid="${it.cid??''}" data-rwcid="${it.rwcid??''}" data-stackable="${it.stackable?'1':'0'}" data-stack="${it.stack??1}" data-socket-limit="${it.socketLimit??0}" data-socket-count="${it.socketCount??''}" data-roll="${attr(JSON.stringify(it.rollProfile||null))}" data-skill="${attr(JSON.stringify(it.skillSelector||null))}" data-raw='${attr(JSON.stringify(it.raw||{}))}'>${it.spr?`<img src="/icons/${attr(it.spr)}.png?v=2" loading="lazy">`:'<div class="found-icon">&#9671;</div>'}<div><div class="r-${attr(it.rar||'_')}">${esc(it.name)}</div><div class="muted">right-click for actions</div></div>${it.customForge&&it.customForge.active?'<span class="custom-forge-mark" aria-hidden="true">F</span>':''}</div>`).join('')}</div>`;
 }
 const VAULT_GRID_COLS=17,VAULT_GRID_ROWS=18;
 function vaultGridSpot(page,w,h){
@@ -7919,7 +8493,7 @@ function vaultGridPageHTML(page,index,persistent=false,stash=null){
     const row=packed.row,rr=row.rar&&row.rar!=='?'?row.rar:'_',selected=vaultCompareItems.has(String(row.id));
     const previewId=registerPreviewModel(row.gameTooltip),inner=row.spr?`<img src="/icons/${attr(row.spr)}.png?v=2" loading="lazy">`:esc(short(row.name));
     const label=[row.customName||row.name,row.collectionName,row.clsName].filter(Boolean).join(' · ');
-    grid+=`<div class="item vault-grid-item b-${attr(rr)}${selected?' compare-selected':''}" tabindex="0" role="button" aria-label="${attr(label)}. Right-click for Vault actions." ${persistent?'draggable="true"':''} data-item-preview data-preview-id="${attr(previewId)}" data-vault-id="${attr(row.id)}" data-cid="${row.cid??''}" data-rwcid="${row.rwcid??''}" data-vault-page="${pageIndex}" data-x="${packed.pos[0]}" data-y="${packed.pos[1]}" data-w="${packed.w}" data-h="${packed.h}" data-updated-at="${attr(row.updatedAt||'')}" style="left:${packed.pos[0]*CELL}px;top:${packed.pos[1]*CELL}px;width:${packed.w*CELL-2}px;height:${packed.h*CELL-2}px">${inner}${row.customName?'<span class="vault-grid-mark" aria-hidden="true">N</span>':''}${row.stack?`<span class="stk">x${row.stack}</span>`:''}</div>`;
+    grid+=`<div class="item vault-grid-item b-${attr(rr)}${selected?' compare-selected':''}" tabindex="0" role="button" aria-label="${attr(label)}. Right-click for Vault actions." ${persistent?'draggable="true"':''} data-item-preview data-preview-id="${attr(previewId)}" data-vault-id="${attr(row.id)}" data-cid="${row.cid??''}" data-rwcid="${row.rwcid??''}" data-vault-page="${pageIndex}" data-x="${packed.pos[0]}" data-y="${packed.pos[1]}" data-w="${packed.w}" data-h="${packed.h}" data-updated-at="${attr(row.updatedAt||'')}" style="left:${packed.pos[0]*CELL}px;top:${packed.pos[1]*CELL}px;width:${packed.w*CELL-2}px;height:${packed.h*CELL-2}px">${inner}${row.customName?'<span class="vault-grid-mark" aria-hidden="true">N</span>':''}${row.customForge&&row.customForge.active?'<span class="custom-forge-mark" aria-hidden="true">F</span>':''}${row.stack?`<span class="stk">x${row.stack}</span>`:''}</div>`;
   }
   grid+='</div>';
   const stashName=stash&&stash.name?stash.name:`Stash ${pageIndex+1}`;
@@ -8258,6 +8832,8 @@ function renderGameTooltip(model,options={}){
   if(meta)h+=`<div class="gtt-type">${meta}</div>`;
   if(item.requiredLevel)h+=`<div class="gtt-requirement">Requires Level ${esc(item.requiredLevel)}</div>`;
   h+='<div class="gtt-rule"></div>';
+  const forged=model.customForge&&model.customForge.active?model.customForge:null;
+  if(forged)h+=`<div class="gtt-forged">CUSTOM FORGED · ${esc(forged.statCount)} runtime key${Number(forged.statCount)===1?'':'s'} · ${forged.keepNative?'native stats kept':'native stats replaced'}</div>`;
   const nativeStats=Array.isArray(model.stats)?model.stats:[];
   let stats=nativeStats;
   if(options.comparison&&Array.isArray(options.comparison.keys)){
@@ -8696,6 +9272,7 @@ function showVaultCtx(x,y,row,el){
   if(!menu){menu=document.createElement('div');menu.id='ctxmenu';document.body.appendChild(menu);document.addEventListener('click',()=>{menu.style.display='none'})}
   const selected=vaultCompareItems.has(String(row.id)),canReturn=!!vaultState.withdrawTab&&!(vaultMeta&&vaultMeta.gameRunning);
   const actions=[
+    {label:'Custom Item Forge...',action:'customforge',disabled:false},
     {label:`Return to ${vaultTabLabel(vaultState.withdrawTab)}`,action:'return',disabled:!canReturn},
     {label:'Move to collection...',action:'move'},
     {label:row.customName?'Edit custom name...':'Set custom name...',action:'name'},
@@ -8707,7 +9284,8 @@ function showVaultCtx(x,y,row,el){
     event.stopPropagation();
     const action=actions.find(candidate=>candidate.action===option.dataset.vaultAction);if(!action||action.disabled)return;
     menu.style.display='none';
-    if(action.action==='return')await withdrawVaultItem(row.id,el);
+    if(action.action==='customforge')await openItemForge({ref:{vaultItemId:row.id},label:'Infinite Vault'});
+    else if(action.action==='return')await withdrawVaultItem(row.id,el);
     else if(action.action==='addstack')openStackAmountDialog({name:row.customName||row.name,current:row.stack||1,mode:'add',submit:amount=>j('/api/vault/item',{method:'POST',body:JSON.stringify({action:'addStack',itemId:row.id,count:amount})}),onSuccess:()=>openVault(false)});
     else if(action.action==='move')await moveVaultItem(row.id,+row.collectionId);
     else if(action.action==='name')await editVaultCustomName(row);
@@ -9017,7 +9595,7 @@ function dslot(g,w,h,label){
   const previewId=e?registerPreviewModel(e.gameTooltip):'';
   return `<div class="dslot${rr?' b-'+rr:''}" data-g="${g}" style="width:${w*DC}px;height:${h*DC}px"
     ${e?`draggable="true" data-preview-id="${attr(previewId)}" data-del='${del}' data-key="${attr(e.key)}" data-w="${e.w||1}" data-h="${e.h||1}" data-cid="${e.cid??''}" data-rwcid="${e.rwcid??''}" data-socket-limit="${e.socketLimit??0}" data-socket-count="${e.socketCount??''}" data-roll="${attr(JSON.stringify(e.rollProfile||null))}" data-skill="${attr(JSON.stringify(e.skillSelector||null))}" data-raw='${attr(JSON.stringify(e.raw||{}))}'`:`title="${attr(label)} (empty)"`}>
-    <span class="lbl">${esc(label)}</span>${e&&e.spr?`<img src="/icons/${attr(e.spr)}.png?v=2">`:(e?esc(short(e.name)):'')}</div>`;
+    <span class="lbl">${esc(label)}</span>${e&&e.spr?`<img src="/icons/${attr(e.spr)}.png?v=2">`:(e?esc(short(e.name)):'')}${e&&e.customForge&&e.customForge.active?'<span class="custom-forge-mark" aria-hidden="true">F</span>':''}</div>`;
 }
 function wpanel(side){
   const tabs=side==='L'?[3,16]:[6,17];
@@ -9030,10 +9608,10 @@ function wpanel(side){
 }
 function wswap(side,n){ if(side==='L')wTabL=n; else wTabR=n; renderChar(); }
 function renderChar(){
-  const slot=curChar, md=document.getElementById('mid');
+  const slot=curChar, md=charHost||document.getElementById('mid');
   gridReg={}; gridSeq=0;
   dollEq={}; charData.equipped.forEach(e=>dollEq[e.g]=e);
-  let h=`<div class="flex" id="lobar" style="margin-bottom:10px">
+  let h=charHost?'':`<div class="flex" id="lobar" style="margin-bottom:10px">
     <b style="color:var(--gold)">Loadouts:</b>
     <select id="losel"><option value="">select...</option></select>
     <button class="act" style="margin:0;padding:5px 12px" id="loapply">Apply</button>
@@ -9044,7 +9622,7 @@ function renderChar(){
     <button class="act" style="margin:0;padding:5px 12px;border-color:#7a3030" id="lodelete">Delete</button>
     <input type="file" id="lofile" accept=".json" style="display:none">
   </div>`;
-  h+=tipBarHTML();
+  if(!charHost)h+=tipBarHTML();
   h+=`<div id="doll">`;
   // relic sutunu
   h+=`<div class="relcol">${[10,11,12,13,14].map(g=>dslot(g,1,1.6,SLOTS[g])).join('')}</div>`;
@@ -9070,15 +9648,21 @@ function renderChar(){
     const n=t==='personal_stash'?charData.personal_stash.length:((charData.bags||{})[t]||[]).length;
     return `<button class="${bagTab===t?'on':''}" onclick="bagSwap('${t}')">${l}${n?` (${n})`:''}</button>`}).join('')}</div>`;
   const visibleBagCount=bagTab==='personal_stash'?charData.personal_stash.length:((charData.bags||{})[bagTab]||[]).length;
-  h+=`<div class="stash-tab-head"><h2>${esc(BAG_LABELS[bagTab]||bagTab)} <span class="muted">(${visibleBagCount})</span></h2>${visibleBagCount?`<button class="stash-roll" id="rollVisibleBag" ${GAME_RUNNING?'disabled':''}>MAX / BEST VISIBLE BAG</button>`:''}</div>`;
+  h+=`<div class="stash-tab-head"><h2>${esc(BAG_LABELS[bagTab]||bagTab)} <span class="muted">(${visibleBagCount})</span></h2>${visibleBagCount&&!charHost?`<button class="stash-roll" id="rollVisibleBag" ${GAME_RUNNING?'disabled':''}>MAX / BEST VISIBLE BAG</button>`:''}</div>`;
   if(VIRTUAL_COLLECTION_TABS.has(bagTab))h+=`<div class="tipbar"><b>Auto-arranged collection:</b> Hero Siege stores these entries without grid coordinates. Their positions here are display-only and are never written into the save.</div>`;
   if(bagTab==='personal_stash'){
     h+=gridHTML('personal_stash',charData.personal_stash,{type:'personal_stash',slot});
   }else{
     h+=gridHTML(bagTab,(charData.bags||{})[bagTab]||[],{type:'bag',slot,tab:bagTab});
   }
-  md.innerHTML=h; bindDelete(); bindLoadouts();
-  document.getElementById('rollEquipped').onclick=()=>openBulkRollDialog({type:'equipped',slot,tab:'equipped_items'},`${charData.name||'Character'} · Equipped`);
+  md.innerHTML=h; bindDelete();
+  if(charHost){
+    // Owned-item picker: no drag, no loadouts; left-click hands the item to the Item Forge.
+    md.querySelectorAll('[data-del]').forEach(el=>{el.draggable=false;el.onclick=e=>{e.preventDefault();const target=JSON.parse(el.dataset.del),key=el.dataset.key;if(!key)return;const where=target.type==='equipped'?'Equipped':target.type==='bag'?(BAG_LABELS[target.tab]||target.tab):target.type==='personal_stash'?'Personal Stash':String(target.type||'owned');const cb=charPick;closeForgePicker();if(cb)cb({target,key},where)}});
+    return;
+  }
+  bindLoadouts();
+  const rollEq=document.getElementById('rollEquipped');if(rollEq)rollEq.onclick=()=>openBulkRollDialog({type:'equipped',slot,tab:'equipped_items'},`${charData.name||'Character'} · Equipped`);
   const rollBag=document.getElementById('rollVisibleBag');if(rollBag)rollBag.onclick=()=>openBulkRollDialog(bagTab==='personal_stash'?{type:'personal_stash',slot,tab:'personal_stash'}:{type:'bag',slot,tab:bagTab},`${charData.name||'Character'} · ${BAG_LABELS[bagTab]||bagTab}`);
 }
 function bagSwap(t){ bagTab=t; renderChar(); }
@@ -9469,6 +10053,7 @@ function openStackAmountDialog({name,current,mode='add',submit,onSuccess}){
   };
   update();input.focus();input.select();
 }
+/* ITEM_FORGE_SCRIPT */
 let ctxEl=null;
 function showCtx(x,y,target,key,el){
   let m=document.getElementById('ctxmenu');
@@ -9478,6 +10063,7 @@ function showCtx(x,y,target,key,el){
   const acts=[];
   const stackable=!!(el&&el.dataset&&el.dataset.stackable==='1'),currentStack=Math.max(1,Math.trunc(Number(el&&el.dataset&&el.dataset.stack)||1));
   if(target.type==='stash'&&isVaultTransferTab(target.tab))acts.push(['Store in Infinite Vault...','VAULT','']);
+  acts.push(['Custom Item Forge...','CUSTOMFORGE','']);
   if(advancedMode&&!isEq)acts.push(['Duplicate','duplicate','']);
   let rollProfile=null;
   try{rollProfile=JSON.parse((el&&el.dataset&&el.dataset.roll)||'null')}catch(e){}
@@ -9506,6 +10092,9 @@ function showCtx(x,y,target,key,el){
         openSocketEditor(target,key,el);return;
       }else if(act==='SKILL'){
         openSkillTargetEditor(target,key,skillSelector);return;
+      }else if(act==='CUSTOMFORGE'){
+        const where=target.type==='equipped'?'Equipped':target.type==='stash'?'Stash tab '+(target.tab!=null?target.tab:''):target.type==='bag'?'Bag':String(target.type||'owned');
+        closeForgePicker();openItemForge({ref:{target,key},label:where});return;
       }else if(act==='addstack'||act==='setstack'){
         openStackAmountDialog({name:el&&el.textContent?el.textContent.trim():'Stackable item',current:currentStack,mode:act==='addstack'?'add':'set',submit:amount=>j('/api/modify',{method:'POST',body:JSON.stringify({action:act,target,key,count:amount})}),onSuccess:()=>refresh()});return;
       }else{
@@ -9623,8 +10212,14 @@ async function renderTargets(){
 function flash(r){const m=document.getElementById('msg');
   m.innerHTML=r.err?`<span style="color:#ff7060">${esc(r.err)}</span>`:`<span style="color:#54e87a">${esc(r.ok)}</span> <span class="muted">backup: ${esc(r.backup||'')}</span>`}
 ['q','fkind','fcls','frar','fset','fstat'].forEach(id=>document.getElementById(id).addEventListener('input',search));
-boot();
+boot().then(()=>{if(location.hash==='#item-forge')openItemForge()});
 </script></body></html>"""
+
+HTML = HTML.replace(
+    "/* ITEM_FORGE_CSS */", (BASE / "item_forge_ui.css").read_text(encoding="utf-8")
+).replace(
+    "/* ITEM_FORGE_SCRIPT */", (BASE / "item_forge_ui.js").read_text(encoding="utf-8")
+)
 
 
 def _open_window(port: int) -> bool:

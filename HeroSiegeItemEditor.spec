@@ -24,6 +24,12 @@ required_data = (
     "hs_socket_seeds.json",
     "hs_dice_skill_targets.json",
     "hs_tooltip_roll_models.json",
+    "hs_custom_forge_catalog.json",
+    "hs_stat_semantics_s10.json",
+    "hs_talent_table_s10.json",
+    "item_forge_ui.css",
+    "item_forge_ui.js",
+    "hs_signature_items.json",
 )
 datas = [(str(source_dir / name), ".") for name in required_data]
 datas.append((str(source_dir / "item_icons"), "item_icons"))
@@ -39,6 +45,9 @@ hiddenimports = [
     "hss_recovery",
     "infinite_vault",
     "exact_tooltip",
+    "custom_item_forge",
+    "custom_forge_runtime",
+    "stat_semantics",
 ]
 webview_bundle = collect_all("webview")
 datas += webview_bundle[0]

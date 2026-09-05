@@ -8,7 +8,95 @@ A local/offline save editor for **Hero Siege** (Pixel Prone Games). Manage items
 
 Single file, no install, no Python needed. Just run it.
 
-## What's new in v2.12.0
+## What's new in v2.15.0
+
+Pairs with ForgePact 1.3.9. Download `HeroSiegeItemEditor-v2.15.0-s10.exe` from the
+Releases page; the source UI runs with `py hs_item_editor_gui.py`.
+
+- **Item Forge workspace:** Choose item → Customize → Review & save on one page, entered
+  from the catalog, from an item you own or from a ready-made signature item.
+- **Every property has a description**, the catalog uses the same verified stat names as
+  the forge, and *All Skills: Class* is tied to *to All Skills*.
+- **Fixes:** the stuck GAME RUNNING badge on localized Windows, the two-second delay when
+  the forge opened, "item not found" for equipped/potion/personal-stash picks. Save Health
+  Check, Recovery Vault and the Simple/Advanced toggle are gone from the sidebar.
+
+See [the v2.15.0 release notes](RELEASE_NOTES_v2.15.0.md). Details of the new pieces:
+
+- **Item Forge pickers (2.15.0):** *NEW ITEM* opens the item catalog as a tile grid in its own
+  window (search, type, rarity, normal/unique, target stash tab; double-click or CREATE), and
+  *OWNED ITEM* opens the character screen in a window — paper doll, charms and every bag tab —
+  where a left-click hands the item to the forge and a right-click offers the usual menu
+  including *Custom Item Forge…*. The properties step fills the full width, lists stats
+  alphabetically and filters them by category chips (Offense, Defense, Skills, Elements,
+  Utility) on top of the text search.
+- **Signature items (Item Forge → Forge a signature item):** ready-made ForgePact
+  items — Headhunter (belt) and Tyrant's Crown (helmet) — defined in
+  `hs_signature_items.json` with their stats, name, rarity, lore and mechanic. Pick one,
+  tweak anything, press FORGE ITEM: the base is created in the Shared Stash and the
+  forge is applied. Needs ForgePact 1.3.9 and the matching World switch in the panel.
+- **Base stats (Item Forge → Item properties):** an owned item's own stats are listed
+  automatically as editable rows tagged *Base stat · original N*. Edit one to override it;
+  remove one and the item keeps exactly the listed properties. The values come from the
+  stat struct the game itself built (ForgePact writes `bp_ipc\itemstats.json` while it
+  runs, rolled affixes included); before the item has been loaded once in the game the
+  editor shows its own tooltip model (base rows only) and says so.
+- **Game running detection:** `tasklist` output is now read leniently and PowerShell is
+  tried as a fallback, so localized Windows (German, Turkish, …) no longer shows
+  "GAME RUNNING" forever when the game is closed.
+- **Custom name (Item Forge → Identity):** a forged item can be renamed (max 48
+  characters). ForgePact 1.3.9 writes the name over the item's display name and
+  clears the magic prefix/suffix, so the tooltip shows exactly the text you typed.
+- **Special affix (Item Forge → Identity):** up to three gold text rows (max 240
+  characters) that ForgePact 1.3.9 draws above the item's stats in the inventory
+  tooltip, like a unique item's special property. Headhunter items show their
+  built-in line when this is left empty.
+- **Mechanic selector (Item Forge → Identity):** a forged item can carry a plugin
+  behaviour. `Headhunter` makes rare-monster kills grant the monster's affixes as
+  timed buffs while the item is equipped. The sidecar line gains `mechanic=headhunter`;
+  ForgePact v1.3.7+ arms the mechanic only when such an item exists.
+  Mechanics today: **Headhunter** (rare kills grant the monster's affixes as 20 s buffs)
+  and **Tyrant's Crown** (monsters near you rise to rare more often; rares bear one more
+  affix). Both need ForgePact 1.3.9 and the panel's World switch.
+
+## Previously added in v2.13.1
+
+- Custom Forge now uses the Season 10 code/localization semantics database:
+  325 observed keys have real names, units and descriptions; only five unknown
+  keys remain behind the technical toggle.
+- Linked properties are added and removed atomically. Skill/class identities
+  and generated socket counts are read-only and cannot be replaced by an
+  arbitrary API number.
+- The update corrects 43 old tooltip-derived labels and marks the five
+  code-heuristic interpretations clearly.
+
+See [the v2.13.1 release notes](RELEASE_NOTES_v2.13.1.md).
+
+## Previously added in v2.13.0
+
+- **Custom Item Forge:** right-click any character, Shared Stash, or Infinite
+  Vault item and add arbitrary Season 10 runtime stats or copy unique-property
+  bundles from existing items.
+- The catalog covers 330 observed numeric stat keys and 8,877 property presets
+  from all 932 active unique donor records. Linked proc mechanics keep their skill ID,
+  level, and chance keys together.
+- Native stats are preserved by default. An explicit option can replace them.
+  Forged items keep their setup through ordinary moves and editor-controlled
+  seed changes, and show an `F` marker plus tooltip status.
+- This feature uses ForgePact to modify the real runtime `itemStatStruct`; it
+  does not patch `Hero_Siege.exe` or save fake tooltip-only fields.
+- **ForgePact runtime check:** both Custom Forge dialogs now open with a status
+  banner. It locates the Hero Siege installation that will actually run (the
+  running `Hero_Siege.exe`, then ForgePact's configured game path, then the Steam
+  default), verifies that a Custom-Forge-capable `BloodPactPlugin.dll` is installed
+  there, and reads the plugin's `bp_ipc\customforge_status.json` to say whether the
+  current forge was applied, needs a game restart, or cannot work (plugin missing or
+  outdated). Forged stats are only visible in game when this banner is green.
+
+See [the v2.13.0 release notes](RELEASE_NOTES_v2.13.0.md) and the
+[Custom Item Forge engineering record](CUSTOM_ITEM_FORGE_RESEARCH.md).
+
+## Previously added in v2.12.0
 
 - Infinite Vault now has one simple hierarchy: **Category → named Stashes**.
   The top bar contains only `+ CATEGORY`, the category selector, `+ STASH`, and
@@ -194,6 +282,8 @@ Roll and Dice explanation.
   rolls are included in the same item-specific objective
 - Loadout save/apply/import plus reliable build export: portable `.hsbuild.json` and a self-contained, human-readable `.html` item report in `Downloads/HeroSiegeBuilds`
 - Automatic backups before every write; one-click restore
+- ForgePact-backed Custom Item Forge — overlay or replace runtime stats using
+  every observed numeric key, including complete linked unique-property bundles
 
 ## How to use
 
@@ -212,6 +302,9 @@ Your characters and stash are detected automatically (standard Windows save fold
   **Edit sockets**, **Reroll stats**, **Duplicate**, and **Delete**. A proven
   stackable instead offers **Add stack**, which adds the entered amount to its
   current quantity; Advanced Mode also exposes absolute **Edit stack**.
+- **Right-click any item** → **Custom Item Forge** to add stats or copy unique
+  properties. Close Hero Siege before saving, then start it through an updated
+  ForgePact installation so the runtime properties are applied.
 - **Right-click Loaded Dice / Overloaded Dice** → **Choose skill/sub-skill**;
   search by skill name, class, or numeric ID, then apply the verified native
   seed. Newly generated Dice items require the target skill to be selected in

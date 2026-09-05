@@ -24,3 +24,7 @@ _backups/
 _socket_search_all.json
 hs_socket_seeds.json.bak_*
 CHATGPT_PROMPT_socket_table.md
+
+# session backups and build logs
+*.pre_*
+*.log
