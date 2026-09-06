@@ -198,22 +198,58 @@ def decode_hss_bytes_strict(raw: bytes, xor_key: bytes) -> str:
     decoded = _xor_payload(_strict_inflate(_strict_envelope(raw)), xor_key)
     if len(decoded) % 2:
         raise HSSRecoveryError("HSS decoded text has an odd byte length")
-    if any(decoded[index] for index in range(1, len(decoded), 2)):
+    if not _only_text_units(_anomalies(decoded)):
         raise HSSRecoveryError("HSS decoded text has non-zero UTF-16 high bytes")
-    return decoded[::2].decode("latin-1")
+    return decoded.decode("utf-16-le")
 
 
 def encode_hss_text(text: str, xor_key: bytes, *, level: int = 9) -> bytes:
     if not isinstance(text, str):
         raise HSSRecoveryError("HSS text must be a string")
     try:
-        narrow = text.encode("latin-1")
+        wide = text.encode("utf-16-le")
     except UnicodeEncodeError as exc:
-        raise HSSRecoveryError("HSS text is outside the supported Latin-1 range") from exc
-    wide = bytearray(len(narrow) * 2)
-    wide[::2] = narrow
+        raise HSSRecoveryError("HSS text contains characters UTF-16 cannot encode") from exc
     packed = zlib.compress(_xor_payload(bytes(wide), xor_key), level)
     return base64.b64encode(packed)
+
+
+# UTF-16 code units a player can legitimately type into a tab, vault or character name.
+# Anything else with a non-zero high byte is treated as a corruption anomaly, which keeps
+# the proven recovery profiles (garbled LocalNS quotes, terminal sentinels) intact.
+_TEXT_BLOCKS = (
+    (0x0100, 0x024F),  # Latin Extended (Turkish, Polish, Vietnamese base letters)
+    (0x0370, 0x03FF),  # Greek
+    (0x0400, 0x04FF),  # Cyrillic
+    (0x0590, 0x05FF),  # Hebrew
+    (0x0600, 0x06FF),  # Arabic
+    (0x0E00, 0x0E7F),  # Thai
+    (0x1E00, 0x1EFF),  # Latin Extended Additional (Vietnamese)
+    (0x2000, 0x206F),  # general punctuation
+    (0x3000, 0x30FF),  # CJK punctuation, Hiragana, Katakana
+    (0x4E00, 0x9FFF),  # CJK Unified Ideographs
+    (0xAC00, 0xD7AF),  # Hangul
+    (0xFF00, 0xFFEF),  # halfwidth / fullwidth forms
+)
+
+
+def _is_text_unit(unit: int) -> bool:
+    return any(lo <= unit <= hi for lo, hi in _TEXT_BLOCKS)
+
+
+def _anomalies(decoded: bytes) -> tuple[tuple[int, int, int], ...]:
+    """(index, low, high) of every UTF-16 unit with a non-zero high byte (strict, unchanged)."""
+    return tuple(
+        (index, decoded[index - 1], decoded[index])
+        for index in range(1, len(decoded), 2)
+        if decoded[index]
+    )
+
+
+def _only_text_units(anomalies: tuple[tuple[int, int, int], ...]) -> bool:
+    """True when every non-Latin unit is a character a player can type (a name in another
+    language), so the document is healthy text rather than corruption."""
+    return all(_is_text_unit(low | (high << 8)) for _, low, high in anomalies)
 
 
 def _strict_object_pairs(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
@@ -455,15 +491,11 @@ def analyze_stash_hss(raw: bytes, xor_key: bytes) -> RecoveryPlan:
     if len(decoded) % 2:
         return _unsupported(raw, "HSS decoded text has an odd byte length", decoded_size=len(decoded))
 
-    anomalies = tuple(
-        (index, decoded[index - 1], decoded[index])
-        for index in range(1, len(decoded), 2)
-        if decoded[index]
-    )
+    anomalies = _anomalies(decoded)
     low_text = decoded[::2].decode("latin-1")
-    if not anomalies:
+    if _only_text_units(anomalies):
         try:
-            document = _parse_json_strict(low_text)
+            document = _parse_json_strict(decoded.decode("utf-16-le"))
             item_count, counts, manifest = _validate_stash_document(document)
         except HSSRecoveryError as exc:
             return _unsupported(raw, str(exc), decoded_size=len(decoded))

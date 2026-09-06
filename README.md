@@ -8,7 +8,14 @@ A local/offline save editor for **Hero Siege** (Pixel Prone Games). Manage items
 
 Single file, no install, no Python needed. Just run it.
 
-## What's new in v2.15.1
+## What's new in v2.15.2
+
+A quick fix: stashes with a tab, vault or character name in another script (Chinese,
+Cyrillic, Turkish letters and so on) were reported as "corrupt" and could not be opened.
+The editor now reads and writes every language the game does. See
+[the v2.15.2 release notes](RELEASE_NOTES_v2.15.2.md).
+
+## Previously added in v2.15.1
 
 A quick fix: the character list in the sidebar was invisible in 2.15.0 (a style rule meant
 for two hidden menu entries also caught the character buttons). It also retries and refreshes

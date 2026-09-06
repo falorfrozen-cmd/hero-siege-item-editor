@@ -190,7 +190,7 @@ def _resource_base() -> Path:
 BASE = _resource_base()
 CATALOG_FILE = BASE / "hs_full_catalog.json"
 PORT = 8765
-APP_VERSION = "2.15.1-s10"
+APP_VERSION = "2.15.2-s10"
 APPLICATION_ID = "hero-siege-item-editor"
 CATALOG_PROFILE = "Season 10"
 MAX_POST_BYTES = 2 * 1024 * 1024
@@ -445,16 +445,21 @@ def decode_hss(path: Path) -> str:
     cleaned = "".join(c for c in raw if not c.isspace() and c != "\x00")
     packed = base64.b64decode(cleaned, validate=True)
     decoded = xor_bytes(zlib.decompress(packed))
-    if len(decoded) % 2 or any(decoded[i] for i in range(1, len(decoded), 2)):
+    # The payload is UTF-16LE text.  Names typed in any language are valid; only an odd
+    # length, a lone surrogate or the U+FFFE/U+FFFF sentinels mean the file is damaged.
+    if len(decoded) % 2:
         raise ValueError(f"Unsupported or corrupt HSS text payload: {path.name}")
-    return decoded[::2].decode("latin-1")
+    try:
+        text = decoded.decode("utf-16-le")
+    except UnicodeDecodeError as exc:
+        raise ValueError(f"Unsupported or corrupt HSS text payload: {path.name}") from exc
+    if "\ufffe" in text or "\uffff" in text:
+        raise ValueError(f"Unsupported or corrupt HSS text payload: {path.name}")
+    return text
 
 
 def encode_hss(text: str) -> str:
-    wide = bytearray()
-    for ch in text.encode("latin-1"):
-        wide += bytes((ch, 0))
-    return base64.b64encode(zlib.compress(xor_bytes(bytes(wide)), 9)).decode("ascii")
+    return base64.b64encode(zlib.compress(xor_bytes(text.encode("utf-16-le")), 9)).decode("ascii")
 
 
 CREATE_NO_WINDOW = 0x08000000  # subprocess'in konsol penceresi acmasini engeller
@@ -2589,7 +2594,7 @@ def _bulk_encode_stash_document(data: dict) -> str:
 
     serialized = json.dumps(data, separators=(", ", ": "))
     try:
-        decoded_bytes = len(serialized.encode("latin-1")) * 2
+        decoded_bytes = len(serialized.encode("utf-16-le"))
     except UnicodeEncodeError as exc:
         raise VaultValidationError(
             "The planned stash contains unsupported text; nothing was moved"

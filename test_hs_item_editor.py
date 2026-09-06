@@ -211,6 +211,15 @@ class ItemEditorSeason10Tests(unittest.TestCase):
         with self.assertRaises(Exception):
             editor.decode_hss(path)
 
+    def test_codec_keeps_non_latin_names(self):
+        # A stash tab named in Chinese (seen in a user's stash.hss on 2026-09-06) and Turkish
+        # letters must survive the round trip instead of being reported as corruption.
+        source = '{"tabs":[{"tab":-5,"name":"\u88c5\u5907\u6536\u96c6"},{"tab":1,"name":"Ta\u015f\u0131yan"}]}'
+        path = self.saves / "cjk.hss"
+        path.write_text(editor.encode_hss(source), encoding="ascii")
+        self.assertEqual(editor.decode_hss(path), source)
+        self.assertEqual(json.loads(editor.decode_hss(path))["tabs"][0]["name"], "\u88c5\u5907\u6536\u96c6")
+
     def test_s10_unique_overlay_is_complete_and_old_rows_are_locked(self):
         rows = [r for r in editor.CAT if r.get("kind") == "unique" and r.get("s10Verified")]
         self.assertEqual(len(rows), 24)
