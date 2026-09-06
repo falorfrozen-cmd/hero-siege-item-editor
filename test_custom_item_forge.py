@@ -183,6 +183,14 @@ class CustomForgeMechanicTests(unittest.TestCase):
         self.assertIn("Attack Damage", labels)  # ambiguous legacy label keeps its text
         self.assertGreater(editor.CATALOG_LINES_RENAMED, 1000)
 
+    def test_ui_warns_about_socketables(self):
+        # Socket bonuses are rebuilt by the game from the jewel's type and seed
+        # (GenerateItemSpecialStats -> itemBaseSocketStatStruct), so forged stats on a rune,
+        # gem or jewel never reach the host item; the forge must say so.
+        source = (BASE / "item_forge_ui.js").read_text(encoding="utf-8")
+        self.assertIn("data-socketable-note", source)
+        self.assertIn("Number(baseItem.cls)===15", source)
+
     def test_ui_offers_the_name_field(self):
         self.assertIn('id="ifname" maxlength="48"', editor.HTML)
         self.assertNotIn('id="ifname" disabled', editor.HTML)
