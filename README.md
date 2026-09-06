@@ -8,7 +8,13 @@ A local/offline save editor for **Hero Siege** (Pixel Prone Games). Manage items
 
 Single file, no install, no Python needed. Just run it.
 
-## What's new in v2.15.2
+## What's new in v2.15.3
+
+A Tier choice (C to SS) under Appearance, SS-tier signature items, and a clear note that forged
+stats on runes, gems and jewels do not carry into sockets. Pairs with ForgePact 1.3.10. See
+[the v2.15.3 release notes](RELEASE_NOTES_v2.15.3.md).
+
+## Previously added in v2.15.2
 
 A quick fix: stashes with a tab, vault or character name in another script (Chinese,
 Cyrillic, Turkish letters and so on) were reported as "corrupt" and could not be opened.

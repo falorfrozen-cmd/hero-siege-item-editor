@@ -190,7 +190,7 @@ def _resource_base() -> Path:
 BASE = _resource_base()
 CATALOG_FILE = BASE / "hs_full_catalog.json"
 PORT = 8765
-APP_VERSION = "2.15.2-s10"
+APP_VERSION = "2.15.3-s10"
 APPLICATION_ID = "hero-siege-item-editor"
 CATALOG_PROFILE = "Season 10"
 MAX_POST_BYTES = 2 * 1024 * 1024
@@ -5325,7 +5325,7 @@ def load_signature_items(path: Path | None = None) -> list[dict]:
             "config": {
                 "keepNative": config.get("keepNative", True) is not False,
                 "stats": {str(k): v for k, v in config["stats"].items()},
-                "name": config.get("name"), "rarity": config.get("rarity"), "mechanic": mechanic,
+                "name": config.get("name"), "rarity": config.get("rarity"), "tier": config.get("tier"), "mechanic": mechanic,
                 "affix": config.get("affix"), "lore": config.get("lore"),
                 "presetIds": [], "excludedKeys": [],
             },
@@ -5505,6 +5505,7 @@ def op_custom_forge(body: dict) -> dict:
             excluded_keys=excluded_keys,
             lore=body.get("lore"),
             rarity=body.get("rarity"),
+            tier=body.get("tier"),
             mechanic=body.get("mechanic"),
             name=body.get("name"),
             affix=body.get("affix"),

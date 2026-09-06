@@ -72,6 +72,8 @@ MAX_SOCKETS = 6
 # itemInfoStruct["27"] values the game draws (measured): 1 common, 3 rare,
 # 5 legendary, 6 satanic, 7 angelic, 9 heroic, 10 unholy.
 RARITY_IDS = {1, 2, 3, 5, 6, 7, 9, 10}
+# itemInfoStruct["32"]: the tooltip's Tier letter and the loot filter's tier (1 C .. 5 SS).
+TIER_IDS = {1, 2, 3, 4, 5}
 # Plugin-side behaviours an item can carry.  The runtime tags the created item
 # struct (fp_mechanic) and arms the matching hook only when such an item exists.
 MECHANICS = {"headhunter", "tyrant", "beacon"}
@@ -129,6 +131,14 @@ def _validate_mechanic(mechanic: Any) -> str | None:
     if clean not in MECHANICS:
         raise CustomForgeError(f"unknown mechanic {mechanic!r}; supported: {', '.join(sorted(MECHANICS))}")
     return clean
+
+
+def _validate_tier(tier: Any) -> int | None:
+    if tier is None or tier == "":
+        return None
+    if isinstance(tier, bool) or not isinstance(tier, (int, float)) or float(tier) != int(tier) or int(tier) not in TIER_IDS:
+        raise CustomForgeError("tier must be 1 (C), 2 (B), 3 (A), 4 (S) or 5 (SS)")
+    return int(tier)
 
 
 def _validate_extras(lore: Any, rarity: Any) -> tuple[str | None, int | None]:
@@ -396,6 +406,9 @@ class CustomForgeStore:
             rarity = entry.get("rarity")
             if isinstance(rarity, int) and not isinstance(rarity, bool):
                 extras.append(f"rarity={rarity}")
+            tier = entry.get("tier")
+            if isinstance(tier, int) and not isinstance(tier, bool) and tier in TIER_IDS:
+                extras.append(f"tier={tier}")
             mechanic = entry.get("mechanic")
             if isinstance(mechanic, str) and mechanic in MECHANICS:
                 extras.append(f"mechanic={mechanic}")
@@ -437,8 +450,10 @@ class CustomForgeStore:
         mechanic: Any = None,
         name: Any = None,
         affix: Any = None,
+        tier: Any = None,
     ) -> dict[str, Any]:
         clean_stats = self._validate_stats(stats)
+        clean_tier = _validate_tier(tier)
         clean_name = _validate_name(name)
         clean_affix = _validate_affix(affix)
         clean_lore, clean_rarity = _validate_extras(lore, rarity)
@@ -459,6 +474,7 @@ class CustomForgeStore:
             "excludedKeys": sorted(self._expanded_exclusions(excluded_keys)),
             "lore": clean_lore,
             "rarity": clean_rarity,
+            "tier": clean_tier,
             "mechanic": clean_mechanic,
             "name": clean_name,
             "affix": clean_affix,

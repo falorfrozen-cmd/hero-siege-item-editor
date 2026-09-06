@@ -196,6 +196,24 @@ class CustomForgeMechanicTests(unittest.TestCase):
         self.assertNotIn('id="ifname" disabled', editor.HTML)
         self.assertIn("name:name||null", editor.HTML)
 
+    def test_tier_travels_in_the_runtime_sidecar(self):
+        merged = self.store.merge_presets([], {28: 60})
+        result = self.store.apply(self.selector, label="crown", stats=merged, keep_native=True, rarity=10, tier=5)
+        self.assertEqual(result["entry"]["tier"], 5)
+        runtime = (self.root / "hs_custom_item_forge.runtime").read_text(encoding="utf-8")
+        line = [row for row in runtime.splitlines() if row.startswith("item|")][0]
+        self.assertIn("rarity=10;tier=5", line)
+        for bad in ({"tier": 0}, {"tier": 6}, {"tier": "5"}):
+            with self.subTest(bad=bad), self.assertRaises(CustomForgeError):
+                self.store.apply(self.selector, label="x", stats=merged, keep_native=True, **bad)
+
+    def test_ui_offers_the_tier_selector(self):
+        source = (BASE / "item_forge_ui.js").read_text(encoding="utf-8")
+        self.assertIn('id="iftier"', source)
+        self.assertIn("tier:tier===''?null:+tier", source)
+        rows = editor.load_signature_items()
+        self.assertTrue(all(row["config"]["tier"] == 5 for row in rows))
+
     def test_ui_offers_the_mechanic_selector(self):
         self.assertIn('id="ifmech"', editor.HTML)
         self.assertIn("mechanic:q('ifmech').value", editor.HTML)
