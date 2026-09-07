@@ -175,6 +175,26 @@ class CustomForgeRuntimeTests(unittest.TestCase):
         self.assertEqual(result["code"], "sidecar_not_found")
         self.assertEqual(result["level"], "danger")
 
+    def test_stale_no_runtime_status_asks_for_a_restart(self):
+        # Plugin installed, game started once (no forge yet), THEN the user forged
+        # an item: the old "no runtime file" report must not read as a user mismatch.
+        self._config(self.exe)
+        self._plugin(capable=True)
+        now = time.time()
+        self._status("no runtime file", entries=0, when=now - 600)
+        self._sidecar(1, when=now - 10)
+        result = self._run()
+        self.assertEqual(result["code"], "restart_required")
+        self.assertEqual(result["level"], "warn")
+
+    def test_no_runtime_file_without_any_forge_is_only_a_hint(self):
+        self._config(self.exe)
+        self._plugin(capable=True)
+        self._status("no runtime file", entries=0)
+        result = self._run()
+        self.assertEqual(result["code"], "no_forged_items")
+        self.assertEqual(result["level"], "warn")
+
     def test_hook_failure_is_red(self):
         self._config(self.exe)
         self._plugin(capable=True)

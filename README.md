@@ -8,7 +8,14 @@ A local/offline save editor for **Hero Siege** (Pixel Prone Games). Manage items
 
 Single file, no install, no Python needed. Just run it.
 
-## What's new in v2.15.3
+## What's new in v2.15.4
+
+The red "the game runs under a different Windows user" warning no longer appears when
+the only thing that happened is that the game was started before your first forge; the
+screen now asks for a restart instead. See
+[the v2.15.4 release notes](RELEASE_NOTES_v2.15.4.md).
+
+## Previously added in v2.15.3
 
 A Tier choice (C to SS) under Appearance, SS-tier signature items, and a clear note that forged
 stats on runes, gems and jewels do not carry into sockets. Pairs with ForgePact 1.3.10. See

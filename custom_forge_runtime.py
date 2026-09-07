@@ -209,12 +209,35 @@ def _verdict(target: dict[str, Any], sidecar_mtime: float | None, sidecar_entrie
             ),
         }
     detail = str(status.get("detail") or "")
+    status_mtime = target.get("statusMtime")
+    # The plugin reads the forged-item file once, at game start.  A status older
+    # than the current file is therefore only a stale report, never proof that
+    # the game looked somewhere else.
+    stale = (
+        sidecar_mtime is not None and status_mtime is not None
+        and sidecar_mtime > status_mtime + 1.0
+    )
     if detail == "no runtime file":
+        if sidecar_mtime is None:
+            return {
+                "code": "no_forged_items", "level": "warn",
+                "message": (
+                    "No forged items exist yet. Forge one, then start Hero Siege to apply it."
+                ),
+            }
+        if stale:
+            return {
+                "code": "restart_required", "level": "warn",
+                "message": (
+                    "The game was last started before this forge existed. Restart Hero Siege "
+                    "to apply the current forge."
+                ),
+            }
         return {
             "code": "sidecar_not_found", "level": "danger",
             "message": (
-                "The plugin started but found no forged-item file. The game runs under a "
-                "different Windows user or LOCALAPPDATA than this editor."
+                "The plugin started after this forge and still found no forged-item file. "
+                "The game runs under a different Windows user or LOCALAPPDATA than this editor."
             ),
         }
     if detail == "unsupported runtime schema":
@@ -230,8 +253,7 @@ def _verdict(target: dict[str, Any], sidecar_mtime: float | None, sidecar_entrie
             "code": "hooks_failed", "level": "danger",
             "message": "The plugin could not install its item hooks. Check ForgePact's log.",
         }
-    status_mtime = target.get("statusMtime")
-    if sidecar_mtime is not None and status_mtime is not None and sidecar_mtime > status_mtime + 1.0:
+    if stale:
         return {
             "code": "restart_required", "level": "warn",
             "message": (
