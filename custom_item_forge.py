@@ -76,7 +76,7 @@ RARITY_IDS = {1, 2, 3, 5, 6, 7, 9, 10}
 TIER_IDS = {1, 2, 3, 4, 5}
 # Plugin-side behaviours an item can carry.  The runtime tags the created item
 # struct (fp_mechanic) and arms the matching hook only when such an item exists.
-MECHANICS = {"headhunter", "tyrant", "beacon"}
+MECHANICS = {"headhunter", "tyrant", "beacon", "miner"}
 # Custom display name: the plugin writes it over itemInfoStruct["28"] and
 # blanks the magic prefix/suffix, so the tooltip shows exactly this text.
 MAX_NAME_CHARS = 48
@@ -458,6 +458,8 @@ class CustomForgeStore:
         clean_affix = _validate_affix(affix)
         clean_lore, clean_rarity = _validate_extras(lore, rarity)
         clean_mechanic = _validate_mechanic(mechanic)
+        if clean_mechanic == "miner" and selector.get("t") != 0:
+            raise CustomForgeError("Miner's Helmet requires a helmet base")
         payload = self.load()
         items = payload["items"]
         entry_id = selector_id(selector)
