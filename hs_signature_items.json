@@ -43,8 +43,8 @@
         "key": "helmet_normal_great_helm",
         "name": "Great Helm"
       },
-      "tagline": "A reinforced mining helmet: 4x ore while equipped and a golden Vein Resonance pulse.",
-      "needs": "the local Miner helmet prototype of ForgePact; nearby-vein harvesting is not enabled yet",
+      "tagline": "A reinforced mining helmet: 4x ore while worn, and Vein Resonance digs the two nearest veins with every finished dig.",
+      "needs": "ForgePact 1.4.5 or later",
       "config": {
         "keepNative": false,
         "stats": {
@@ -58,7 +58,7 @@
         "rarity": 10,
         "tier": 5,
         "mechanic": "miner",
-        "affix": "4x mining ore while equipped\nVein Resonance: a golden pulse when a vein yields ore",
+        "affix": "4x mining ore while equipped\nVein Resonance: each finished dig also digs the two nearest veins",
         "lore": "Below the mountain, every glimmer is a promise."
       }
     }

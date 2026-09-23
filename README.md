@@ -333,6 +333,17 @@ See [the v2.8.0 release notes](RELEASE_NOTES_v2.8.0.md) and the
 See [the v2.7.2 release notes](RELEASE_NOTES_v2.7.2.md) for the Perfect/Best
 Roll and Dice explanation.
 
+## Miner's Helmet signature item
+
+Item Forge → Forge a signature item includes **Miner's Helmet**: a Great Helm at
+SS tier with +1000 Defense, +500% Enhanced Defense, +20% Movement Speed, +20% All
+Resistances and +5 Light Radius. Its `miner` mechanic needs ForgePact 1.4.5 or
+later: while the helmet is worn, every mining node gives exactly 4× its ore, and
+Vein Resonance also digs the two nearest veins you could mine within reach of
+each finished dig. The mechanic accepts only a helmet base. The template uses the
+existing fresh-item identity, Shared Stash destination and Custom Forge sidecar,
+with the normal closed-game and backup checks.
+
 ## Features
 
 - Season 10 catalog profile: 944 current unique identities, including all 24 new S10 Heroic boss items
@@ -561,7 +572,3 @@ is a standard-library client for this endpoint.
 ## Credits
 
 Built with Python stdlib. Item data extracted from the game's own asset repository via YYToolkit.
-
-## Local Miner helmet prototype
-
-Item Forge → Forge a signature item now includes Miner's Helmet: +1000 Defense, +500% Enhanced Defense, +20% Movement Speed, +20% All Resistances and +5 Light Radius. It requires the matching experimental ForgePact plugin for 4x ore while equipped and a golden mining pulse. The public plugin does not implement this mechanic yet; nearby-vein harvesting is not enabled. This template uses the existing fresh-item identity, Shared Stash destination and Custom Forge sidecar, with the normal closed-game and backup checks.
