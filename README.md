@@ -8,7 +8,7 @@ A local/offline save editor for **Hero Siege** (Pixel Prone Games). Manage items
 
 Single file, no install, no Python needed. Just run it.
 
-## Local build: v2.15.10-s10-local — dismantle a whole AFK category
+## Local build: v2.15.10-s10 — dismantle a whole AFK category
 
 - **DISMANTLE BY RARITY…** in the category **…** menu of an AFK expedition category
   does what a stash's DISMANTLE does, for every stash at once. Tick the rarities (for
