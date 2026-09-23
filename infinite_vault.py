@@ -1536,7 +1536,7 @@ class InfiniteVault:
             if isinstance(event_id, int):
                 undone.add(event_id)
         for row in rows:
-            if row["event_type"] in {"category_contents_deleted", "stash_page_deleted"}:
+            if row["event_type"] in {"category_contents_deleted", "stash_page_deleted", "items_purged"}:
                 # Older layout/move undo may point into storage that was deleted.
                 return None
             if row["event_type"] in reversible and int(row["id"]) not in undone:
@@ -1757,8 +1757,21 @@ class InfiniteVault:
             )
         return [row[0] for row in prepared]
 
-    def create_collection(self, name: str) -> CollectionRecord:
+    def create_collection(
+        self, name: str, *, marker: Mapping[str, str] | None = None
+    ) -> CollectionRecord:
+        """Create a category with its first stash.
+
+        ``marker`` (for example ``{"afkExpedition": id}``) is stored with the
+        creation event together with the new id, so a producer can find the
+        category again with ``find_marked_collection`` even after a rename.
+        """
         clean_name, name_key = _clean_collection_name(name)
+        clean_marker: dict[str, str] = {}
+        for key, value in dict(marker or {}).items():
+            if not isinstance(key, str) or not key or not isinstance(value, str) or not value:
+                raise VaultValidationError("collection marker must map text to text")
+            clean_marker[key] = value
 
         def operation(connection: sqlite3.Connection) -> CollectionRecord:
             now = _utc_now()
@@ -1776,7 +1789,10 @@ class InfiniteVault:
                    ) VALUES (?, 0, 'Stash 1', 'stash 1', ?, ?)""",
                 (collection_id, now, now),
             )
-            self._event(connection, "collection_created", collection_name=clean_name)
+            self._event(
+                connection, "collection_created", collection_name=clean_name,
+                details={**clean_marker, "collectionId": collection_id} if clean_marker else None,
+            )
             row = connection.execute(
                 """SELECT id, name, 0 AS available_count, 0 AS reserved_count,
                           1 AS stash_count, created_at, updated_at
@@ -1803,6 +1819,53 @@ class InfiniteVault:
                    ORDER BY c.name_key, c.id"""
             ).fetchall()
             return [self._collection_from_row(row) for row in rows]
+
+        return self._read(operation)
+
+    def find_marked_collection(self, key: str, value: str) -> CollectionRecord | None:
+        """Return the live category created with ``marker={key: value}``."""
+
+        if not isinstance(key, str) or not key or not isinstance(value, str) or not value:
+            raise VaultValidationError("collection marker must map text to text")
+        needle = json.dumps({key: value}, separators=(",", ":"), sort_keys=True)[1:-1]
+        pattern = (
+            "%" + needle.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_") + "%"
+        )
+
+        def operation(connection: sqlite3.Connection) -> CollectionRecord | None:
+            rows = connection.execute(
+                """SELECT details_json FROM events
+                   WHERE event_type='collection_created' AND details_json LIKE ? ESCAPE '\\'
+                   ORDER BY id DESC""",
+                (pattern,),
+            ).fetchall()
+            for row in rows:
+                try:
+                    details = json.loads(str(row[0]))
+                except json.JSONDecodeError:
+                    continue
+                if not isinstance(details, dict) or details.get(key) != value:
+                    continue
+                collection_id = details.get("collectionId")
+                if isinstance(collection_id, bool) or not isinstance(collection_id, int):
+                    continue
+                found = connection.execute(
+                    """SELECT c.id, c.name, c.created_at, c.updated_at,
+                              COALESCE(SUM(CASE WHEN i.status = 'available' THEN 1 ELSE 0 END), 0)
+                                  AS available_count,
+                              COALESCE(SUM(CASE WHEN i.status = 'reserved' THEN 1 ELSE 0 END), 0)
+                                  AS reserved_count,
+                              (SELECT COUNT(*) FROM stash_pages AS sp
+                               WHERE sp.collection_id=c.id) AS stash_count
+                       FROM collections AS c
+                       LEFT JOIN items AS i ON i.collection_id = c.id
+                       WHERE c.id = ?
+                       GROUP BY c.id""",
+                    (collection_id,),
+                ).fetchone()
+                if found is not None:
+                    return self._collection_from_row(found)
+            return None
 
         return self._read(operation)
 
@@ -2277,6 +2340,155 @@ class InfiniteVault:
 
         return self._write(operation)
 
+    def deposit_many(
+        self,
+        collection: int | str,
+        entries: Iterable[Mapping[str, Any]],
+    ) -> list[dict[str, Any]]:
+        """Deposit several items in one backed-up SQLite transaction.
+
+        Each entry carries ``raw_item_json`` and the optional
+        ``source_item_key``, ``label``, ``source`` and ``deposit_key`` of
+        ``deposit``, and is checked exactly like one.  A refused entry does not
+        abort the others: the result for each entry, in order, is
+        ``{"status": "deposited" | "duplicate" | "conflict" | "invalid",
+        "reason": str | None, "record": VaultItemRecord | None}``.
+        ``duplicate`` covers a deposit key that already holds the same item or
+        belongs to an item since withdrawn or deleted.  One pre-mutation backup
+        is taken for the whole batch instead of one per item, which is what
+        made large AFK ingests slow.
+        """
+
+        results: list[dict[str, Any]] = []
+        prepared: list[tuple[int, dict[str, Any]]] = []
+        for index, entry in enumerate(entries):
+            results.append({"status": "invalid", "reason": None, "record": None})
+            try:
+                if not isinstance(entry, Mapping):
+                    raise VaultValidationError("deposit entry must be an object")
+                raw_item_json = entry.get("raw_item_json")
+                decoded = validate_raw_item_json(raw_item_json)
+                clean_source_key = _clean_optional_text(entry.get("source_item_key"), "source item key")
+                clean_label = _clean_optional_text(entry.get("label"), "label")
+                clean_source = _clean_optional_text(entry.get("source"), "source")
+                clean_deposit_key = _clean_request_key(entry.get("deposit_key"))
+            except VaultValidationError as exc:
+                results[index]["reason"] = str(exc)
+                continue
+            prepared.append((index, {
+                "raw": raw_item_json,
+                "sha": hashlib.sha256(raw_item_json.encode("utf-8")).hexdigest(),
+                "search": _search_document(decoded, (clean_source_key, clean_label, clean_source)),
+                "source_key": clean_source_key,
+                "label": clean_label,
+                "source": clean_source,
+                "deposit_key": clean_deposit_key,
+            }))
+        if not prepared:
+            return results
+
+        def operation(connection: sqlite3.Connection) -> list[tuple[int, str, str | None, str | None]]:
+            target = self._resolve_collection(connection, collection)
+            outcome: list[tuple[int, str, str | None, str | None]] = []
+            for index, item in prepared:
+                key = item["deposit_key"]
+                if key is not None:
+                    if connection.execute(
+                        "SELECT 1 FROM deleted_deposit_keys WHERE deposit_key=?", (key,)
+                    ).fetchone() is not None:
+                        outcome.append((index, "duplicate", "deposit key belongs to an item already deleted", None))
+                        continue
+                    prior = connection.execute(
+                        "SELECT * FROM items WHERE deposit_key = ?", (key,)
+                    ).fetchone()
+                    if prior is not None:
+                        if (
+                            prior["raw_sha256"] == item["sha"]
+                            and prior["raw_json"] == item["raw"]
+                            and int(prior["collection_id"]) == int(target["id"])
+                            and prior["source_item_key"] == item["source_key"]
+                            and prior["label"] == item["label"]
+                            and prior["source"] == item["source"]
+                        ):
+                            outcome.append((index, "duplicate", None, str(prior["id"])))
+                        else:
+                            outcome.append((index, "conflict", "deposit key is already used by another item", None))
+                        continue
+                    historical = connection.execute(
+                        """SELECT status FROM transfers
+                           WHERE deposit_key = ? AND direction = 'withdrawal'
+                           ORDER BY created_at DESC LIMIT 1""",
+                        (key,),
+                    ).fetchone()
+                    if historical is not None and historical["status"] == "committed":
+                        outcome.append((index, "duplicate", "deposit key belongs to an item already withdrawn", None))
+                        continue
+                item_id = uuid.uuid4().hex
+                now = _utc_now()
+                try:
+                    connection.execute(
+                        """INSERT INTO items(
+                               id, collection_id, raw_json, raw_sha256, search_text,
+                               source_item_key, label, source, deposit_key, status,
+                               reserved_token, created_at, updated_at
+                           ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'available', NULL, ?, ?)""",
+                        (
+                            item_id, target["id"], item["raw"], item["sha"], item["search"],
+                            item["source_key"], item["label"], item["source"], key, now, now,
+                        ),
+                    )
+                except sqlite3.IntegrityError:
+                    outcome.append((index, "conflict", "item could not be deposited uniquely", None))
+                    continue
+                self._event(
+                    connection,
+                    "item_deposited",
+                    item_id=item_id,
+                    collection_name=target["name"],
+                    details={"rawSha256": item["sha"], "source": item["source"]},
+                )
+                outcome.append((index, "deposited", None, item_id))
+            return outcome
+
+        outcome = self._write(operation)
+        records = {record.id: record for record in self.get_items(
+            [item_id for _, _, _, item_id in outcome if item_id is not None]
+        )}
+        for index, status, reason, item_id in outcome:
+            results[index] = {
+                "status": status,
+                "reason": reason,
+                "record": records.get(item_id) if item_id is not None else None,
+            }
+        return results
+
+    def get_items(self, item_ids: Iterable[str]) -> list[VaultItemRecord]:
+        """Return the stored records for ``item_ids`` (any status), in request order.
+
+        Unknown ids are left out rather than raising, so a caller holding a
+        stale selection simply receives fewer records.
+        """
+
+        clean = list(dict.fromkeys(_clean_id(item_id, "item id") for item_id in item_ids))
+        if not clean:
+            return []
+
+        def operation(connection: sqlite3.Connection) -> list[VaultItemRecord]:
+            found: dict[str, VaultItemRecord] = {}
+            for start in range(0, len(clean), 500):
+                chunk = clean[start:start + 500]
+                for row in connection.execute(
+                    f"""SELECT i.*, c.name AS collection_name
+                        FROM items AS i JOIN collections AS c ON c.id = i.collection_id
+                        WHERE i.id IN ({','.join('?' * len(chunk))})""",
+                    tuple(chunk),
+                ).fetchall():
+                    record = self._item_from_row(row)
+                    found[record.id] = record
+            return [found[item_id] for item_id in clean if item_id in found]
+
+        return self._read(operation)
+
     def get_item(self, item_id: str) -> VaultItemRecord:
         clean_item_id = _clean_id(item_id, "item id")
 
@@ -2676,6 +2888,288 @@ class InfiniteVault:
                 ).fetchone()
                 result.append(self._item_from_row(row))
             return result
+
+        return self._write(operation)
+
+    def apply_named_layout(
+        self,
+        collection: int | str,
+        page_names: Mapping[int, str],
+        placements: Iterable[Mapping[str, Any]],
+    ) -> dict[str, Any]:
+        """Create or name stashes and save grid positions in one transaction.
+
+        ``page_names`` maps page indexes to the wanted names.  A missing page
+        is created with that name (a ``(n)`` suffix keeps names unique); an
+        existing page is renamed only while it still carries the default
+        ``Stash N`` name and holds no item, so a name the player chose is never
+        replaced.  ``placements`` follow ``set_item_layouts`` and may target
+        the pages created here.  Overlap checks belong to the caller, which
+        owns the catalog dimensions.
+        """
+
+        clean_pages: dict[int, str] = {}
+        for page_index, name in dict(page_names).items():
+            if isinstance(page_index, bool) or not isinstance(page_index, int) or not 0 <= page_index <= SQLITE_MAX_INTEGER:
+                raise VaultValidationError("stash page indexes must be non-negative integers")
+            clean_pages[page_index] = _clean_stash_name(name)[0]
+        if len(clean_pages) > MAX_PAGE_SIZE:
+            raise VaultValidationError("invalid stash page indexes")
+        prepared: list[tuple[str, int, int, int]] = []
+        seen: set[str] = set()
+        for raw in placements:
+            if not isinstance(raw, Mapping):
+                raise VaultValidationError("Vault placements must be objects")
+            item_id = _clean_id(raw.get("itemId"), "item id")
+            if item_id in seen:
+                raise VaultValidationError("Vault placements contain a duplicate item")
+            seen.add(item_id)
+            values: list[int] = []
+            for field, upper in (
+                ("pageIndex", SQLITE_MAX_INTEGER),
+                ("x", VAULT_GRID_COLUMNS - 1),
+                ("y", VAULT_GRID_ROWS - 1),
+            ):
+                value = raw.get(field)
+                if isinstance(value, bool) or not isinstance(value, int):
+                    raise VaultValidationError(f"Vault layout {field} must be an integer")
+                if not 0 <= value <= upper:
+                    raise VaultValidationError(f"Vault layout {field} is out of range")
+                values.append(value)
+            prepared.append((item_id, values[0], values[1], values[2]))
+
+        def operation(connection: sqlite3.Connection) -> dict[str, Any]:
+            target = self._resolve_collection(connection, collection)
+            collection_id = int(target["id"])
+            now = _utc_now()
+            existing = {
+                int(row["page_index"]): row
+                for row in connection.execute(
+                    "SELECT * FROM stash_pages WHERE collection_id=?", (collection_id,)
+                ).fetchall()
+            }
+            taken = {str(row["name_key"]) for row in existing.values()}
+
+            def unique(name: str, own_key: str | None = None) -> tuple[str, str]:
+                candidate, suffix = name, 2
+                while candidate.casefold() in taken and candidate.casefold() != own_key:
+                    tail = f" ({suffix})"
+                    candidate = name[:MAX_STASH_NAME_LENGTH - len(tail)] + tail
+                    suffix += 1
+                return candidate, candidate.casefold()
+
+            created: list[int] = []
+            renamed: list[dict[str, Any]] = []
+            for page_index in sorted(clean_pages):
+                wanted = clean_pages[page_index]
+                row = existing.get(page_index)
+                if row is None:
+                    name, name_key = unique(wanted)
+                    connection.execute(
+                        """INSERT INTO stash_pages(
+                               collection_id, page_index, name, name_key, created_at, updated_at
+                           ) VALUES (?, ?, ?, ?, ?, ?)""",
+                        (collection_id, page_index, name, name_key, now, now),
+                    )
+                    taken.add(name_key)
+                    created.append(page_index)
+                    continue
+                if row["name"] == wanted or not re.fullmatch(r"Stash [1-9]\d*(?: \([2-9]\d*\))?", str(row["name"])):
+                    continue
+                if connection.execute(
+                    """SELECT 1 FROM items WHERE collection_id=? AND page_index=?
+                       AND status='available' LIMIT 1""",
+                    (collection_id, page_index),
+                ).fetchone() is not None:
+                    continue
+                name, name_key = unique(wanted, str(row["name_key"]))
+                if name == row["name"]:
+                    continue
+                connection.execute(
+                    "UPDATE stash_pages SET name=?, name_key=?, updated_at=? WHERE id=?",
+                    (name, name_key, now, row["id"]),
+                )
+                taken.discard(str(row["name_key"]))
+                taken.add(name_key)
+                renamed.append({"pageIndex": page_index, "previousName": row["name"], "name": name})
+            if created:
+                self._event(
+                    connection, "stash_pages_initialized", collection_name=target["name"],
+                    details={"pageIndexes": created},
+                )
+            for change in renamed:
+                self._event(
+                    connection, "stash_page_renamed", collection_name=target["name"], details=change,
+                )
+            valid_pages = set(existing) | set(created)
+            if any(page_index not in valid_pages for _, page_index, _, _ in prepared):
+                raise VaultConflictError("the target stash no longer exists in this category")
+            by_id = {
+                str(row["id"]): row
+                for row in connection.execute(
+                    "SELECT * FROM items WHERE collection_id=? AND status='available'",
+                    (collection_id,),
+                ).fetchall()
+            }
+            if any(item_id not in by_id for item_id, *_ in prepared):
+                raise VaultConflictError(
+                    "a Vault item moved, disappeared, or became reserved before layout save"
+                )
+            changes: list[dict[str, Any]] = []
+            for item_id, page_index, x, y in prepared:
+                row = by_id[item_id]
+                previous = (
+                    (int(row["page_index"]), int(row["layout_x"]), int(row["layout_y"]))
+                    if row["page_index"] is not None and row["layout_x"] is not None
+                    and row["layout_y"] is not None else None
+                )
+                if previous == (page_index, x, y):
+                    continue
+                connection.execute(
+                    "UPDATE items SET page_index=?, layout_x=?, layout_y=?, updated_at=? WHERE id=?",
+                    (page_index, x, y, now, item_id),
+                )
+                changes.append({
+                    "itemId": item_id,
+                    "previous": (
+                        {"pageIndex": previous[0], "x": previous[1], "y": previous[2]}
+                        if previous is not None else None
+                    ),
+                    "current": {"pageIndex": page_index, "x": x, "y": y},
+                })
+            if changes:
+                self._event(
+                    connection, "collection_layout_updated", collection_name=target["name"],
+                    details={"collectionId": collection_id, "changes": changes},
+                )
+            if created or renamed or changes:
+                connection.execute(
+                    "UPDATE collections SET updated_at=? WHERE id=?", (now, collection_id)
+                )
+            return {"created": created, "renamed": [c["pageIndex"] for c in renamed], "changed": len(changes)}
+
+        return self._write(operation)
+
+    def _purge_snapshot(
+        self, connection: sqlite3.Connection, collection: int | str, item_ids: list[str]
+    ) -> dict[str, Any]:
+        target = self._resolve_collection(connection, collection)
+        for table in ("transfers", "transfer_batches"):
+            if connection.execute(
+                f"SELECT 1 FROM {table} WHERE collection_id=? AND status IN ('prepared','conflict') LIMIT 1",
+                (target["id"],),
+            ).fetchone():
+                raise VaultStateError("Resolve pending transfers in this category before deleting.")
+        rows: list[sqlite3.Row] = []
+        for start in range(0, len(item_ids), 500):
+            chunk = item_ids[start:start + 500]
+            rows.extend(connection.execute(
+                f"SELECT * FROM items WHERE id IN ({','.join('?' * len(chunk))})", tuple(chunk)
+            ).fetchall())
+        if len(rows) != len(item_ids) or any(
+            int(row["collection_id"]) != int(target["id"]) or row["status"] != "available"
+            for row in rows
+        ):
+            raise VaultConflictError("The selected items changed. Review a fresh clean-up preview.")
+        rows.sort(key=lambda row: str(row["id"]))
+        token = hashlib.sha256(json.dumps(
+            {"collection": dict(target), "items": [dict(row) for row in rows]},
+            ensure_ascii=False, sort_keys=True, separators=(",", ":"),
+        ).encode("utf-8")).hexdigest()
+        return {
+            "collectionId": int(target["id"]),
+            "collectionName": target["name"],
+            "itemCount": len(rows),
+            "pageIndexes": sorted({int(row["page_index"]) for row in rows if row["page_index"] is not None}),
+            "previewToken": token,
+        }
+
+    def preview_item_purge(self, collection: int | str, item_ids: Iterable[str]) -> dict[str, Any]:
+        """Describe deleting exactly ``item_ids`` from one category."""
+
+        clean = sorted({_clean_id(item_id, "item id") for item_id in item_ids})
+
+        def operation(connection: sqlite3.Connection) -> dict[str, Any]:
+            connection.execute("BEGIN")
+            return self._purge_snapshot(connection, collection, clean)
+
+        return self._read(operation)
+
+    def purge_items(
+        self,
+        collection: int | str,
+        item_ids: Iterable[str],
+        *,
+        preview_token: str,
+        details: Mapping[str, Any] | None = None,
+        remove_emptied_pages: bool = False,
+    ) -> dict[str, Any]:
+        """Delete the confirmed items of one category, keeping a dedicated backup.
+
+        Like stash deletion: the snapshot must still match the preview, a
+        ``before-delete`` copy of the database is written first, and imported
+        items leave their deposit keys behind so a producer cannot bring them
+        back by sending the same records again.  With
+        ``remove_emptied_pages`` a stash that held purged items and is empty
+        afterwards is removed too, keeping at least one stash in the category.
+        """
+
+        if not isinstance(preview_token, str) or len(preview_token) != 64:
+            raise VaultValidationError("A fresh clean-up preview is required.")
+        clean = sorted({_clean_id(item_id, "item id") for item_id in item_ids})
+        if not clean:
+            raise VaultValidationError("No item matches this clean-up.")
+
+        def operation(connection: sqlite3.Connection) -> dict[str, Any]:
+            preview = self._purge_snapshot(connection, collection, clean)
+            if preview_token != preview["previewToken"]:
+                raise VaultConflictError("The category changed. Review a fresh clean-up preview.")
+            backup_path = self.path.with_name(
+                f"{self.path.name}.before-delete-{uuid.uuid4().hex}.bak"
+            )
+            self._backup_existing(backup_path)
+            now = _utc_now()
+            for start in range(0, len(clean), 500):
+                chunk = clean[start:start + 500]
+                marks = ",".join("?" * len(chunk))
+                connection.execute(
+                    f"""INSERT INTO deleted_deposit_keys(deposit_key, raw_sha256, deleted_at)
+                        SELECT deposit_key, raw_sha256, ? FROM items
+                        WHERE deposit_key IS NOT NULL AND id IN ({marks})""",
+                    (now, *chunk),
+                )
+                connection.execute(f"DELETE FROM items WHERE id IN ({marks})", tuple(chunk))
+            removed_pages: list[int] = []
+            if remove_emptied_pages:
+                remaining = int(connection.execute(
+                    "SELECT COUNT(*) FROM stash_pages WHERE collection_id=?",
+                    (preview["collectionId"],),
+                ).fetchone()[0])
+                for page_index in preview["pageIndexes"]:
+                    if remaining <= 1:
+                        break
+                    if connection.execute(
+                        "SELECT 1 FROM items WHERE collection_id=? AND page_index=? LIMIT 1",
+                        (preview["collectionId"], page_index),
+                    ).fetchone() is not None:
+                        continue
+                    deleted = connection.execute(
+                        "DELETE FROM stash_pages WHERE collection_id=? AND page_index=?",
+                        (preview["collectionId"], page_index),
+                    ).rowcount
+                    if deleted:
+                        remaining -= 1
+                        removed_pages.append(page_index)
+            connection.execute(
+                "UPDATE collections SET updated_at=? WHERE id=?", (now, preview["collectionId"])
+            )
+            summary = {k: v for k, v in preview.items() if k not in {"previewToken", "pageIndexes"}}
+            summary["removedPageIndexes"] = removed_pages
+            self._event(
+                connection, "items_purged", collection_name=preview["collectionName"],
+                details={**dict(details or {}), **summary, "backupName": backup_path.name},
+            )
+            return {**summary, "backupName": backup_path.name}
 
         return self._write(operation)
 

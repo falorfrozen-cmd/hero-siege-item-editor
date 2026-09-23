@@ -102,6 +102,7 @@ except ModuleNotFoundError:
 try:
     from infinite_vault import (
         InfiniteVault,
+        MAX_COLLECTION_NAME_LENGTH,
         MAX_STASH_NAME_LENGTH,
         MAX_TEXT_FIELD_LENGTH,
         VAULT_GRID_COLUMNS,
@@ -117,6 +118,7 @@ try:
 except ModuleNotFoundError:
     from HSItemEditor.infinite_vault import (
         InfiniteVault,
+        MAX_COLLECTION_NAME_LENGTH,
         MAX_STASH_NAME_LENGTH,
         MAX_TEXT_FIELD_LENGTH,
         VAULT_GRID_COLUMNS,
@@ -193,7 +195,7 @@ def _resource_base() -> Path:
 BASE = _resource_base()
 CATALOG_FILE = BASE / "hs_full_catalog.json"
 PORT = 8765
-APP_VERSION = "2.15.5-s10-local"
+APP_VERSION = "2.15.6-s10-local"
 APPLICATION_ID = "hero-siege-item-editor"
 CATALOG_PROFILE = "Season 10"
 MAX_POST_BYTES = 2 * 1024 * 1024
@@ -1378,8 +1380,13 @@ def clean_positive_stack_amount(value: object) -> int:
     return amount
 
 
-def resolve(key: str, data: dict) -> dict:
-    """Save kaydini katalog girdisine cozer."""
+def resolve(key: str, data: dict, *, roll_profiles: bool = True) -> dict:
+    """Save kaydini katalog girdisine cozer.
+
+    ``roll_profiles=False`` skips the roll-profile and skill-selector work
+    (and ``socketLimit``), which only tooltips and editing need; grid views
+    and layout planning use it for the name, rarity and size alone.
+    """
     try:
         sfx = int(key.rsplit("-", 1)[1])
     except Exception:
@@ -1404,9 +1411,9 @@ def resolve(key: str, data: dict) -> dict:
         if r:
             out.update(name=r["name"], rar=r["rar"], w=r["w"], h=r["h"], cid=r["id"],
                        set=r.get("set"), clsName=CLASS_NAMES.get(r["cls"], "?"), spr=r.get("spr"))
-            if r.get("rollProfile"):
+            if roll_profiles and r.get("rollProfile"):
                 out["rollProfile"] = effective_roll_profile(r["rollProfile"])
-            skill_profile_id = catalog_skill_profile_id(r)
+            skill_profile_id = catalog_skill_profile_id(r) if roll_profiles else None
             target_database = (
                 skill_target_database(skill_profile_id)
                 if skill_profile_id is not None else None
@@ -1438,7 +1445,7 @@ def resolve(key: str, data: dict) -> dict:
         out["isRW"] = True
         if isinstance(rw.get("cid"), int):
             out["rwcid"] = rw["cid"]
-        if b is not None:
+        if b is not None and roll_profiles:
             try:
                 profile = ROLL_DB.lookup_runeword(
                     int(rw["rw"]),
@@ -1452,7 +1459,8 @@ def resolve(key: str, data: dict) -> dict:
                 out["rollProfile"] = effective_roll_profile(profile)
             else:
                 out.pop("rollProfile", None)
-    out["socketLimit"] = item_socket_limit(out)
+    if roll_profiles:
+        out["socketLimit"] = item_socket_limit(out)
     return out
 
 
@@ -1698,6 +1706,147 @@ def _vault_item_payload(
         "createdAt": record.created_at,
         "updatedAt": record.updated_at,
     }
+
+
+# Rarity groups used to name AFK stashes and to filter a Vault clean-up.
+# ``Set`` is a catalog set piece; ``Other`` covers unresolved addresses.
+VAULT_RARITY_GROUPS = ("Unholy", "Angelic", "Heroic", "Set", "Satanic", "Runeword", "Normal", "Other")
+
+# Grid fields of a Vault record derived from its native data, keyed by item id
+# and payload hash so a changed payload is resolved again.  The first read of
+# each payload still runs the stored-integrity check in ``decoded_item``.
+_VAULT_DERIVED_CACHE: dict[tuple[str, str], dict] = {}
+_VAULT_DERIVED_LOCK = threading.Lock()
+_VAULT_DERIVED_LIMIT = 100_000
+
+
+def _vault_item_group(item: dict) -> str:
+    if item.get("set") is not None:
+        return "Set"
+    rarity = item.get("rar")
+    return rarity if rarity in VAULT_RARITY_GROUPS[:-1] else "Other"
+
+
+def _vault_item_derived(record) -> dict:
+    key = (record.id, record.raw_sha256)
+    with _VAULT_DERIVED_LOCK:
+        cached = _VAULT_DERIVED_CACHE.get(key)
+    if cached is not None:
+        return cached
+    entry = record.decoded_item()
+    data = entry.get("data", {})
+    item = resolve(record.source_item_key or "0-0-0--1", data, roll_profiles=False)
+    try:
+        selector_id = custom_forge_selector_id(
+            custom_forge_item_selector(item.get("cls"), data)
+        )
+    except (CustomForgeError, OSError, TypeError, ValueError):
+        selector_id = None
+    derived = {
+        "name": item.get("name", "Unknown item"),
+        "rar": item.get("rar", "?"),
+        "cls": item.get("cls"),
+        "clsName": item.get("clsName") or CLASS_NAMES.get(item.get("cls"), "Unknown"),
+        "cid": item.get("cid"),
+        "rwcid": item.get("rwcid"),
+        "spr": item.get("spr"),
+        "w": item.get("w", 1),
+        "h": item.get("h", 1),
+        "stack": item.get("stack"),
+        "stackable": bool(item.get("stackable")),
+        "maxStack": item.get("maxStack"),
+        "group": _vault_item_group(item),
+        "forgeSelector": selector_id,
+    }
+    with _VAULT_DERIVED_LOCK:
+        if len(_VAULT_DERIVED_CACHE) >= _VAULT_DERIVED_LIMIT:
+            _VAULT_DERIVED_CACHE.clear()
+        _VAULT_DERIVED_CACHE[key] = derived
+    return derived
+
+
+def _vault_item_lite_payload(record, configured_items: dict | None = None) -> dict:
+    """What the Vault grid needs for one item, without its tooltip model.
+
+    The tooltip (``_vault_item_payload``'s ``gameTooltip``) is the expensive
+    part and is fetched on demand through ``/api/vault/tooltips``.
+    """
+
+    derived = _vault_item_derived(record)
+    configuration = (
+        (configured_items or {}).get(derived["forgeSelector"])
+        if derived["forgeSelector"] else None
+    )
+    forge = None
+    if isinstance(configuration, dict):
+        stats = configuration.get("stats")
+        forge = {
+            "active": True,
+            "statCount": len(stats) if isinstance(stats, dict) else 0,
+            "keepNative": configuration.get("keepNative", True) is not False,
+            "name": configuration.get("name") or None,
+        }
+    return {
+        "id": record.id,
+        "collectionId": record.collection_id,
+        "collectionName": record.collection_name,
+        "customName": record.custom_name,
+        **{field: derived[field] for field in (
+            "name", "rar", "cls", "clsName", "cid", "rwcid", "spr", "w", "h",
+            "stack", "stackable", "maxStack", "group",
+        )},
+        "pageIndex": record.page_index,
+        "pos": (
+            [record.layout_x, record.layout_y]
+            if record.layout_x is not None and record.layout_y is not None
+            else None
+        ),
+        "customForge": forge,
+        "sourceLabel": _vault_source_display(record.source),
+        "sourceItemKey": record.source_item_key,
+        "createdAt": record.created_at,
+        "updatedAt": record.updated_at,
+        "lite": True,
+    }
+
+
+VAULT_TOOLTIP_BATCH = 200
+
+
+def vault_tooltips(query: dict) -> dict:
+    """Tooltip models for up to ``VAULT_TOOLTIP_BATCH`` available Vault items."""
+
+    ids = [
+        part.strip()
+        for value in query.get("ids", [])
+        for part in str(value).split(",")
+        if part.strip()
+    ]
+    if len(ids) > VAULT_TOOLTIP_BATCH:
+        return {"err": f"at most {VAULT_TOOLTIP_BATCH} tooltips can be requested at once"}
+    try:
+        records = vault_store().get_items(ids)
+    except VaultError as exc:
+        return {"err": str(exc)}
+    try:
+        build_status = _editor_runtime_build_status()
+    except Exception:
+        build_status = {
+            "matched": False,
+            "code": "build_check_failed",
+            "message": "Game build could not be verified.",
+        }
+    try:
+        configured_items = custom_forge_store().load()["items"]
+    except (CustomForgeError, OSError):
+        configured_items = {}
+    tooltips = {}
+    for record in records:
+        if record.status != "available":
+            continue
+        payload = _vault_item_payload(record, build_status, configured_items)
+        tooltips[record.id] = payload["gameTooltip"]
+    return {"tooltips": tooltips}
 
 
 def list_characters() -> list:
@@ -3657,8 +3806,7 @@ def vault_meta() -> dict:
 
 
 def _vault_record_size(record) -> tuple[int, int]:
-    entry = record.decoded_item()
-    item = resolve(record.source_item_key or "0-0-0--1", entry.get("data", {}))
+    item = _vault_item_derived(record)
     try:
         width = int(item.get("w", 1))
         height = int(item.get("h", 1))
@@ -3742,8 +3890,13 @@ def _vault_layout_plan(
         else:
             unplaced.append((record, width, height))
 
+    # Pages only fill up, so a size that did not fit on an earlier page never
+    # will: start each search where the last item of that size was placed.
+    # Same result as scanning from the first page, without rescanning every
+    # full page for each of thousands of new items.
+    start_by_size: dict[tuple[int, int], int] = {}
     for record, width, height in unplaced:
-        page_position = 0
+        page_position = start_by_size.get((width, height), 0)
         page = candidate_pages[page_position]
         position: tuple[int, int] | None = None
         while position is None:
@@ -3759,6 +3912,7 @@ def _vault_layout_plan(
                 if page_position == len(candidate_pages):
                     candidate_pages.append(candidate_pages[-1] + 1)
                 page = candidate_pages[page_position]
+        start_by_size[(width, height)] = page_position
         claim(record, page, position[0], position[1], width, height)
     return planned
 
@@ -3886,6 +4040,7 @@ def vault_items(query: dict) -> dict:
     except (TypeError, ValueError):
         raise VaultValidationError("invalid vault pagination")
     search = query.get("q", [""])[0]
+    lite = query.get("lite", [""])[0] in {"1", "true"}
     collection_raw = query.get("collectionId", [None])[0]
     collection = None
     if collection_raw not in (None, "", "all"):
@@ -3911,22 +4066,26 @@ def vault_items(query: dict) -> dict:
         else:
             total = store.count_items(collection=collection, status="available")
     try:
-        tooltip_build_status = _editor_runtime_build_status()
-    except Exception:
-        tooltip_build_status = {
-            "matched": False,
-            "code": "build_check_failed",
-            "message": "Game build could not be verified.",
-        }
-    try:
         configured_forge_items = custom_forge_store().load()["items"]
     except (CustomForgeError, OSError):
         configured_forge_items = {}
-    return {
-        "items": [
+    if lite:
+        items = [_vault_item_lite_payload(row, configured_forge_items) for row in rows]
+    else:
+        try:
+            tooltip_build_status = _editor_runtime_build_status()
+        except Exception:
+            tooltip_build_status = {
+                "matched": False,
+                "code": "build_check_failed",
+                "message": "Game build could not be verified.",
+            }
+        items = [
             _vault_item_payload(row, tooltip_build_status, configured_forge_items)
             for row in rows
-        ],
+        ]
+    return {
+        "items": items,
         "total": total,
         "offset": offset,
         "limit": limit,
@@ -4084,6 +4243,76 @@ def op_vault_storage_delete(body: dict, *, stash: bool = False) -> dict:
             f"Deleted {result['name']} and {result['itemCount']} "
             f"item{'s' if result['itemCount'] != 1 else ''}. "
             f"Backup: {result['backupName']}"
+        )}
+    except (VaultError, OSError, sqlite3.Error, TypeError, ValueError) as exc:
+        return {"err": str(exc)}
+
+
+def _vault_purge_selection(store, collection_id: int, groups: set[str]) -> tuple[list[str], dict, int]:
+    """Item ids of one category whose rarity group was chosen for clean-up.
+
+    Items the player gave a custom name are always kept.
+    """
+
+    ids: list[str] = []
+    counts: dict[str, int] = {}
+    kept_named = 0
+    for record in store.list_all_available_items(collection=collection_id):
+        group = _vault_item_derived(record)["group"]
+        if group not in groups:
+            continue
+        if record.custom_name:
+            kept_named += 1
+            continue
+        ids.append(record.id)
+        counts[group] = counts.get(group, 0) + 1
+    return ids, counts, kept_named
+
+
+def op_vault_purge(body: dict) -> dict:
+    """Preview or delete every item of the chosen rarity groups in one category.
+
+    Follows stash deletion: Hero Siege must be closed, the confirmation must
+    carry the preview token, a dedicated backup is written first and deleted
+    AFK imports cannot be brought back by a repeated transfer.
+    """
+
+    try:
+        collection_id = body.get("collectionId")
+        if isinstance(collection_id, bool) or not isinstance(collection_id, int):
+            raise VaultValidationError("A concrete Vault category is required.")
+        groups = body.get("groups")
+        if (
+            not isinstance(groups, list) or not groups
+            or any(group not in VAULT_RARITY_GROUPS for group in groups)
+        ):
+            raise VaultValidationError("Choose at least one rarity to clean up.")
+        action = body.get("action")
+        if action not in {"preview", "delete"}:
+            raise VaultValidationError("Unknown clean-up action.")
+        with SAVE_WRITE_LOCK:
+            if game_running():
+                return {"err": "Close Hero Siege before deleting Vault contents."}
+            store = vault_store()
+            ids, counts, kept_named = _vault_purge_selection(store, collection_id, set(groups))
+            if not ids:
+                return {"err": "No item of the chosen rarities is in this category.",
+                        "keptCustomNamed": kept_named}
+            if action == "preview":
+                preview = store.preview_item_purge(collection_id, ids)
+                preview.pop("pageIndexes", None)
+                return {**preview, "groups": counts, "keptCustomNamed": kept_named}
+            result = store.purge_items(
+                collection_id, ids, preview_token=body.get("previewToken"),
+                details={"groups": sorted(set(groups)), "keptCustomNamed": kept_named},
+                remove_emptied_pages=body.get("removeEmptied") is True,
+            )
+        removed = len(result["removedPageIndexes"])
+        return {**result, "groups": counts, "keptCustomNamed": kept_named,
+                "backup": result["backupName"], "ok": (
+            f"Deleted {result['itemCount']} item{'s' if result['itemCount'] != 1 else ''} "
+            f"from {result['collectionName']}"
+            + (f" and {removed} emptied stash{'es' if removed != 1 else ''}" if removed else "")
         )}
     except (VaultError, OSError, sqlite3.Error, TypeError, ValueError) as exc:
         return {"err": str(exc)}
@@ -4413,16 +4642,161 @@ def _afk_expedition_page(store, collection_id: int, expedition_id: str, page_nam
     return store.rename_stash_page(collection_id, page.page_index, page_name)
 
 
+AFK_INGEST_MARKER = "afkExpedition"
+
+
+def _afk_group_page_name(group: str, ordinal: int) -> str:
+    return group if ordinal == 1 else f"{group} ({ordinal})"
+
+
+def _afk_page_group(name: str) -> str | None:
+    match = re.fullmatch(r"(.+?)(?: \(([2-9]|[1-9]\d+)\))?", name)
+    return match.group(1) if match and match.group(1) in VAULT_RARITY_GROUPS else None
+
+
+def _afk_expedition_category(store, expedition_id: str, date: str | None, label: str):
+    """Return the expedition's own gear category, creating it on first use.
+
+    The category is found again through the marker stored with its creation
+    event, so renaming it does not split one expedition over two categories.
+    """
+
+    found = store.find_marked_collection(AFK_INGEST_MARKER, expedition_id)
+    if found is not None:
+        return found
+    day = date or time.strftime("%Y-%m-%d", time.gmtime())
+    base = f"AFK · {day} · {label or expedition_id}"[:MAX_COLLECTION_NAME_LENGTH]
+    for ordinal in range(1, 1000):
+        tail = "" if ordinal == 1 else f" ({ordinal})"
+        name = base[:MAX_COLLECTION_NAME_LENGTH - len(tail)] + tail
+        try:
+            return store.create_collection(name, marker={AFK_INGEST_MARKER: expedition_id})
+        except VaultConflictError:
+            continue
+    raise VaultConflictError("no free name is left for this expedition's Vault category")
+
+
+def _afk_group_layout(store, collection_id: int) -> dict:
+    """Place new gear on stashes named after its rarity group.
+
+    Kept placements are never moved.  Unplaced items fill the pages of their
+    group (``Heroic``, ``Heroic (2)``, ...) first-fit in ``VAULT_RARITY_GROUPS``
+    order; a group without room gets a new page at the end.  The empty
+    ``Stash 1`` a new category starts with becomes the first group's page.
+    All pages and positions are saved in one transaction.
+    """
+
+    records = store.list_all_available_items(collection=collection_id)
+    pages = store.list_stash_pages(collection_id)
+    names = {page.page_index: page.name for page in pages}
+    counts = {page.page_index: page.item_count for page in pages}
+    occupied: dict[int, set[tuple[int, int]]] = {}
+
+    def fits(page: int, x: int, y: int, width: int, height: int) -> bool:
+        if x < 0 or y < 0 or x + width > VAULT_GRID_COLUMNS or y + height > VAULT_GRID_ROWS:
+            return False
+        cells = occupied.setdefault(page, set())
+        return all((cx, cy) not in cells for cy in range(y, y + height) for cx in range(x, x + width))
+
+    def claim(page: int, x: int, y: int, width: int, height: int) -> None:
+        occupied.setdefault(page, set()).update(
+            (cx, cy) for cy in range(y, y + height) for cx in range(x, x + width)
+        )
+
+    unplaced: list[tuple[int, str, object, int, int]] = []
+    order = {group: index for index, group in enumerate(VAULT_RARITY_GROUPS)}
+    for record in sorted(records, key=lambda row: (row.created_at, row.id)):
+        width, height = _vault_record_size(record)
+        if (
+            record.page_index in names
+            and record.layout_x is not None and record.layout_y is not None
+            and fits(record.page_index, record.layout_x, record.layout_y, width, height)
+        ):
+            claim(record.page_index, record.layout_x, record.layout_y, width, height)
+            continue
+        group = _vault_item_derived(record)["group"]
+        unplaced.append((order.get(group, len(order)), group, record, width, height))
+    if not unplaced:
+        return {"created": [], "renamed": [], "changed": 0}
+
+    group_pages: dict[str, list[int]] = {}
+    for page_index in sorted(names):
+        group = _afk_page_group(names[page_index])
+        if group is not None:
+            group_pages.setdefault(group, []).append(page_index)
+    spare = [
+        page_index for page_index in sorted(names)
+        if _AFK_DEFAULT_STASH_NAME_RE.fullmatch(names[page_index])
+        and not counts.get(page_index) and not occupied.get(page_index)
+    ]
+    wanted_names: dict[int, str] = {}
+    placements: list[dict] = []
+    start_by_size: dict[tuple[str, int, int], int] = {}
+    # Group order first; inside a group, same-named drops sit together.
+    unplaced.sort(key=lambda row: (
+        row[0], _vault_item_derived(row[2])["name"], row[2].created_at, row[2].id,
+    ))
+    for _, group, record, width, height in unplaced:
+        own = group_pages.setdefault(group, [])
+        position = start_by_size.get((group, width, height), 0)
+        spot = None
+        while spot is None:
+            if position == len(own):
+                if spare:
+                    page_index = spare.pop(0)
+                else:
+                    page_index = max([*names, *wanted_names], default=-1) + 1
+                own.append(page_index)
+                wanted_names[page_index] = _afk_group_page_name(group, len(own))
+            page_index = own[position]
+            for y in range(VAULT_GRID_ROWS - height + 1):
+                for x in range(VAULT_GRID_COLUMNS - width + 1):
+                    if fits(page_index, x, y, width, height):
+                        spot = (page_index, x, y)
+                        break
+                if spot is not None:
+                    break
+            if spot is None:
+                position += 1
+        start_by_size[(group, width, height)] = position
+        claim(spot[0], spot[1], spot[2], width, height)
+        placements.append({"itemId": record.id, "pageIndex": spot[0], "x": spot[1], "y": spot[2]})
+    return store.apply_named_layout(collection_id, wanted_names, placements)
+
+
+def _afk_legacy_farm(store, expedition_id: str):
+    """Return ``(AFK Farm, page)`` when this expedition already started there.
+
+    Expeditions ingested before per-expedition categories keep their stash in
+    the shared ``AFK Farm`` category, so a retry or a later batch of the same
+    expedition continues where its gear already is.
+    """
+
+    farm = _afk_find_collection(store, AFK_INGEST_FARM_COLLECTION)
+    if farm is None:
+        return None, None
+    page = _afk_find_expedition_page(store.list_stash_pages(farm.id), expedition_id)
+    return (farm, page) if page is not None else (None, None)
+
+
 def op_vault_ingest(body: dict) -> dict:
     """Deposit HS AFK Expedition spool records into Infinite Vault, idempotently.
 
-    Gear goes to ``AFK Farm`` on one stash page per expedition; the native
-    stackable classes (keys, tarot/boss parts, materials, runes/gems/orbs) go
-    to ``AFK Materials``.  Each record is keyed by ``(expedition_id, seq)`` so
-    re-posting a spool deposits nothing new, and a malformed record is skipped
-    with a reason instead of failing the batch.  Only the SQLite vault is
-    written; ``stash.hss`` and the game's files are untouched, so the game may
-    be running.
+    Gear goes to the expedition's own category (``AFK · <date> · <label>``) on
+    stashes named after its rarity group; the native stackable classes (keys,
+    tarot/boss parts, materials, runes/gems/orbs) go to ``AFK Materials``.  An
+    expedition that already started in the older shared ``AFK Farm`` category
+    continues on its page there.  Each record is keyed by
+    ``(expedition_id, seq)`` so re-posting a spool deposits nothing new, and a
+    malformed record is skipped with a reason instead of failing the batch.
+    Every batch is one SQLite transaction per category.  With
+    ``"layout": "defer"`` the gear stays unplaced until a request with
+    ``"finalize": true`` (records may be empty) lays out the whole expedition
+    at once, so its rarity stashes come out in order instead of interleaved
+    per batch; an expedition continuing in the legacy ``AFK Farm`` category
+    is always laid out per batch.  Only the SQLite vault is written;
+    ``stash.hss`` and the game's files are untouched, so the game may be
+    running.
     """
 
     try:
@@ -4440,6 +4814,12 @@ def op_vault_ingest(body: dict) -> dict:
         label = "".join(
             char for char in (label or "") if char.isprintable()
         ).strip()[:AFK_INGEST_MAX_LABEL_LENGTH]
+        layout = body.get("layout")
+        if layout not in (None, "now", "defer"):
+            raise VaultValidationError("layout must be 'now' or 'defer'")
+        finalize = body.get("finalize")
+        if finalize not in (None, True, False):
+            raise VaultValidationError("finalize must be true or false")
 
         prepared: list[dict] = []
         skipped: list[dict] = []
@@ -4458,66 +4838,80 @@ def op_vault_ingest(body: dict) -> dict:
 
         store = vault_store()
         existing = set(store.list_deposit_keys(_afk_deposit_key_prefix(expedition_id)))
-        deposited = duplicate = materials_new = 0
-        farm = farm_page = materials = None
-        farm_ids: list[str] = []
+        duplicate = 0
+        fresh: list[dict] = []
         for entry in prepared:
             if entry["depositKey"] in existing:
                 duplicate += 1
                 continue
-            if entry["stackable"]:
-                if materials is None:
-                    materials = _afk_collection(store, AFK_INGEST_MATERIALS_COLLECTION)
-                collection = materials
-            else:
-                if farm is None:
-                    farm = _afk_collection(store, AFK_INGEST_FARM_COLLECTION)
-                    date = entry["date"] or time.strftime("%Y-%m-%d", time.gmtime())
-                    page_name = f"{expedition_id} \u00b7 {date}"
-                    if label:
-                        page_name = f"{page_name} \u00b7 {label}"
-                    farm_page = _afk_expedition_page(
-                        store, farm.id, expedition_id, page_name[:MAX_STASH_NAME_LENGTH]
-                    )
-                collection = farm
-            try:
-                row = store.deposit(
-                    collection.id, entry["raw"],
-                    source_item_key=entry["key"], label=entry["label"],
-                    source=AFK_INGEST_SOURCE, deposit_key=entry["depositKey"],
-                )
-            except VaultStateError:
-                # Already ingested earlier and since withdrawn or deleted.
-                duplicate += 1
-                continue
-            except VaultConflictError as exc:
-                skipped.append({"seq": entry["seq"], "reason": str(exc)})
-                continue
             existing.add(entry["depositKey"])
-            deposited += 1
-            if entry["stackable"]:
-                materials_new += 1
-            else:
-                farm_ids.append(row.id)
-        if farm_ids:
-            _, plan, pages, _ = _vault_initialize_layout(
-                store, farm.id, first_page=farm_page.page_index
-            )
-            _afk_name_overflow_pages(
-                store, farm.id, expedition_id, farm_page, pages,
-                {plan[item_id][0] for item_id in farm_ids if item_id in plan},
-            )
-        if materials_new:
-            _vault_initialize_layout(store, materials.id)
+            fresh.append(entry)
+        gear = [entry for entry in fresh if not entry["stackable"]]
+        stackables = [entry for entry in fresh if entry["stackable"]]
+
+        deposited = 0
+        farm = farm_page = materials = None
+        legacy = False
+
+        def deposit(collection_id: int, entries: list[dict]) -> list[str]:
+            nonlocal deposited, duplicate
+            results = store.deposit_many(collection_id, [
+                {
+                    "raw_item_json": entry["raw"], "source_item_key": entry["key"],
+                    "label": entry["label"], "source": AFK_INGEST_SOURCE,
+                    "deposit_key": entry["depositKey"],
+                }
+                for entry in entries
+            ])
+            ids: list[str] = []
+            for entry, result in zip(entries, results):
+                if result["status"] == "deposited":
+                    deposited += 1
+                    ids.append(result["record"].id)
+                elif result["status"] == "duplicate":
+                    duplicate += 1
+                else:
+                    skipped.append({"seq": entry["seq"], "reason": result["reason"] or result["status"]})
+            return ids
+
+        if gear:
+            farm, farm_page = _afk_legacy_farm(store, expedition_id)
+            legacy = farm is not None
+            if not legacy:
+                farm = _afk_expedition_category(store, expedition_id, gear[0]["date"], label)
+            gear_ids = deposit(farm.id, gear)
+            if gear_ids and legacy:
+                _, plan, pages, _ = _vault_initialize_layout(
+                    store, farm.id, first_page=farm_page.page_index
+                )
+                _afk_name_overflow_pages(
+                    store, farm.id, expedition_id, farm_page, pages,
+                    {plan[item_id][0] for item_id in gear_ids if item_id in plan},
+                )
+            elif gear_ids and layout != "defer":
+                _afk_group_layout(store, farm.id)
+        if stackables:
+            materials = _afk_collection(store, AFK_INGEST_MATERIALS_COLLECTION)
+            if deposit(materials.id, stackables) and layout != "defer":
+                _vault_initialize_layout(store, materials.id)
 
         collections: dict = {}
         if farm is None:
-            farm = _afk_find_collection(store, AFK_INGEST_FARM_COLLECTION)
-            if farm is not None:
-                farm_page = _afk_find_expedition_page(
-                    store.list_stash_pages(farm.id), expedition_id
-                )
+            farm = store.find_marked_collection(AFK_INGEST_MARKER, expedition_id)
+            if farm is None:
+                farm, farm_page = _afk_legacy_farm(store, expedition_id)
+                legacy = farm is not None
+        if finalize:
+            if farm is not None and not legacy:
+                _afk_group_layout(store, farm.id)
+            if materials is None:
+                materials = _afk_find_collection(store, AFK_INGEST_MATERIALS_COLLECTION)
+            if materials is not None:
+                _vault_initialize_layout(store, materials.id)
         if farm is not None:
+            if not legacy:
+                pages = store.list_stash_pages(farm.id)
+                farm_page = pages[0] if pages else None
             collections["farm"] = {
                 "id": farm.id,
                 "name": farm.name,
@@ -8311,6 +8705,11 @@ class H(BaseHTTPRequestHandler):
                 self._json(vault_items(parse_qs(u.query, keep_blank_values=True)))
             except Exception as exc:
                 self._json({"err": f"Infinite Vault query failed: {exc}"}, 500)
+        elif u.path == "/api/vault/tooltips":
+            try:
+                self._json(vault_tooltips(parse_qs(u.query, keep_blank_values=True)))
+            except Exception as exc:
+                self._json({"err": f"Infinite Vault tooltip query failed: {exc}"}, 500)
         elif u.path == "/api/vault/history":
             self._json(vault_history())
         elif u.path == "/api/vault/ingest/status":
@@ -8412,6 +8811,8 @@ class H(BaseHTTPRequestHandler):
             self._json(op_vault_undo(body))
         elif path == "/api/vault/ingest":
             self._json(op_vault_ingest(body))
+        elif path == "/api/vault/purge":
+            self._json(op_vault_purge(body))
         else:
             self._json({"err": "not found"}, 404)
 
@@ -8913,9 +9314,8 @@ function packVaultGridPages(items,persistent=false){
   }
   return pages;
 }
-function vaultGridPageHTML(page,index,persistent=false,stash=null){
-  const pageIndex=Number.isInteger(page.pageIndex)?page.pageIndex:index;
-  let grid=`<div class="grid vault-grid" data-vault-page="${pageIndex}" style="width:${VAULT_GRID_COLS*CELL+2}px;height:${VAULT_GRID_ROWS*CELL+2}px">`;
+function vaultGridInnerHTML(page,pageIndex,persistent){
+  let grid='';
   for(let y=0;y<VAULT_GRID_ROWS;y++)for(let x=0;x<VAULT_GRID_COLS;x++)grid+=`<div class="cell" style="left:${x*CELL}px;top:${y*CELL}px;width:${CELL}px;height:${CELL}px"></div>`;
   for(const packed of page.items){
     const row=packed.row,rr=row.rar&&row.rar!=='?'?row.rar:'_',selected=vaultCompareItems.has(String(row.id));
@@ -8923,7 +9323,13 @@ function vaultGridPageHTML(page,index,persistent=false,stash=null){
     const label=[row.customName||row.name,row.collectionName,row.clsName].filter(Boolean).join(' · ');
     grid+=`<div class="item vault-grid-item b-${attr(rr)}${selected?' compare-selected':''}" tabindex="0" role="button" aria-label="${attr(label)}. Right-click for Vault actions." ${persistent?'draggable="true"':''} data-item-preview data-preview-id="${attr(previewId)}" data-vault-id="${attr(row.id)}" data-cid="${row.cid??''}" data-rwcid="${row.rwcid??''}" data-vault-page="${pageIndex}" data-x="${packed.pos[0]}" data-y="${packed.pos[1]}" data-w="${packed.w}" data-h="${packed.h}" data-updated-at="${attr(row.updatedAt||'')}" style="left:${packed.pos[0]*CELL}px;top:${packed.pos[1]*CELL}px;width:${packed.w*CELL-2}px;height:${packed.h*CELL-2}px">${inner}${row.customName?'<span class="vault-grid-mark" aria-hidden="true">N</span>':''}${row.customForge&&row.customForge.active?'<span class="custom-forge-mark" aria-hidden="true">F</span>':''}${row.stack?`<span class="stk">x${row.stack}</span>`:''}</div>`;
   }
-  grid+='</div>';
+  return grid;
+}
+// lazy: the stash header is drawn now, its 17x18 grid only when it scrolls near
+// the view (fillVaultGrid), so a category with thousands of items opens at once.
+function vaultGridPageHTML(page,index,persistent=false,stash=null,lazy=false){
+  const pageIndex=Number.isInteger(page.pageIndex)?page.pageIndex:index;
+  const grid=`<div class="grid vault-grid" data-vault-page="${pageIndex}"${lazy?' data-vault-lazy="1"':''} style="width:${VAULT_GRID_COLS*CELL+2}px;height:${VAULT_GRID_ROWS*CELL+2}px">${lazy?'':vaultGridInnerHTML(page,pageIndex,persistent)}</div>`;
   const stashName=stash&&stash.name?stash.name:`Stash ${pageIndex+1}`;
   const stashItemCount=stash&&Number.isInteger(+stash.itemCount)?+stash.itemCount:page.items.length;
   const title=persistent
@@ -9368,8 +9774,13 @@ function setupTip(){
     const el=e.target.closest('.item,.dslot[draggable],.res,.rwname,[data-item-preview]');
     if(!el){hide();return}
     if(active!==el){
-      const stk=el.querySelector('.stk'),preview=previewModels.get(el.dataset.previewId||'');
+      const stk=el.querySelector('.stk'),preview=previewModels.get(el.dataset.previewId||'')||(el.dataset.vaultId?vaultTooltipFor(el.dataset.vaultId,el.dataset.updatedAt):null);
       if(preview)tip.innerHTML=renderGameTooltip(preview,{extra:stk?stk.textContent:''});
+      else if(el.dataset.vaultId){
+        tip.innerHTML='<div class="ttype">Loading item details…</div>';
+        const row=vaultState.rowsById&&vaultState.rowsById.get(el.dataset.vaultId);
+        vaultTooltipsWanted([row||{id:el.dataset.vaultId,updatedAt:el.dataset.updatedAt||''}],true);
+      }
       else{
         const rwcid=el.dataset.rwcid;
         const cid=(rwcid!==''&&rwcid!=null)?rwcid:el.dataset.cid;
@@ -9383,6 +9794,11 @@ function setupTip(){
       active=el;tip.style.display='block';
     }
     position(e.clientX,e.clientY);
+  });
+  document.addEventListener('vaulttooltips',()=>{
+    if(!active||!active.dataset.vaultId||previewModels.get(active.dataset.previewId||''))return;
+    const model=vaultTooltipFor(active.dataset.vaultId,active.dataset.updatedAt),stk=active.querySelector('.stk');
+    if(model)tip.innerHTML=renderGameTooltip(model,{extra:stk?stk.textContent:''});
   });
 }
 const SUBN={1:"Sword",2:"Dagger",3:"Mace",4:"Axe",5:"Claw",6:"Polearm",7:"Chainsaw",8:"Staff",9:"Cane",10:"Wand",11:"Book",12:"Spellblade",13:"Bow",14:"Gun",15:"Flask",16:"Throwing",17:"Universal"}
@@ -9449,6 +9865,7 @@ async function openVault(reset=true){
         <div class="vault-tool-row"><button class="vault-mini" id="vaultrename">RENAME CATEGORY</button><button class="vault-mini danger" id="vaultdelete" ${vaultMeta.gameRunning||collections.length<=1?'disabled':''} title="${collections.length<=1?'Keep at least one category':'Delete this category and its contents'}">DELETE CATEGORY</button></div>
         <div class="vault-tool-row"><button class="vault-mini" id="vaultrefresh">REFRESH</button><button class="vault-mini" id="vaultcompact">COMPACT ITEMS</button></div>
         <button class="vault-mini" id="vaulthistory">HISTORY / UNDO</button>
+        <button class="vault-mini danger" id="vaultcleanup" ${vaultMeta.gameRunning?'disabled':''} title="Delete every item of chosen rarities in this category">CLEAN UP BY RARITY…</button>
       </div></details>
     </div>
     ${vaultMeta.gameRunning?'<div class="vault-warning">Hero Siege is running. Your vault is viewable, but transfers are locked until the game is closed.</div>':''}
@@ -9465,6 +9882,7 @@ async function openVault(reset=true){
   document.getElementById('vaultnewgrid').onclick=addEmptyVaultGrid;
   document.getElementById('vaultcompact').onclick=compactVaultGrids;
   document.getElementById('vaulthistory').onclick=openVaultHistory;
+  document.getElementById('vaultcleanup').onclick=openVaultCleanup;
   await loadVaultItems();
 }
 function vaultBulkSessionKey(direction,sourceTab='all',collectionId='all',destinationTab='auto'){return `hsVaultBulk:${direction}:${sourceTab}:${collectionId}:${destinationTab}`}
@@ -9562,7 +9980,7 @@ async function loadVaultItems(){
   if(ready.err){renderVaultItems({err:ready.err});return}
   let offset=0,rows=[],payload=null;
   do{
-    const params=new URLSearchParams({offset:String(offset),limit:String(vaultState.limit),collectionId:String(vaultState.collectionId)});
+    const params=new URLSearchParams({offset:String(offset),limit:String(vaultState.limit),collectionId:String(vaultState.collectionId),lite:'1'});
     payload=await j('/api/vault/items?'+params.toString());
     if(token!==vaultState.queryToken||view!=='vault')return;
     if(payload.err){renderVaultItems(payload);return}
@@ -9578,12 +9996,35 @@ function renderVaultItems(payload){
   if(payload.err){host.innerHTML=`<div class="vault-warning">${esc(payload.err)}</div>`;return}
   const rows=payload.items||[],stashes=[...(payload.stashes||[])].sort((a,b)=>a.pageIndex-b.pageIndex);
   vaultState.rows=rows;vaultState.persistentLayout=true;
-  const packed=packVaultGridPages(rows,true),byPage=new Map(packed.map(page=>[page.pageIndex,page]));
-  const grids=stashes.map((stash,index)=>vaultGridPageHTML(byPage.get(stash.pageIndex)||emptyVaultGridPage(stash.pageIndex),index,true,stash)).join('');
+  vaultState.rowsById=new Map(rows.map(row=>[String(row.id),row]));
+  vaultState.packedPages=new Map(packVaultGridPages(rows,true).map(page=>[page.pageIndex,page]));
+  const grids=stashes.map((stash,index)=>vaultGridPageHTML(vaultState.packedPages.get(stash.pageIndex)||emptyVaultGridPage(stash.pageIndex),index,true,stash,true)).join('');
   host.innerHTML=`<div class="vault-grid-pages">${grids}</div>`;
-  const byId=new Map(rows.map(row=>[String(row.id),row]));
-  host.querySelectorAll('.vault-grid-item').forEach(item=>{
-    const row=byId.get(item.dataset.vaultId);
+  if(vaultGridObserver)vaultGridObserver.disconnect();
+  vaultGridObserver=new IntersectionObserver(entries=>{for(const entry of entries)if(entry.isIntersecting)fillVaultGrid(entry.target)},{root:document.getElementById('mid'),rootMargin:'900px 0px'});
+  host.querySelectorAll('.vault-grid[data-vault-lazy]').forEach(grid=>vaultGridObserver.observe(grid));
+  bindVaultGridDnD(host);
+  bindVaultStashHeads(host,rows,stashes);
+  if(vaultState.highlightItem){
+    const target=vaultState.rowsById.get(String(vaultState.highlightItem));
+    if(target)fillVaultGrid(host.querySelector(`.vault-grid[data-vault-page="${+target.pageIndex}"]`));
+    const item=[...host.querySelectorAll('[data-vault-id]')].find(el=>el.dataset.vaultId===vaultState.highlightItem);
+    if(item){item.scrollIntoView({behavior:'smooth',block:'center'});item.classList.add('found-pulse');setTimeout(()=>item.classList.remove('found-pulse'),3800);vaultState.highlightItem=null}
+  }
+}
+let vaultGridObserver=null;
+function fillVaultGrid(grid){
+  if(!grid||!grid.dataset.vaultLazy)return;
+  delete grid.dataset.vaultLazy;
+  if(vaultGridObserver)vaultGridObserver.unobserve(grid);
+  const pageIndex=+grid.dataset.vaultPage,page=(vaultState.packedPages&&vaultState.packedPages.get(pageIndex))||emptyVaultGridPage(pageIndex);
+  grid.innerHTML=vaultGridInnerHTML(page,pageIndex,true);
+  bindVaultGridItems(grid);
+  vaultTooltipsWanted(page.items.map(packed=>packed.row),false);
+}
+function bindVaultGridItems(container){
+  container.querySelectorAll('.vault-grid-item').forEach(item=>{
+    const row=vaultState.rowsById&&vaultState.rowsById.get(item.dataset.vaultId);
     item.oncontextmenu=e=>{e.preventDefault();showVaultCtx(e.clientX,e.clientY,row,item)};
     item.onkeydown=e=>{
       if(e.key==='ContextMenu'||(e.shiftKey&&e.key==='F10')){e.preventDefault();const rect=item.getBoundingClientRect();showVaultCtx(rect.left+Math.min(rect.width,24),rect.top+Math.min(rect.height,24),row,item)}
@@ -9598,7 +10039,8 @@ function renderVaultItems(payload){
     };
     item.ondragend=()=>finishVaultDrag();
   });
-  bindVaultGridDnD(host);
+}
+function bindVaultStashHeads(host,rows,stashes){
   host.querySelectorAll('[data-vault-stash-name]').forEach(input=>{
     let original=input.value;
     input.onfocus=()=>input.select();
@@ -9626,7 +10068,63 @@ function renderVaultItems(payload){
     button.title=stashes.length<=1?'Keep at least one stash, or delete the category':'Delete this stash and its contents';
     button.onclick=()=>openVaultDelete(+button.dataset.vaultStashDelete);
   });
-  if(vaultState.highlightItem){const item=[...host.querySelectorAll('[data-vault-id]')].find(el=>el.dataset.vaultId===vaultState.highlightItem);if(item){item.scrollIntoView({behavior:'smooth',block:'center'});item.classList.add('found-pulse');setTimeout(()=>item.classList.remove('found-pulse'),3800);vaultState.highlightItem=null}}
+}
+// On-demand tooltips: grid rows arrive without their tooltip model, which is
+// fetched in batches for the stashes being drawn and immediately for a hovered
+// item.  Keyed by item id and its updatedAt, so a changed item is fetched again.
+const vaultTooltipCache=new Map();
+let vaultTooltipQueue=[],vaultTooltipBusy=false;
+function vaultTooltipFor(id,updatedAt){const hit=vaultTooltipCache.get(String(id));return hit&&hit.updatedAt===(updatedAt||'')?hit.model:null}
+function vaultTooltipsWanted(rows,urgent){
+  const wanted=rows.filter(row=>row&&!vaultTooltipFor(row.id,row.updatedAt)).map(row=>({id:String(row.id),updatedAt:row.updatedAt||''}));
+  if(!wanted.length)return;
+  const ids=new Set(wanted.map(entry=>entry.id));
+  vaultTooltipQueue=vaultTooltipQueue.filter(entry=>!ids.has(entry.id));
+  vaultTooltipQueue=urgent?[...wanted,...vaultTooltipQueue]:[...vaultTooltipQueue,...wanted];
+  pumpVaultTooltips();
+}
+async function fetchVaultTooltips(entries){
+  const payload=await j('/api/vault/tooltips?ids='+encodeURIComponent(entries.map(entry=>entry.id).join(',')));
+  if(!payload||payload.err)return false;
+  const models=payload.tooltips||{};
+  for(const entry of entries)if(models[entry.id])vaultTooltipCache.set(entry.id,{updatedAt:entry.updatedAt,model:models[entry.id]});
+  return true;
+}
+async function pumpVaultTooltips(){
+  if(vaultTooltipBusy)return;vaultTooltipBusy=true;
+  try{
+    while(vaultTooltipQueue.length){
+      const batch=vaultTooltipQueue.splice(0,150);
+      let ok=false;try{ok=await fetchVaultTooltips(batch)}catch(error){ok=false}
+      document.dispatchEvent(new CustomEvent('vaulttooltips'));
+      if(!ok)break;
+    }
+  }finally{vaultTooltipBusy=false}
+}
+async function vaultTooltipsForRows(rows){
+  const missing=rows.filter(row=>!row.gameTooltip&&!vaultTooltipFor(row.id,row.updatedAt)).map(row=>({id:String(row.id),updatedAt:row.updatedAt||''}));
+  if(missing.length)await fetchVaultTooltips(missing);
+  return rows.map(row=>row.gameTooltip||vaultTooltipFor(row.id,row.updatedAt));
+}
+// A drop moves one item: redraw only the stashes it left and entered.
+function applyVaultItemMove(updated){
+  const row=vaultState.rowsById&&vaultState.rowsById.get(String(updated.id));
+  if(!row)return false;
+  const from=+row.pageIndex;
+  row.pageIndex=updated.pageIndex;row.pos=updated.pos;row.updatedAt=updated.updatedAt;
+  if(updated.gameTooltip)vaultTooltipCache.set(String(updated.id),{updatedAt:updated.updatedAt||'',model:updated.gameTooltip});
+  vaultState.packedPages=new Map(packVaultGridPages(vaultState.rows,true).map(page=>[page.pageIndex,page]));
+  for(const pageIndex of new Set([from,+updated.pageIndex])){
+    const grid=document.querySelector(`.vault-grid[data-vault-page="${pageIndex}"]`);
+    if(!grid)continue;
+    grid.dataset.vaultLazy='1';fillVaultGrid(grid);
+    const count=(vaultState.packedPages.get(pageIndex)||{items:[]}).items.length;
+    const section=document.querySelector(`[data-vault-stash-section="${pageIndex}"]`);
+    if(!section)continue;
+    const label=section.querySelector('.vault-stash-title .muted');if(label)label.textContent=`(${count})`;
+    section.querySelectorAll('[data-vault-stash-roll],[data-vault-stash-send]').forEach(button=>{button.disabled=!count||GAME_RUNNING});
+  }
+  return true;
 }
 let vaultDragInfo=null,vaultIgnoreSelectionClick=false;
 function finishVaultDrag(){
@@ -9661,7 +10159,8 @@ function bindVaultGridDnD(host){
       if(!ghost||ghost.dataset.free!=='1'){finishVaultDrag();flash({err:'That Vault position is occupied.'});return}
       const x=+ghost.dataset.x,y=+ghost.dataset.y;finishVaultDrag();
       const result=await j('/api/vault/layout',{method:'POST',body:JSON.stringify({action:'place',collectionId:+vaultState.collectionId,itemId:info.itemId,pageIndex,x,y,expectedUpdatedAt:info.updatedAt})});
-      flash(result);await loadVaultItems();
+      flash(result);
+      if(result.err||result.initialized||!result.item||!applyVaultItemMove(result.item))await loadVaultItems();
     };
   });
   document.querySelectorAll('[data-vault-collection]').forEach(button=>{
@@ -9675,6 +10174,46 @@ function bindVaultGridDnD(host){
       if(!result.err){vaultCompareItems.delete(info.itemId);await openVault(false)}
     };
   });
+}
+const VAULT_RARITY_GROUPS=['Unholy','Angelic','Heroic','Set','Satanic','Runeword','Normal','Other'];
+function vaultRowGroup(row){if(row.group)return row.group;return VAULT_RARITY_GROUPS.includes(row.rar)?row.rar:'Other'}
+function openVaultCleanup(){
+  if(GAME_RUNNING){flash({err:'Close Hero Siege before deleting Vault contents.'});return}
+  const rows=vaultState.rows||[],counts={};
+  for(const row of rows){if(row.customName)continue;const group=vaultRowGroup(row);counts[group]=(counts[group]||0)+1}
+  const groups=VAULT_RARITY_GROUPS.filter(group=>counts[group]);
+  if(!groups.length){flash({err:'This category has no item that a clean-up could remove.'});return}
+  const previous=document.getElementById('sockmodal');if(previous)previous.remove();
+  const modal=document.createElement('div');modal.id='sockmodal';
+  const category=(vaultMeta.collections||[]).find(c=>String(c.id)===String(vaultState.collectionId));
+  modal.innerHTML=`<div id="sockbox" role="dialog" aria-modal="true" aria-labelledby="vaultcleanuptitle" style="width:min(560px,92vw)"><h3 id="vaultcleanuptitle">Clean up ${esc(category?category.name:'this category')}</h3><div class="muted" style="margin:6px 0 10px">Delete every item of the rarities you tick. Items you gave a custom name are always kept. A backup of the whole Vault is written first; the deletion itself cannot be undone from the editor.</div><div class="vault-cleanup-groups">${groups.map(group=>`<label class="jlrow" style="justify-content:flex-start;gap:10px"><input type="checkbox" value="${attr(group)}"><span class="r-${attr(group)}">${esc(group)}</span><span class="muted">${counts[group]} item${counts[group]===1?'':'s'}</span></label>`).join('')}</div><label class="jlrow" style="justify-content:flex-start;gap:10px;margin-top:6px"><input type="checkbox" id="vaultcleanupempty" checked><span>Also remove stashes this leaves empty</span></label><div id="vaultcleanuppreview" class="vault-bulk-preview" role="status" aria-live="polite"><strong>Tick the rarities to delete.</strong></div><div class="vault-bulk-actions"><button class="act vault-bulk-confirm out" id="vaultcleanupgo" type="button" disabled>REVIEW</button><button class="act" id="vaultcleanupcancel" type="button">CANCEL</button></div></div>`;
+  document.body.appendChild(modal);
+  const go=document.getElementById('vaultcleanupgo'),cancel=document.getElementById('vaultcleanupcancel'),host=document.getElementById('vaultcleanuppreview'),boxes=[...modal.querySelectorAll('.vault-cleanup-groups input[type=checkbox]')],emptied=document.getElementById('vaultcleanupempty');
+  let preview=null,busy=false;
+  const close=()=>{if(!busy)modal.remove()};cancel.onclick=close;modal.onclick=e=>{if(e.target===modal)close()};modal.onkeydown=e=>{if(e.key==='Escape')close()};
+  const chosen=()=>boxes.filter(box=>box.checked).map(box=>box.value);
+  boxes.forEach(box=>box.onchange=()=>{preview=null;const picked=chosen();go.disabled=!picked.length;go.textContent='REVIEW';host.innerHTML=picked.length?`<strong>${picked.reduce((sum,group)=>sum+counts[group],0)} items selected.</strong><div class="vault-bulk-note">Review to see the exact count before anything is deleted.</div>`:'<strong>Tick the rarities to delete.</strong>'});
+  go.onclick=async()=>{
+    const groupsChosen=chosen();if(!groupsChosen.length||busy)return;busy=true;go.disabled=true;
+    try{
+      if(!preview){
+        go.textContent='CHECKING…';
+        const result=await j('/api/vault/purge',{method:'POST',body:JSON.stringify({action:'preview',collectionId:+vaultState.collectionId,groups:groupsChosen})});
+        if(result.err){host.innerHTML=`<strong>Nothing to delete</strong><div class="vault-bulk-note warn">${esc(result.err)}</div>`;go.textContent='REVIEW';return}
+        preview={...result,groupsChosen};
+        const parts=Object.entries(result.groups||{}).map(([group,count])=>`${esc(group)} ${count}`).join(' · ');
+        host.innerHTML=`<strong>${result.itemCount} item${result.itemCount===1?'':'s'} will be permanently deleted from ${esc(result.collectionName)}.</strong><div class="vault-bulk-tabs"><span>${parts}</span></div>${result.keptCustomNamed?`<div class="vault-bulk-note">${result.keptCustomNamed} item${result.keptCustomNamed===1?' has':'s have'} a custom name and will be kept.</div>`:''}<div class="vault-bulk-note warn">Imported AFK items deleted here are not brought back by transferring the same expedition again.</div>`;
+        go.textContent=`DELETE ${result.itemCount} ITEM${result.itemCount===1?'':'S'}`;
+        return;
+      }
+      go.textContent='DELETING…';
+      const result=await j('/api/vault/purge',{method:'POST',body:JSON.stringify({action:'delete',collectionId:+vaultState.collectionId,groups:preview.groupsChosen,previewToken:preview.previewToken,removeEmptied:emptied.checked})});
+      flash(result);
+      if(result.err){preview=null;host.innerHTML=`<strong>Nothing was deleted</strong><div class="vault-bulk-note warn">${esc(result.err)}</div>`;go.textContent='REVIEW';return}
+      busy=false;modal.remove();vaultCompareItems.clear();await openVault(false);
+    }finally{busy=false;if(document.body.contains(modal))go.disabled=!chosen().length}
+  };
+  if(boxes[0])boxes[0].focus();
 }
 async function addEmptyVaultGrid(){
   const button=document.getElementById('vaultnewgrid');if(button)button.disabled=true;
@@ -9748,12 +10287,14 @@ function toggleVaultCompare(row,source){
   if(item)item.classList.toggle('compare-selected',on);
   renderVaultCompareBar();
 }
-function openVaultCompare(){
+async function openVaultCompare(){
   const rows=[...vaultCompareItems.values()];if(rows.length!==2){flash({err:'Select exactly two Vault items first.'});return}
   const previous=document.querySelector('.vault-compare-modal .vault-compare-close');if(previous)previous.click();
-  const comparison=tooltipComparisonLayout(rows[0].gameTooltip,rows[1].gameTooltip),differences=comparison.differences,modal=document.createElement('div');
+  const models=await vaultTooltipsForRows(rows);
+  if(!models[0]||!models[1]){flash({err:'Item details could not be loaded. Refresh and try again.'});return}
+  const comparison=tooltipComparisonLayout(models[0],models[1]),differences=comparison.differences,modal=document.createElement('div');
   modal.className='vault-compare-modal';modal.setAttribute('role','dialog');modal.setAttribute('aria-modal','true');modal.setAttribute('aria-label','Compare Vault items');
-  modal.innerHTML=`<div class="vault-compare-dialog"><div class="vault-compare-head"><div><h3>Item Comparison</h3><div class="muted">Highlighted rows differ; — means that stat is absent on that item. Max endpoints counts rolled stat lines currently at their upper endpoint.</div></div><button class="vault-mini vault-compare-close" type="button">CLOSE</button></div><div class="vault-compare-grid"><section class="vault-compare-column">${renderGameTooltip(rows[0].gameTooltip,{differences,comparison})}</section><section class="vault-compare-column">${renderGameTooltip(rows[1].gameTooltip,{differences,comparison})}</section></div></div>`;
+  modal.innerHTML=`<div class="vault-compare-dialog"><div class="vault-compare-head"><div><h3>Item Comparison</h3><div class="muted">Highlighted rows differ; — means that stat is absent on that item. Max endpoints counts rolled stat lines currently at their upper endpoint.</div></div><button class="vault-mini vault-compare-close" type="button">CLOSE</button></div><div class="vault-compare-grid"><section class="vault-compare-column">${renderGameTooltip(models[0],{differences,comparison})}</section><section class="vault-compare-column">${renderGameTooltip(models[1],{differences,comparison})}</section></div></div>`;
   const close=()=>{document.removeEventListener('keydown',onKey);modal.remove()},onKey=e=>{if(e.key==='Escape')close()};
   modal.querySelector('.vault-compare-close').onclick=close;modal.onclick=e=>{if(e.target===modal)close()};document.addEventListener('keydown',onKey);document.body.appendChild(modal);modal.querySelector('.vault-compare-close').focus();
 }

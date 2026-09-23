@@ -267,8 +267,16 @@ never choose a second destination and duplicate the item.
   stash; the page and every item coordinate are part of the preview hash.
 - `POST /api/vault/undo`: state-checked latest metadata rollback.
 - `POST /api/vault/ingest`: HS AFK Expedition spool records, keyed by
-  `(expedition_id, seq)` through `deposit_key`; gear to **AFK Farm** on one
-  stash per expedition, native stackables to **AFK Materials**; SQLite only.
+  `(expedition_id, seq)` through `deposit_key`; gear to the expedition's own
+  category on stashes named by rarity group (an expedition already in the older
+  **AFK Farm** category continues on its page there), native stackables to
+  **AFK Materials**; SQLite only. `deposit_many` stores a batch in one
+  transaction with one pre-mutation backup; `layout: "defer"` plus a final
+  `finalize: true` lays the expedition out once.
+- `GET /api/vault/items?lite=1`: grid rows without tooltip models;
+  `GET /api/vault/tooltips?ids=...` returns up to 200 models on demand.
+- `POST /api/vault/purge`: preview/delete every item of chosen rarity groups in
+  one category; see Confirmed deletion.
 - `GET /api/vault/ingest/status`: how many of one expedition's records the
   Vault holds, has already returned to the Shared Stash, or has intentionally deleted.
 
@@ -288,6 +296,20 @@ the history event commit together. The API also holds `SAVE_WRITE_LOCK` and
 refuses while Hero Siege runs.
 Completed transfer journals remain as idempotency evidence; unresolved journals
 and reserved/pending items block deletion of their category or any of its tabs.
+
+Clean-up by rarity (`preview_item_purge` / `purge_items`) follows the same rules
+for an exact set of item ids the editor selects by catalog rarity group, never
+items with a Vault-only custom name: the preview token hashes the category and
+every selected row, a changed selection refuses the confirmation, a dedicated
+`before-delete` backup is written first, deleted imports keep their deposit keys,
+stashes it empties may be removed (the category keeps at least one), and
+`items_purged` is an undo barrier like the other deletions.
+
+AFK categories are found again through a `collection_created` event marker
+(`{"afkExpedition": id, "collectionId": n}`), so renaming a category never splits
+an expedition. `apply_named_layout` creates or names stashes and saves positions
+in one transaction; it renames only empty stashes that still carry the default
+`Stash N` name.
 
 `list_deposit_keys` includes live items, committed withdrawals, and deleted import
 identities. AFK ingest checks these before creating storage; direct `deposit` also

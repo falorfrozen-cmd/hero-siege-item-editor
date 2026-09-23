@@ -8,6 +8,29 @@ A local/offline save editor for **Hero Siege** (Pixel Prone Games). Manage items
 
 Single file, no install, no Python needed. Just run it.
 
+## Local build: v2.15.6-s10-local — faster Vault, AFK categories, clean-up
+
+- **Large Vault categories open quickly.** The grid now loads only what it draws
+  (icon, size, position, rarity) and fetches an item's tooltip when you point at
+  it; stashes are drawn as they scroll into view, and moving an item redraws only
+  the two stashes involved. Measured on a 5,230-item AFK category: the listing went
+  from 3–5 s and 17.5 MB to about 0.2 s and 2.9 MB, and the page from about 36,000
+  elements to under 1,000 until you scroll. Tooltips are also cheaper to build
+  everywhere, because the catalog definitions are no longer copied per item.
+- **AFK transfers are about 60 times faster.** A batch of AFK records is stored in
+  one database transaction with one backup, instead of one full database backup per
+  item (measured: 500 records in about 2 s instead of about 130 s).
+- **Each AFK expedition gets its own category** (`AFK · <date> · <label>`), with
+  stashes named after the rarity of the gear inside: Unholy, Angelic, Heroic, Set,
+  Satanic, Runeword, Normal, Other, best first. Renaming the category keeps later
+  transfers of the same expedition in it. Expeditions that already started in the
+  shared **AFK Farm** category continue there.
+- **Clean up by rarity** (category **…** menu): delete every item of the rarities
+  you tick in one category, for example all Satanic items of an AFK run. Items with
+  a custom name are kept; a review shows the exact count first; a dedicated backup
+  is written; emptied stashes can be removed; deleted AFK imports do not come back
+  when the same expedition is transferred again. Hero Siege must be closed.
+
 ## Local merged build: v2.15.5-s10-local
 
 This source build combines AFK Farm ingestion, confirmed category/stash deletion,
@@ -451,9 +474,15 @@ through the same loopback server the UI uses (`127.0.0.1:8765`-`8774`; every
   (at most 500 records per call). Records with `"kind": "item"` become native
   stash entries built from the game's own definition (`a`, `b`, `c`, `j`, and
   `n` when present): gear gets `w: 1` plus `m: 1` for uniques or `o: 1`
-  otherwise and lands in the **AFK Farm** category on a stash named
-  `<expedition_id> · <date>[ · label]` (spill-over pages are named
-  `... (2)`, `... (3)`); the native stackable classes (Keys, Boss Parts /
+  otherwise and lands in the expedition's own category
+  `AFK · <date> · <label or expedition_id>` on stashes named after its rarity
+  group (`Heroic`, `Satanic`, `Satanic (2)`, ...); an expedition that already has a
+  stash in the older shared **AFK Farm** category continues there on
+  `<expedition_id> · <date>[ · label]` (spill-over `... (2)`, `... (3)`). With
+  `"layout": "defer"` the gear stays unplaced until a request with
+  `"finalize": true` (records may be empty) lays out the whole expedition once, so
+  its rarity stashes come out in order. Each batch is one SQLite transaction per
+  category. The native stackable classes (Keys, Boss Parts /
   Tarot, Materials, Runes / Gems / Orbs) become `o: 1` records in
   **AFK Materials**. Positions come from the Vault's own layout planner.
   Other record kinds are ignored, malformed records are reported under
@@ -464,6 +493,12 @@ through the same loopback server the UI uses (`127.0.0.1:8765`-`8774`; every
   Reply: `{"expedition_id", "deposited", "duplicate", "ignored",
   "skipped": [{"seq", "reason"}], "collections": {"farm": {"id", "name",
   "pageIndex", "pageName"}, "materials": {"id", "name"}}}`.
+- `GET /api/vault/tooltips?ids=<id>,<id>,...` (up to 200) returns
+  `{"tooltips": {id: gameTooltip}}` for available items; the grid uses it with
+  `GET /api/vault/items?...&lite=1`, which leaves the tooltip model out.
+- `POST /api/vault/purge` with `{"action": "preview"|"delete", "collectionId",
+  "groups": ["Satanic", ...], "previewToken", "removeEmptied": true}` deletes every
+  item of the chosen rarity groups in one category (custom-named items are kept).
 - `GET /api/vault/ingest/status?expedition_id=...` returns
   `{"expedition_id", "deposited"}`: how many of that expedition's records the
   Vault holds, has already returned to the Shared Stash, or has intentionally deleted.
