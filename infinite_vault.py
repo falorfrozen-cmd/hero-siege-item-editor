@@ -1536,7 +1536,7 @@ class InfiniteVault:
             if isinstance(event_id, int):
                 undone.add(event_id)
         for row in rows:
-            if row["event_type"] in {"category_contents_deleted", "stash_page_deleted", "items_purged"}:
+            if row["event_type"] in {"category_contents_deleted", "stash_page_deleted", "items_purged", "items_split"}:
                 # Older layout/move undo may point into storage that was deleted.
                 return None
             if row["event_type"] in reversible and int(row["id"]) not in undone:
@@ -3139,27 +3139,10 @@ class InfiniteVault:
                     (now, *chunk),
                 )
                 connection.execute(f"DELETE FROM items WHERE id IN ({marks})", tuple(chunk))
-            removed_pages: list[int] = []
-            if remove_emptied_pages:
-                remaining = int(connection.execute(
-                    "SELECT COUNT(*) FROM stash_pages WHERE collection_id=?",
-                    (preview["collectionId"],),
-                ).fetchone()[0])
-                for page_index in preview["pageIndexes"]:
-                    if remaining <= 1:
-                        break
-                    if connection.execute(
-                        "SELECT 1 FROM items WHERE collection_id=? AND page_index=? LIMIT 1",
-                        (preview["collectionId"], page_index),
-                    ).fetchone() is not None:
-                        continue
-                    deleted = connection.execute(
-                        "DELETE FROM stash_pages WHERE collection_id=? AND page_index=?",
-                        (preview["collectionId"], page_index),
-                    ).rowcount
-                    if deleted:
-                        remaining -= 1
-                        removed_pages.append(page_index)
+            removed_pages = (
+                self._remove_emptied_pages(connection, preview["collectionId"], preview["pageIndexes"])
+                if remove_emptied_pages else []
+            )
             connection.execute(
                 "UPDATE collections SET updated_at=? WHERE id=?", (now, preview["collectionId"])
             )
@@ -3167,6 +3150,141 @@ class InfiniteVault:
             summary["removedPageIndexes"] = removed_pages
             self._event(
                 connection, "items_purged", collection_name=preview["collectionName"],
+                details={**dict(details or {}), **summary, "backupName": backup_path.name},
+            )
+            return {**summary, "backupName": backup_path.name}
+
+        return self._write(operation)
+
+    @staticmethod
+    def _remove_emptied_pages(
+        connection: sqlite3.Connection, collection_id: int, page_indexes: Iterable[int]
+    ) -> list[int]:
+        """Delete the listed stashes that are now empty, keeping at least one."""
+
+        removed: list[int] = []
+        remaining = int(connection.execute(
+            "SELECT COUNT(*) FROM stash_pages WHERE collection_id=?", (collection_id,),
+        ).fetchone()[0])
+        for page_index in page_indexes:
+            if remaining <= 1:
+                break
+            if connection.execute(
+                "SELECT 1 FROM items WHERE collection_id=? AND page_index=? LIMIT 1",
+                (collection_id, page_index),
+            ).fetchone() is not None:
+                continue
+            if connection.execute(
+                "DELETE FROM stash_pages WHERE collection_id=? AND page_index=?",
+                (collection_id, page_index),
+            ).rowcount:
+                remaining -= 1
+                removed.append(page_index)
+        return removed
+
+    @staticmethod
+    def _split_token(purge_token: str) -> str:
+        return hashlib.sha256(f"split:{purge_token}".encode("ascii")).hexdigest()
+
+    def preview_item_split(self, source: int | str, item_ids: Iterable[str]) -> dict[str, Any]:
+        """Describe moving exactly ``item_ids`` out of one category."""
+
+        clean = sorted({_clean_id(item_id, "item id") for item_id in item_ids})
+
+        def operation(connection: sqlite3.Connection) -> dict[str, Any]:
+            connection.execute("BEGIN")
+            preview = self._purge_snapshot(connection, source, clean)
+            return {**preview, "previewToken": self._split_token(preview["previewToken"])}
+
+        return self._read(operation)
+
+    def split_items(
+        self,
+        source: int | str,
+        groups: Mapping[int, Iterable[str]],
+        *,
+        preview_token: str,
+        details: Mapping[str, Any] | None = None,
+        remove_emptied_pages: bool = True,
+    ) -> dict[str, Any]:
+        """Move the confirmed items of one category into others in one transaction.
+
+        ``groups`` maps each destination category id to the item ids it takes;
+        together they must be exactly the previewed items. A ``before-split``
+        copy of the database is written first, moved items lose their grid
+        positions (the caller lays the destinations out), and with
+        ``remove_emptied_pages`` the source stashes the move empties are
+        removed, keeping at least one. ``items_split`` is an undo barrier.
+        """
+
+        if not isinstance(preview_token, str) or len(preview_token) != 64:
+            raise VaultValidationError("A fresh split preview is required.")
+        plan: list[tuple[int, list[str]]] = []
+        seen: set[str] = set()
+        for destination, item_ids in groups.items():
+            if isinstance(destination, bool) or not isinstance(destination, int):
+                raise VaultValidationError("destination category ids must be integers")
+            chunk = sorted({_clean_id(item_id, "item id") for item_id in item_ids})
+            if seen.intersection(chunk):
+                raise VaultValidationError("an item cannot move to two categories")
+            seen.update(chunk)
+            if chunk:
+                plan.append((destination, chunk))
+        clean = sorted(seen)
+        if not clean:
+            raise VaultValidationError("No item matches this split.")
+
+        def operation(connection: sqlite3.Connection) -> dict[str, Any]:
+            preview = self._purge_snapshot(connection, source, clean)
+            if self._split_token(preview["previewToken"]) != preview_token:
+                raise VaultConflictError("The category changed. Review a fresh split preview.")
+            destinations: list[tuple[sqlite3.Row, list[str]]] = []
+            for destination, item_ids in plan:
+                target = self._resolve_collection(connection, destination)
+                if int(target["id"]) == int(preview["collectionId"]):
+                    raise VaultValidationError("items cannot be split into their own category")
+                for table in ("transfers", "transfer_batches"):
+                    if connection.execute(
+                        f"SELECT 1 FROM {table} WHERE collection_id=? AND status IN ('prepared','conflict') LIMIT 1",
+                        (target["id"],),
+                    ).fetchone():
+                        raise VaultStateError("Resolve pending transfers in the destination category first.")
+                destinations.append((target, item_ids))
+            backup_path = self.path.with_name(
+                f"{self.path.name}.before-split-{uuid.uuid4().hex}.bak"
+            )
+            self._backup_existing(backup_path)
+            now = _utc_now()
+            for target, item_ids in destinations:
+                for start in range(0, len(item_ids), 500):
+                    chunk = item_ids[start:start + 500]
+                    connection.execute(
+                        f"""UPDATE items SET collection_id=?, page_index=NULL, layout_x=NULL,
+                                   layout_y=NULL, updated_at=?
+                            WHERE id IN ({','.join('?' * len(chunk))})""",
+                        (target["id"], now, *chunk),
+                    )
+                connection.execute("UPDATE collections SET updated_at=? WHERE id=?", (now, target["id"]))
+            removed_pages = (
+                self._remove_emptied_pages(connection, preview["collectionId"], preview["pageIndexes"])
+                if remove_emptied_pages else []
+            )
+            connection.execute(
+                "UPDATE collections SET updated_at=? WHERE id=?", (now, preview["collectionId"])
+            )
+            summary = {
+                "collectionId": preview["collectionId"],
+                "collectionName": preview["collectionName"],
+                "itemCount": preview["itemCount"],
+                "destinations": [
+                    {"collectionId": int(target["id"]), "collectionName": target["name"],
+                     "itemCount": len(item_ids)}
+                    for target, item_ids in destinations
+                ],
+                "removedPageIndexes": removed_pages,
+            }
+            self._event(
+                connection, "items_split", collection_name=preview["collectionName"],
                 details={**dict(details or {}), **summary, "backupName": backup_path.name},
             )
             return {**summary, "backupName": backup_path.name}

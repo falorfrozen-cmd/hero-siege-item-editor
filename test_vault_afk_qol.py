@@ -270,5 +270,99 @@ class VaultAfkQolTests(unittest.TestCase):
         self.assertEqual(self.store.find_marked_collection("afkExpedition", "x-1").name, "Renamed")
 
 
+class AfkFarmSplitTests(unittest.TestCase):
+    """The shared legacy AFK Farm category is split into one category per
+    expedition, each laid out on rarity stashes like a new import."""
+
+    setUp = VaultAfkQolTests.setUp
+    ingest = VaultAfkQolTests.ingest
+
+    def legacy_farm(self):
+        farm = self.store.create_collection("AFK Farm")
+        self.store.rename_stash_page(farm.id, 0, "exp_a · 2026-09-17 · Test A")
+        self.ingest([belt(1, "Heroic belt 1", 12), belt(2, "Satanic belt 2", 0), belt(3, "Angelic belt 3", 44)], "exp_a")
+        page = self.store.add_stash_page(farm.id)
+        self.store.rename_stash_page(farm.id, page.page_index, "exp_b · 2026-09-18")
+        self.ingest([belt(1, "Heroic belt b1", 12), belt(2, "Normal belt b2", 0, unique=False)], "exp_b")
+        self.assertIsNone(self.store.find_marked_collection(editor.AFK_INGEST_MARKER, "exp_a"), "legacy fixture")
+        return farm
+
+    def keep_manual_item(self, farm):
+        entry = editor._afk_prepare_record("manual", belt(9, "Kept belt", 12))
+        [result] = self.store.deposit_many(farm.id, [{
+            "raw_item_json": entry["raw"], "source_item_key": entry["key"], "label": "Kept belt",
+            "source": "manual", "deposit_key": None,
+        }])
+        self.assertEqual(result["status"], "deposited")
+
+    def placements(self):
+        return sorted((r.id, r.collection_id, r.page_index, r.layout_x, r.layout_y)
+                      for r in self.store.list_all_available_items())
+
+    def test_preview_describes_each_expedition_and_changes_nothing(self):
+        farm = self.legacy_farm()
+        self.keep_manual_item(farm)
+        before = self.placements()
+        preview = editor.op_vault_afk_split({"action": "preview"})
+        self.assertNotIn("err", preview, preview.get("err"))
+        self.assertEqual((preview["collectionName"], preview["itemCount"], preview["unassigned"]), ("AFK Farm", 5, 1))
+        self.assertEqual(
+            [(g["expeditionId"], g["categoryName"], g["itemCount"]) for g in preview["groups"]],
+            [("exp_a", "AFK · 2026-09-17 · Test A", 3), ("exp_b", "AFK · 2026-09-18 · exp_b", 2)],
+        )
+        self.assertEqual(self.placements(), before)
+        self.assertEqual([c.name for c in self.store.list_collections()].count("AFK · 2026-09-17 · Test A"), 0)
+
+    def test_split_moves_each_expedition_to_rarity_stashes_and_keeps_other_items(self):
+        farm = self.legacy_farm()
+        self.keep_manual_item(farm)
+        preview = editor.op_vault_afk_split({"action": "preview"})
+        result = editor.op_vault_afk_split({"action": "split", "previewToken": preview["previewToken"]})
+        self.assertNotIn("err", result, result.get("err"))
+        self.assertEqual((result["itemCount"], result["unassigned"], result["removedFarm"]), (5, 1, False))
+        self.assertTrue(list(self.root.glob("vault.sqlite3.before-split-*.bak")), "a dedicated backup is kept")
+        by_name = {}
+        for expedition, stashes in (("exp_a", ["Angelic", "Heroic", "Satanic"]), ("exp_b", ["Heroic", "Normal"])):
+            category = self.store.find_marked_collection(editor.AFK_INGEST_MARKER, expedition)
+            pages = {p.page_index: p.name for p in self.store.list_stash_pages(category.id)}
+            rows = self.store.list_all_available_items(collection=category.id)
+            self.assertEqual(sorted(pages[r.page_index] for r in rows), stashes, expedition)
+            self.assertTrue(all(r.layout_x is not None for r in rows))
+            by_name[expedition] = category
+        self.assertEqual(by_name["exp_a"].name, "AFK · 2026-09-17 · Test A")
+        self.assertEqual([r.label for r in self.store.list_all_available_items(collection=farm.id)], ["Kept belt"])
+        self.assertEqual(len(self.store.list_stash_pages(farm.id)), 1, "emptied AFK Farm stashes are removed, one is kept")
+        more = self.ingest([belt(7, "Heroic belt 7", 12)], "exp_a")
+        self.assertEqual(more["deposited"], 1)
+        [late] = [r for r in self.store.list_all_available_items() if r.label == "Heroic belt 7"]
+        self.assertEqual(late.collection_id, by_name["exp_a"].id, "a later transfer continues in the expedition's category")
+
+    def test_a_stale_preview_or_a_running_game_moves_nothing(self):
+        self.legacy_farm()
+        preview = editor.op_vault_afk_split({"action": "preview"})
+        self.ingest([belt(5, "Heroic belt 5", 12)], "exp_a")
+        before = self.placements()
+        stale = editor.op_vault_afk_split({"action": "split", "previewToken": preview["previewToken"]})
+        self.assertIn("err", stale)
+        self.assertEqual(self.placements(), before)
+        self.game_running.return_value = True
+        self.assertIn("err", editor.op_vault_afk_split({"action": "preview"}))
+        self.assertIn("err", editor.op_vault_afk_split({"action": "unknown"}))
+
+    def test_an_emptied_afk_farm_is_removed_and_undo_stops_at_the_split(self):
+        self.legacy_farm()
+        preview = editor.op_vault_afk_split({"action": "preview"})
+        result = editor.op_vault_afk_split({"action": "split", "previewToken": preview["previewToken"]})
+        self.assertTrue(result["removedFarm"], result)
+        self.assertNotIn("AFK Farm", [c.name for c in self.store.list_collections()])
+        with closing(sqlite3.connect(self.root / "vault.sqlite3")) as connection:
+            [(split_id,)] = connection.execute("SELECT id FROM events WHERE event_type='items_split'").fetchall()
+        undo = self.store.preview_metadata_undo()
+        self.assertTrue(undo is None or undo["eventId"] > split_id, "nothing older than the split can be undone")
+
+    def test_nothing_to_split_without_afk_farm(self):
+        self.assertIn("err", editor.op_vault_afk_split({"action": "preview"}))
+
+
 if __name__ == "__main__":
     unittest.main()

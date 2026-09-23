@@ -367,3 +367,20 @@ temporary directory, as `test_vault_integration.py` does.
 If a transfer is ever marked `conflict`, do not manually delete its SQLite row.
 The journal is the recoverable exact copy. Diagnose the recorded before/after
 hashes and source/target entry before adding a tested reconciliation rule.
+
+## Splitting a category (2.15.7)
+
+`preview_item_split(source, item_ids)` and `split_items(source, groups, *,
+preview_token, details=None, remove_emptied_pages=True)` move exactly the previewed
+available items of one category into other categories in one transaction. The
+preview token is derived from the same snapshot as a purge preview (source category,
+full item rows), so any change to those items invalidates it. `split_items` refuses
+pending transfers in the source or a destination and a destination equal to the
+source, writes `<vault>.before-split-<uuid>.bak` first, clears the moved items' grid
+positions for the caller to lay out, removes source stashes the move emptied (keeping
+at least one) and records `items_split`, an undo barrier like `items_purged`.
+`op_vault_afk_split` uses it for the shared AFK Farm category: items are grouped by
+the expedition their deposit key names (the key prefix of an expedition named by a
+stash `<id> · <date> · <label>`, or a slug whose hash matches), each group goes to
+`_afk_expedition_category`, then `_afk_group_layout`; AFK Farm is deleted when empty.
+Ingest now checks an expedition's marked category before the legacy AFK Farm page.

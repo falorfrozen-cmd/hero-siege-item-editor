@@ -8,6 +8,18 @@ A local/offline save editor for **Hero Siege** (Pixel Prone Games). Manage items
 
 Single file, no install, no Python needed. Just run it.
 
+## Local build: v2.15.7-s10-local — split the old AFK Farm category
+
+- **SPLIT BY EXPEDITION…** in the category menu of the shared **AFK Farm** category
+  moves every imported AFK item into its expedition's own category
+  (`AFK · <date> · <label>`), laid out on rarity stashes exactly like new imports.
+  Items are matched by their import identity, not by the stash they happen to sit
+  on. A preview lists the categories and counts first; the move is one transaction
+  with a dedicated `before-split` backup, emptied AFK Farm stashes are removed, and
+  AFK Farm itself is removed once nothing is left in it. Items without an AFK import
+  stay where they are. Later transfers of a split expedition go to its category.
+  Measured on a copy of a real Vault: 3,351 items in 1.1 s.
+
 ## Local build: v2.15.6-s10-local — faster Vault, AFK categories, clean-up
 
 - **Large Vault categories open quickly.** The grid now loads only what it draws

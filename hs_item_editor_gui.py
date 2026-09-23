@@ -195,7 +195,7 @@ def _resource_base() -> Path:
 BASE = _resource_base()
 CATALOG_FILE = BASE / "hs_full_catalog.json"
 PORT = 8765
-APP_VERSION = "2.15.6-s10-local"
+APP_VERSION = "2.15.7-s10-local"
 APPLICATION_ID = "hero-siege-item-editor"
 CATALOG_PROFILE = "Season 10"
 MAX_POST_BYTES = 2 * 1024 * 1024
@@ -4318,6 +4318,122 @@ def op_vault_purge(body: dict) -> dict:
         return {"err": str(exc)}
 
 
+_AFK_KEY_RE = re.compile(r"afk-([A-Za-z0-9_-]{0,40})-([0-9a-f]{16})-\d{10}\Z")
+_AFK_PAGE_SUFFIX_RE = re.compile(r" \((?:[2-9]|[1-9]\d+)\)\Z")
+
+
+def _afk_split_plan(store):
+    """Group the shared AFK Farm category's imported items by expedition.
+
+    An expedition is recognised by the import key its items carry, and its
+    date and label come from its stash names (``<id> · <date> · <label>``).
+    Items without an AFK import key stay where they are.
+    """
+
+    farm = _afk_find_collection(store, AFK_INGEST_FARM_COLLECTION)
+    if farm is None:
+        return None
+    known: dict[str, tuple[str, str | None, str | None]] = {}
+    for page in sorted(store.list_stash_pages(farm.id), key=lambda row: row.page_index):
+        parts = [part.strip() for part in _AFK_PAGE_SUFFIX_RE.sub("", page.name).split(" \u00b7 ")]
+        if len(parts) < 2:
+            continue
+        try:
+            expedition = _afk_expedition_id(parts[0])
+        except VaultValidationError:
+            continue
+        date = parts[1] if re.fullmatch(r"\d{4}-\d{2}-\d{2}", parts[1]) else None
+        known.setdefault(
+            _afk_deposit_key_prefix(expedition), (expedition, date, " \u00b7 ".join(parts[2:]) or None)
+        )
+    groups: dict[str, dict] = {}
+    unassigned: list[str] = []
+    for record in store.list_all_available_items(collection=farm.id):
+        key = record.deposit_key or ""
+        match = _AFK_KEY_RE.fullmatch(key)
+        entry = known.get(key[:-10]) if match else None
+        if entry is None and match:
+            slug, digest = match.groups()
+            if slug and hashlib.sha256(slug.encode("utf-8")).hexdigest()[:16] == digest:
+                entry = (slug, None, None)
+        if entry is None:
+            unassigned.append(record.id)
+            continue
+        group = groups.setdefault(entry[0], {"date": entry[1], "label": entry[2], "itemIds": [], "first": None})
+        group["itemIds"].append(record.id)
+        created = str(record.created_at or "")[:10]
+        if created and (group["first"] is None or created < group["first"]):
+            group["first"] = created
+    for group in groups.values():
+        group["date"] = group["date"] or group["first"]
+    return farm, groups, unassigned
+
+
+def op_vault_afk_split(body: dict) -> dict:
+    """Preview or move AFK Farm's imports into one category per expedition.
+
+    Each expedition's gear goes to its own ``AFK · <date> · <label>`` category,
+    found again through its creation marker like a new import, and is laid out
+    on rarity stashes. Hero Siege must be closed; the move is one transaction
+    behind a preview token with a dedicated backup; AFK Farm is removed once
+    nothing is left in it. Items without an AFK import key stay in AFK Farm.
+    """
+
+    try:
+        action = body.get("action")
+        if action not in {"preview", "split"}:
+            raise VaultValidationError("Unknown split action.")
+        with SAVE_WRITE_LOCK:
+            if game_running():
+                return {"err": "Close Hero Siege before reorganizing the Vault."}
+            store = vault_store()
+            plan = _afk_split_plan(store)
+            if plan is None or not plan[1]:
+                return {"err": "AFK Farm holds no expedition imports to split."}
+            farm, groups, unassigned = plan
+            ids = [item_id for group in groups.values() for item_id in group["itemIds"]]
+            preview = store.preview_item_split(farm.id, ids)
+            described = []
+            for expedition, group in sorted(groups.items(), key=lambda pair: (pair[1]["date"] or "", pair[0])):
+                existing = store.find_marked_collection(AFK_INGEST_MARKER, expedition)
+                name = existing.name if existing else (
+                    f"AFK \u00b7 {group['date'] or time.strftime('%Y-%m-%d', time.gmtime())} \u00b7 "
+                    f"{group['label'] or expedition}"
+                )[:MAX_COLLECTION_NAME_LENGTH]
+                described.append({"expeditionId": expedition, "categoryName": name, "itemCount": len(group["itemIds"])})
+            if action == "preview":
+                return {"collectionId": farm.id, "collectionName": farm.name, "itemCount": preview["itemCount"],
+                        "groups": described, "unassigned": len(unassigned), "previewToken": preview["previewToken"]}
+            if body.get("previewToken") != preview["previewToken"]:
+                return {"err": "AFK Farm changed. Review a fresh split preview."}
+            targets: dict[int, list[str]] = {}
+            for expedition, group in groups.items():
+                category = _afk_expedition_category(store, expedition, group["date"], group["label"] or "")
+                targets.setdefault(category.id, []).extend(group["itemIds"])
+            result = store.split_items(
+                farm.id, targets, preview_token=preview["previewToken"],
+                details={"reason": "afk-farm-split", "unassigned": len(unassigned)},
+            )
+            for category_id in targets:
+                _afk_group_layout(store, category_id)
+            removed_farm = False
+            if not store.list_all_available_items(collection=farm.id):
+                try:
+                    store.delete_collection(farm.id)
+                    removed_farm = True
+                except VaultError:
+                    removed_farm = False
+        moved = result["itemCount"]
+        return {**result, "groups": described, "unassigned": len(unassigned), "removedFarm": removed_farm,
+                "backup": result["backupName"], "ok": (
+            f"Moved {moved} item{'s' if moved != 1 else ''} into {len(targets)} expedition "
+            f"categor{'ies' if len(targets) != 1 else 'y'}"
+            + ("; the empty AFK Farm category was removed" if removed_farm else "")
+        )}
+    except (VaultError, OSError, sqlite3.Error, TypeError, ValueError) as exc:
+        return {"err": str(exc)}
+
+
 def op_vault_item(body: dict) -> dict:
     try:
         action = body.get("action")
@@ -4875,9 +4991,11 @@ def op_vault_ingest(body: dict) -> dict:
             return ids
 
         if gear:
-            farm, farm_page = _afk_legacy_farm(store, expedition_id)
-            legacy = farm is not None
-            if not legacy:
+            farm = store.find_marked_collection(AFK_INGEST_MARKER, expedition_id)
+            if farm is None:
+                farm, farm_page = _afk_legacy_farm(store, expedition_id)
+                legacy = farm is not None
+            if not legacy and farm is None:
                 farm = _afk_expedition_category(store, expedition_id, gear[0]["date"], label)
             gear_ids = deposit(farm.id, gear)
             if gear_ids and legacy:
@@ -8813,6 +8931,8 @@ class H(BaseHTTPRequestHandler):
             self._json(op_vault_ingest(body))
         elif path == "/api/vault/purge":
             self._json(op_vault_purge(body))
+        elif path == "/api/vault/afk-split":
+            self._json(op_vault_afk_split(body))
         else:
             self._json({"err": "not found"}, 404)
 
@@ -9866,6 +9986,7 @@ async function openVault(reset=true){
         <div class="vault-tool-row"><button class="vault-mini" id="vaultrefresh">REFRESH</button><button class="vault-mini" id="vaultcompact">COMPACT ITEMS</button></div>
         <button class="vault-mini" id="vaulthistory">HISTORY / UNDO</button>
         <button class="vault-mini danger" id="vaultcleanup" ${vaultMeta.gameRunning?'disabled':''} title="Delete every item of chosen rarities in this category">CLEAN UP BY RARITY…</button>
+        ${(collections.find(c=>String(c.id)===String(vaultState.collectionId))||{}).name==='AFK Farm'?`<button class="vault-mini" id="vaultafksplit" ${vaultMeta.gameRunning?'disabled':''} title="Move each expedition into its own category, sorted into rarity stashes">SPLIT BY EXPEDITION…</button>`:''}
       </div></details>
     </div>
     ${vaultMeta.gameRunning?'<div class="vault-warning">Hero Siege is running. Your vault is viewable, but transfers are locked until the game is closed.</div>':''}
@@ -9883,6 +10004,7 @@ async function openVault(reset=true){
   document.getElementById('vaultcompact').onclick=compactVaultGrids;
   document.getElementById('vaulthistory').onclick=openVaultHistory;
   document.getElementById('vaultcleanup').onclick=openVaultCleanup;
+  const afkSplitButton=document.getElementById('vaultafksplit');if(afkSplitButton)afkSplitButton.onclick=openVaultAfkSplit;
   await loadVaultItems();
 }
 function vaultBulkSessionKey(direction,sourceTab='all',collectionId='all',destinationTab='auto'){return `hsVaultBulk:${direction}:${sourceTab}:${collectionId}:${destinationTab}`}
@@ -10214,6 +10336,33 @@ function openVaultCleanup(){
     }finally{busy=false;if(document.body.contains(modal))go.disabled=!chosen().length}
   };
   if(boxes[0])boxes[0].focus();
+}
+async function openVaultAfkSplit(){
+  if(GAME_RUNNING){flash({err:'Close Hero Siege before reorganizing the Vault.'});return}
+  const previous=document.getElementById('sockmodal');if(previous)previous.remove();
+  const modal=document.createElement('div');modal.id='sockmodal';
+  modal.innerHTML=`<div id="sockbox" role="dialog" aria-modal="true" aria-labelledby="vaultafksplittitle" style="width:min(620px,92vw)"><h3 id="vaultafksplittitle">Split AFK Farm by expedition</h3><div class="muted" style="margin:6px 0 10px">Each expedition moves to its own category, sorted into rarity stashes, like new AFK imports. Nothing is deleted; a backup of the Vault is kept first.</div><div id="vaultafksplitpreview"><strong>Checking…</strong></div><div class="vault-bulk-actions" style="margin-top:14px"><button class="vault-mini" id="vaultafksplitcancel">CANCEL</button><button class="vault-mini" id="vaultafksplitgo" disabled>SPLIT</button></div></div>`;
+  document.body.appendChild(modal);
+  const go=document.getElementById('vaultafksplitgo'),host=document.getElementById('vaultafksplitpreview');
+  let preview=null,busy=false;
+  const close=()=>{if(!busy)modal.remove()};document.getElementById('vaultafksplitcancel').onclick=close;modal.onclick=e=>{if(e.target===modal)close()};modal.onkeydown=e=>{if(e.key==='Escape')close()};
+  const result=await j('/api/vault/afk-split',{method:'POST',body:JSON.stringify({action:'preview'})});
+  if(result.err){host.innerHTML=`<strong>Nothing to split</strong><div class="vault-bulk-note warn">${esc(result.err)}</div>`;return}
+  preview=result;
+  host.innerHTML=`<strong>${result.itemCount} item${result.itemCount===1?'':'s'} from ${result.groups.length} expedition${result.groups.length===1?'':'s'}:</strong><div class="vault-bulk-tabs">${result.groups.map(g=>`<span>${esc(g.categoryName)} · ${g.itemCount}</span>`).join('')}</div>${result.unassigned?`<div class="vault-bulk-note">${result.unassigned} item${result.unassigned===1?'':'s'} without an AFK import stay in AFK Farm.</div>`:'<div class="vault-bulk-note">AFK Farm is removed when it is empty afterwards.</div>'}`;
+  go.textContent=`SPLIT ${result.itemCount} ITEM${result.itemCount===1?'':'S'}`;go.disabled=false;
+  go.onclick=async()=>{
+    if(busy||!preview)return;busy=true;go.disabled=true;go.textContent='MOVING…';
+    try{
+      const done=await j('/api/vault/afk-split',{method:'POST',body:JSON.stringify({action:'split',previewToken:preview.previewToken})});
+      flash(done);
+      if(done.err){host.innerHTML=`<strong>Nothing was moved</strong><div class="vault-bulk-note warn">${esc(done.err)}</div>`;go.textContent='SPLIT';return}
+      busy=false;modal.remove();vaultCompareItems.clear();
+      const first=(done.destinations||[])[0];if(first)vaultState.collectionId=String(first.collectionId);
+      await openVault(false);
+    }finally{busy=false}
+  };
+  go.focus();
 }
 async function addEmptyVaultGrid(){
   const button=document.getElementById('vaultnewgrid');if(button)button.disabled=true;
