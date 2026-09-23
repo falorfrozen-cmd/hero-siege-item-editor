@@ -1,0 +1,207 @@
+# Build the item editor's exe in CI and upload it to the tag's draft release.
+#
+# Started by editor-tag.yml right after it leaves the draft, or by hand with a
+# `tag` to refill a draft or rebuild one. It is dispatched against `master`,
+# never the tag: the build tooling (tools/release_ci.py, the pinned
+# requirements) comes from master, checked out into `ci`, so a fix here also
+# applies to a version tagged before it. The application source, the
+# PyInstaller spec, the data files and the tests all come from the TAG,
+# checked out into `editor`.
+#
+# It only uploads assets onto an EXISTING DRAFT. It never creates, edits or
+# publishes a release, and never touches which release is "latest".
+# Publishing stays a human act, after the module guide's CI launch gate.
+name: Item Editor release
+
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Tag to build, e.g. v2.15.5 (or just 2.15.5)'
+        required: true
+        type: string
+      dry_run:
+        description: 'Build and test without uploading anything to the draft'
+        type: boolean
+        required: false
+        default: true
+
+permissions:
+  contents: read
+
+concurrency:
+  group: editor-release-${{ inputs.tag }}
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: windows-latest
+    permissions:
+      # Uploading assets to the draft.
+      contents: write
+    steps:
+      - name: This has to be run from master
+        shell: bash
+        env:
+          BRANCH: ${{ github.ref_name }}
+        run: |
+          if [ "$BRANCH" != "master" ]; then
+            echo "::error::Run this from master. It was started on '$BRANCH'."
+            exit 1
+          fi
+
+      # The data files are pinned by SHA-256 of their exact bytes
+      # (dice_skill_selector.py, exact_tooltip.py, ...). The Windows runner's
+      # git defaults to core.autocrlf=true, which rewrites them to CRLF on
+      # checkout: every hash then mismatches, the tests fail, and an exe built
+      # anyway would ship with those features disabled. So the checkouts below
+      # must write the committed bytes as they are.
+      - name: Check files out byte for byte
+        shell: bash
+        run: git config --global core.autocrlf false
+
+      - uses: actions/checkout@v4
+        with:
+          path: ci
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.14'
+
+      - name: Normalise the tag
+        id: tag
+        shell: bash
+        env:
+          TAG_INPUT: ${{ inputs.tag }}
+        run: |
+          plan=$(python ci/tools/release_ci.py tag --tag "$TAG_INPUT")
+          echo "$plan"
+          echo "$plan" >> "$GITHUB_OUTPUT"
+
+      # First of two draft guards: fail fast before anything is built. The
+      # second sits right before the upload, because a human can publish the
+      # draft while this job is building.
+      - name: This release exists and is still a draft (guard 1)
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REPO: ${{ github.repository }}
+          TAG: ${{ steps.tag.outputs.tag }}
+        run: |
+          count=$(gh api "repos/$REPO/releases?per_page=100" \
+            --jq "[.[] | select(.tag_name == \"$TAG\")] | length")
+          if [ "$count" = "0" ]; then
+            echo "::error::$TAG has no release yet -- run \"Item Editor tag\" first."
+            exit 1
+          fi
+          if [ "$count" != "1" ]; then
+            echo "::error::$TAG has $count releases; expected exactly one."
+            exit 1
+          fi
+          draft=$(gh api "repos/$REPO/releases?per_page=100" \
+            --jq "[.[] | select(.tag_name == \"$TAG\")][0].draft")
+          if [ "$draft" != "true" ]; then
+            echo "::error::$TAG is already published -- refusing to replace a published release's assets."
+            exit 1
+          fi
+          echo "draft release confirmed for $TAG"
+
+      - name: Check out the tagged tree
+        uses: actions/checkout@v4
+        with:
+          ref: refs/tags/${{ steps.tag.outputs.tag }}
+          path: editor
+
+      # pywebview's absence is silent: a build without it falls back to the
+      # browser with no error. So the import is checked, not assumed.
+      - name: Install build dependencies
+        shell: bash
+        run: |
+          python -m pip install -r ci/requirements-build.txt
+          python -c "import webview, PyInstaller"
+
+      - name: The tree agrees with the tag
+        shell: bash
+        env:
+          VERSION: ${{ steps.tag.outputs.version }}
+        run: python ci/tools/cut_release.py --root editor --check --expect "$VERSION" --allow-missing-notes
+
+      - name: Tests
+        shell: bash
+        working-directory: editor
+        run: python -m unittest discover -s . -p "test*.py"
+
+      - name: Build the exe (PyInstaller)
+        shell: bash
+        working-directory: editor
+        run: python -m PyInstaller --clean --noconfirm HeroSiegeItemEditor.spec
+
+      - name: Name and checksum it (release_ci.py package)
+        id: package
+        shell: bash
+        run: |
+          out=$(python ci/tools/release_ci.py package --root editor --out "$RUNNER_TEMP/out")
+          echo "$out"
+          echo "$out" | head -n 2 >> "$GITHUB_OUTPUT"
+          echo "exe_hash=$(echo "$out" | tail -1)" >> "$GITHUB_OUTPUT"
+
+      - name: Keep the exe as an artifact on a dry run
+        if: inputs.dry_run
+        uses: actions/upload-artifact@v4
+        with:
+          name: editor-release-dry-run
+          path: ${{ runner.temp }}/out/*
+          retention-days: 7
+
+      - name: This release is still a draft (guard 2)
+        if: ${{ !inputs.dry_run }}
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REPO: ${{ github.repository }}
+          TAG: ${{ steps.tag.outputs.tag }}
+        run: |
+          draft=$(gh api "repos/$REPO/releases?per_page=100" \
+            --jq "[.[] | select(.tag_name == \"$TAG\")][0].draft")
+          if [ "$draft" != "true" ]; then
+            echo "::error::$TAG is no longer a draft -- refusing to upload. A human may have published it during this build."
+            exit 1
+          fi
+
+      - name: Upload to the draft
+        if: ${{ !inputs.dry_run }}
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REPO: ${{ github.repository }}
+          TAG: ${{ steps.tag.outputs.tag }}
+          ASSET: ${{ steps.package.outputs.asset }}
+        run: |
+          gh release upload "$TAG" \
+            "$RUNNER_TEMP/out/$ASSET" \
+            "$RUNNER_TEMP/out/$ASSET.sha256" \
+            --clobber --repo "$REPO"
+
+      - name: Summary
+        if: always()
+        shell: bash
+        env:
+          TAG: ${{ steps.tag.outputs.tag }}
+          ASSET: ${{ steps.package.outputs.asset }}
+          EXE_HASH: ${{ steps.package.outputs.exe_hash }}
+          DRY_RUN: ${{ inputs.dry_run }}
+        run: |
+          {
+            echo "### Item Editor release: $TAG"
+            echo
+            echo "- asset: \`$ASSET\`"
+            echo "- sha256: \`$EXE_HASH\`"
+            if [ "$DRY_RUN" = "true" ]; then
+              echo "- dry run: nothing uploaded"
+            else
+              echo "- uploaded to the draft"
+            fi
+            echo
+            echo "**Not live-verified.** Run this exe before publishing -- see the"
+            echo "module guide's \"CI build launch gate\"."
+          } >> "$GITHUB_STEP_SUMMARY"

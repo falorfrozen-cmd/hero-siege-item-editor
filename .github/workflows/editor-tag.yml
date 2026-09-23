@@ -1,0 +1,214 @@
+# Tag an item editor release from a typed version, and leave a draft carrying
+# its notes.
+#
+# Run it from Actions > Item Editor tag > Run workflow and give it the tag. It
+# checks the tag is one this repository can release, moves APP_VERSION to
+# match, pushes the tag, leaves a draft release whose body is composed from the
+# tagged version's RELEASE_NOTES_vX.Y.Z.md (or, when that file has not been
+# written, GitHub's generated notes under a banner demanding a rewrite), and
+# starts editor-release.yml, which builds the exe and uploads it to the draft.
+#
+# Ported from ForgePact's forgepact-tag.yml, whose comments carry the longer
+# reasoning. The differences: this repository's default branch is `master`,
+# the version lives in hs_item_editor_gui.py's APP_VERSION, and the notes files
+# are RELEASE_NOTES_vX.Y.Z.md.
+#
+# This workflow never builds and never publishes. Publishing the draft stays a
+# human act, and it is what fires notify-hub-release.yml.
+name: Item Editor tag
+
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Tag to release as, e.g. v2.15.5 (or just 2.15.5)'
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: editor-tag
+  cancel-in-progress: false
+
+jobs:
+  tag:
+    runs-on: ubuntu-latest
+    permissions:
+      # Committing the version bump, pushing the tag, and leaving the draft.
+      contents: write
+      # Starting editor-release.yml. Without it the dispatch is a 403 from a
+      # job that has already pushed the tag and left the draft.
+      actions: write
+    steps:
+      # Run from anywhere else, the bump below would push a branch's tree to
+      # master and the tag would point at code that was never merged.
+      - name: This has to be run from master
+        env:
+          BRANCH: ${{ github.ref_name }}
+        run: |
+          if [ "$BRANCH" != "master" ]; then
+            echo "::error::Run this from master. It was started on '$BRANCH', whose code is not what a release should ship."
+            exit 1
+          fi
+
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Commit as the bot
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+
+      - name: Which versions are already tagged
+        id: tags
+        run: |
+          # pipefail: "no tags" is not the same answer as "could not ask", and
+          # an empty list would let every check against existing tags pass.
+          set -o pipefail
+          refs=$(git ls-remote --tags origin 'refs/tags/v*' | cut -f2 | tr '\n' ' ')
+          echo "refs=$refs" >> "$GITHUB_OUTPUT"
+          echo "existing: ${refs:-none}"
+
+      # Everything after this trusts the tag. tools/editor_tag.py refuses a
+      # malformed tag, a taken one, one below the highest tag and one below
+      # the tree, printing nothing and exiting non-zero. The typed string
+      # reaches the shell only through env:.
+      - name: Is this a tag we can release
+        id: plan
+        env:
+          TAG_INPUT: ${{ inputs.tag }}
+          REFS: ${{ steps.tags.outputs.refs }}
+        run: |
+          # Captured rather than piped, so a refusal fails this step.
+          # shellcheck disable=SC2086 -- REFS is a word-split list of refs.
+          plan=$(python tools/editor_tag.py --tag "$TAG_INPUT" --existing $REFS)
+          echo "$plan"
+          echo "$plan" >> "$GITHUB_OUTPUT"
+
+      # A draft release does not create its tag, so it is invisible to the
+      # check above. Still ahead of the bump, so main is never left claiming a
+      # version with no tag behind it.
+      - name: This version has no release yet
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REPO: ${{ github.repository }}
+          TAG: ${{ steps.plan.outputs.tag }}
+        run: |
+          existing=$(gh api "repos/$REPO/releases?per_page=100" \
+            --jq "[.[] | select(.tag_name == \"$TAG\")] | length")
+          echo "releases already on $TAG: $existing"
+          if [ "$existing" != "0" ]; then
+            echo "::error::$TAG already has $existing release(s), including drafts. Delete them before this version can be tagged."
+            exit 1
+          fi
+
+      - name: Compose the release notes
+        id: notes
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REPO: ${{ github.repository }}
+          TAG: ${{ steps.plan.outputs.tag }}
+          VERSION: ${{ steps.plan.outputs.version }}
+          PREVIOUS: ${{ steps.plan.outputs.previous }}
+          SHA: ${{ github.sha }}
+        run: |
+          extra=()
+          if [ -n "$PREVIOUS" ]; then
+            extra=(-f "previous_tag_name=$PREVIOUS")
+          fi
+          generated=$(gh api -X POST "repos/$REPO/releases/generate-notes" \
+            -f tag_name="$TAG" -f target_commitish="$SHA" \
+            "${extra[@]}" --jq .body)
+          printf '%s' "$generated" > "$RUNNER_TEMP/generated.md"
+
+          notes=$(python tools/editor_tag.py --compose-notes \
+            --version "$VERSION" --previous "$PREVIOUS" \
+            --generated "$RUNNER_TEMP/generated.md" \
+            --out "$RUNNER_TEMP/release-notes.md")
+          echo "$notes"
+          echo "$notes" >> "$GITHUB_OUTPUT"
+
+      - name: Move the version to match the tag
+        if: steps.plan.outputs.bump == 'true'
+        env:
+          VERSION: ${{ steps.plan.outputs.version }}
+        run: |
+          python tools/cut_release.py "$VERSION"
+          git commit --all --message "Cut $VERSION"
+          # Before the tag, deliberately: if a merge landed while this ran,
+          # the push is rejected and nothing has been tagged.
+          git push origin HEAD:master
+
+      - name: Version fields agree
+        env:
+          VERSION: ${{ steps.plan.outputs.version }}
+        run: python tools/cut_release.py --check --expect "$VERSION" --allow-missing-notes
+
+      - name: Tag it
+        env:
+          TAG: ${{ steps.plan.outputs.tag }}
+          VERSION: ${{ steps.plan.outputs.version }}
+        run: |
+          git tag -a "$TAG" -m "Hero Siege Item Editor $VERSION"
+          git push origin "refs/tags/$TAG"
+
+      # If this fails, the tag exists with no release; create the release by
+      # hand from the composed notes. No retry machinery.
+      - name: Leave a draft release carrying the notes
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ steps.plan.outputs.tag }}
+          VERSION: ${{ steps.plan.outputs.version }}
+        run: |
+          gh release create "$TAG" --draft --verify-tag --title "Hero Siege Item Editor $VERSION" --notes-file "$RUNNER_TEMP/release-notes.md"
+
+      # Dispatched against master, not the tag, so a fix to the build
+      # workflow still applies to an already-tagged version. If this fails,
+      # run "Item Editor release" by hand with the same tag.
+      - name: Start the build
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ steps.plan.outputs.tag }}
+        run: |
+          gh workflow run editor-release.yml --ref master -f tag="$TAG" -f dry_run=false
+          echo "dispatched editor-release.yml for $TAG"
+
+      - name: Say what still needs a human
+        env:
+          TAG: ${{ steps.plan.outputs.tag }}
+          BUMPED: ${{ steps.plan.outputs.bump }}
+          SOURCE: ${{ steps.notes.outputs.source }}
+          VERSIONS: ${{ steps.notes.outputs.versions }}
+        run: |
+          {
+            echo "### Tagged $TAG"
+            echo
+            if [ "$BUMPED" = "true" ]; then
+              echo "APP_VERSION was moved to match, and that bump is on \`master\`."
+              echo
+              echo "This commit was made by github-actions[bot], so it does not fire"
+              echo "notify-hub.yml; the hub's submodule-pointer bump waits for the"
+              echo "next human merge to \`master\`."
+            else
+              echo "\`master\` was already at this version; nothing was rewritten."
+            fi
+            echo
+            echo "Notes source: \`$SOURCE\` (versions: $VERSIONS)."
+            if [ "$SOURCE" = "generated" ] || [ "$SOURCE" = "mixed" ]; then
+              echo
+              echo "**Rewrite the generated section for players before publishing** --"
+              echo "it is pull-request-title text, not player language."
+            fi
+            echo
+            echo "Remaining steps, all manual:"
+            echo "1. Wait for the Item Editor release run to finish."
+            echo "2. Download the exe from the draft and run the launch gate (module"
+            echo "   guide, \"CI build launch gate\")."
+            echo "3. Review the composed body, and rewrite any generated section."
+            echo "4. Publish. That fires notify-hub-release.yml."
+          } >> "$GITHUB_STEP_SUMMARY"
