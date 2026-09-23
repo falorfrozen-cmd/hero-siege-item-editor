@@ -296,6 +296,7 @@ class InfiniteVaultTests(unittest.TestCase):
         connection = sqlite3.connect(legacy_path)
         try:
             connection.execute("ALTER TABLE items DROP COLUMN custom_name")
+            connection.execute("DROP TABLE deleted_deposit_keys")
             connection.execute(
                 "UPDATE schema_meta SET value='2' WHERE key='schema_version'"
             )
@@ -340,6 +341,7 @@ class InfiniteVaultTests(unittest.TestCase):
         connection = sqlite3.connect(legacy_path)
         try:
             connection.execute("PRAGMA foreign_keys=OFF")
+            connection.execute("DROP TABLE deleted_deposit_keys")
             connection.execute("DROP INDEX items_collection_layout_idx")
             connection.execute("DROP INDEX items_collection_status_idx")
             connection.execute("DROP INDEX items_search_idx")
@@ -385,7 +387,7 @@ class InfiniteVaultTests(unittest.TestCase):
 
         migrated = vault_module.InfiniteVault(legacy_path)
         reopened = migrated.get_item(item.id)
-        self.assertEqual(migrated.schema_version, 6)
+        self.assertEqual(migrated.schema_version, vault_module.SCHEMA_VERSION)
         self.assertIsNone(reopened.page_index)
         self.assertIsNone(reopened.layout_x)
         self.assertIsNone(reopened.layout_y)
@@ -419,6 +421,7 @@ class InfiniteVaultTests(unittest.TestCase):
         connection = sqlite3.connect(legacy_path)
         try:
             connection.execute("DROP TABLE stash_pages")
+            connection.execute("DROP TABLE deleted_deposit_keys")
             connection.execute(
                 "UPDATE schema_meta SET value='5' WHERE key='schema_version'"
             )
@@ -428,7 +431,7 @@ class InfiniteVaultTests(unittest.TestCase):
             connection.close()
 
         migrated = vault_module.InfiniteVault(legacy_path)
-        self.assertEqual(migrated.schema_version, 6)
+        self.assertEqual(migrated.schema_version, vault_module.SCHEMA_VERSION)
         self.assertEqual(
             [(page.page_index, page.name) for page in migrated.list_stash_pages("Vault")],
             [(0, "Stash 1"), (1, "Stash 2"), (2, "Stash 3"), (3, "Stash 4")],

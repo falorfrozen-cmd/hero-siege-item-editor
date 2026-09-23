@@ -97,7 +97,7 @@ present it must be finite.
 
 ## SQLite model
 
-`infinite_vault.py` owns schema version 6. Opening schema 2, 3, 4, or 5 creates
+`infinite_vault.py` owns schema version 7. Opening schema 2, 3, 4, 5, or 6 creates
 one consistent pre-migration `.bak` first and migrates sequentially; a newer
 schema is rejected.
 
@@ -118,6 +118,9 @@ schema is rejected.
   `request_id`, canonical request hash, item ID, exact raw JSON, source and
   destination tab/key/position, expected whole-stash before/after hashes,
   observed hash, error, and status.
+- `deleted_deposit_keys`: durable import identities, raw hashes, and deletion
+  timestamps for intentionally deleted imported items. These survive removal of
+  their category and prevent the same import from recreating them.
 - `events`: append-only audit history.
 
 Transfer statuses are `prepared`, `committed`, `cancelled`, and `conflict`.
@@ -248,8 +251,11 @@ never choose a second destination and duplicate the item.
 - `GET /api/vault/history`: append-only event history and latest safe undo preview.
 - `POST /api/vault/deposit`: shared-stash source, key, collection, request ID.
 - `POST /api/vault/withdraw`: vault item, shared-stash target, request ID.
-- `POST /api/vault/collections`: create, rename, delete-empty.
-- `POST /api/vault/stashes`: append exactly one stash or rename one stash.
+- `POST /api/vault/collections`: create, rename, `previewDelete`, or `delete`.
+- `POST /api/vault/stashes`: add, rename, `previewDelete`, or `delete` one stash.
+  Deletion requires an integer `collectionId`, plus integer `pageIndex` for a
+  stash. `previewDelete` returns name, stash/item counts, and `previewToken`;
+  `delete` must send that exact token. Full contents are removed on confirmation.
 - `POST /api/vault/item`: move an available item between collections, change a
   Vault-only name, or add an exact positive amount to a proven native stack.
 - `POST /api/vault/layout`: initialize, place, or compact persistent pages.
@@ -260,9 +266,68 @@ never choose a second destination and duplicate the item.
   Shared Stash deposit may bind `destinationPageIndex` to one named Vault
   stash; the page and every item coordinate are part of the preview hash.
 - `POST /api/vault/undo`: state-checked latest metadata rollback.
+- `POST /api/vault/ingest`: HS AFK Expedition spool records, keyed by
+  `(expedition_id, seq)` through `deposit_key`; gear to the expedition's own
+  category on stashes named by rarity group (an expedition already in the older
+  **AFK Farm** category continues on its page there), native stackables to
+  **AFK Materials**; SQLite only. `deposit_many` stores a batch in one
+  transaction with one pre-mutation backup; `layout: "defer"` plus a final
+  `finalize: true` lays the expedition out once.
+- `GET /api/vault/items?lite=1`: grid rows without tooltip models;
+  `GET /api/vault/tooltips?ids=...` returns up to 200 models on demand.
+- `POST /api/vault/purge`: preview/delete every item of chosen rarity groups in
+  one category; see Confirmed deletion.
+- `GET /api/vault/ingest/status`: how many of one expedition's records the
+  Vault holds, has already returned to the Shared Stash, or has intentionally deleted.
 
 Collection management never edits a game save. Deposit and withdrawal always
 run under `SAVE_WRITE_LOCK` and refuse while the game is running.
+
+### Confirmed deletion
+
+The storage layer rechecks the content hash, last-category/stash constraints,
+and unresolved transfer ownership under its process lock and `BEGIN IMMEDIATE`.
+The hash covers the target identity, page identities/names, and full affected
+item records. Stale previews fail without deletion. Before deleting, a dedicated
+SQLite snapshot is written beside the database as
+`hs_infinite_vault.sqlite3.before-delete-<uuid>.bak`; backup failure aborts the
+operation. Item removal, page/category removal, deleted import identities, and
+the history event commit together. The API also holds `SAVE_WRITE_LOCK` and
+refuses while Hero Siege runs.
+Completed transfer journals remain as idempotency evidence; unresolved journals
+and reserved/pending items block deletion of their category or any of its tabs.
+
+Clean-up by rarity (`preview_item_purge` / `purge_items`) follows the same rules
+for an exact set of item ids the editor selects by catalog rarity group, never
+items with a Vault-only custom name: the preview token hashes the category and
+every selected row, a changed selection refuses the confirmation, a dedicated
+`before-delete` backup is written first, deleted imports keep their deposit keys,
+stashes it empties may be removed (the category keeps at least one), and
+`items_purged` is an undo barrier like the other deletions.
+
+AFK categories are found again through a `collection_created` event marker
+(`{"afkExpedition": id, "collectionId": n}`), so renaming a category never splits
+an expedition. `apply_named_layout` creates or names stashes and saves positions
+in one transaction; it renames only empty stashes that still carry the default
+`Stash N` name.
+
+`list_deposit_keys` includes live items, committed withdrawals, and deleted import
+identities. AFK ingest checks these before creating storage; direct `deposit` also
+refuses a deleted key under the write lock. A failed delete rolls back its import
+identities. Schema 6 to 7 migration preserves existing payloads and forces older
+editors to reject the database. Deletions made before schema 7 cannot be backfilled
+because their import identities were not retained.
+
+Page indexes are stable, so deleting a middle/first tab leaves a gap. Layout
+initialization and compaction pack into existing pages and append when necessary;
+they do not fill deleted gaps. Deletion is a metadata-undo barrier, preventing an
+older move/layout undo from sending an item back into a removed tab.
+
+Dedicated deletion backups are not overwritten or automatically pruned. To
+recover manually, close every editor instance and Hero Siege, preserve the
+current database, then replace it with the chosen pre-deletion `.bak`. This is a
+whole-Vault restore, including reverting later Vault changes; it does not restore
+or change game save files. There is no one-click deletion undo.
 
 ## Verification before every release
 
@@ -271,6 +336,8 @@ From the `HSItemEditor` directory:
 ```powershell
 python -m unittest test_infinite_vault -v
 python -m unittest test_vault_integration -v
+python -m unittest test_vault_deletion -v
+python -m unittest test_vault_ingest -v
 python -m unittest discover -s . -p 'test*.py' -v
 python -m PyInstaller --clean HeroSiegeItemEditor.spec
 ```
@@ -300,3 +367,51 @@ temporary directory, as `test_vault_integration.py` does.
 If a transfer is ever marked `conflict`, do not manually delete its SQLite row.
 The journal is the recoverable exact copy. Diagnose the recorded before/after
 hashes and source/target entry before adding a tested reconciliation rule.
+
+## Splitting a category (2.15.7)
+
+`preview_item_split(source, item_ids)` and `split_items(source, groups, *,
+preview_token, details=None, remove_emptied_pages=True)` move exactly the previewed
+available items of one category into other categories in one transaction. The
+preview token is derived from the same snapshot as a purge preview (source category,
+full item rows), so any change to those items invalidates it. `split_items` refuses
+pending transfers in the source or a destination and a destination equal to the
+source, writes `<vault>.before-split-<uuid>.bak` first, clears the moved items' grid
+positions for the caller to lay out, removes source stashes the move emptied (keeping
+at least one) and records `items_split`, an undo barrier like `items_purged`.
+`op_vault_afk_split` uses it for the shared AFK Farm category: items are grouped by
+the expedition their deposit key names (the key prefix of an expedition named by a
+stash `<id> · <date> · <label>`, or a slug whose hash matches), each group goes to
+`_afk_expedition_category`, then `_afk_group_layout`; AFK Farm is deleted when empty.
+Ingest now checks an expedition's marked category before the legacy AFK Farm page.
+
+## Reworking items: stacks and dismantle (2.15.9)
+
+`preview_item_rework(ids)` and `rework_items(remove=, update=, insert=,
+insert_collection=, preview_token=, event_type=, ...)` change a set of items in one
+transaction: removed items leave their deposit keys in `deleted_deposit_keys`
+(an AFK re-transfer reports them as duplicates), updated items get a validated new
+payload and keep their layout, inserted items arrive unplaced. The token covers the
+full rows of every removed or updated item; a `before-<event>` copy is written first;
+`items_stacked` and `items_dismantled` are undo barriers. `marked_collection_ids`
+lists the categories created with a marker (AFK expedition categories).
+Stacking (`_vault_stack_plan`) groups stackable classes 12-15 by class, base, sub,
+kind and `n`, skips custom-named items, `MATERIAL_SINGLETON_ADDRESSES` and stacks
+over 999, and fills stacks of 999 in grid order; AFK ingest runs it on AFK Materials
+and COMPACT ITEMS on the category. DISMANTLE (`op_vault_dismantle`) decides per item
+from the AFK spool (rarity 27, tier 32, corruption) or the catalog (rarity, tier
+letter): equipment classes 0-8, 10, 18 of rarity 6+ and tier 0-5 become the
+Prospector's fragments (recipes read live from the installed build), rarity below 6
+is deleted, anything else is kept; fragments top up AFK Materials stacks first.
+
+## Dismantle by rarity (2.15.10)
+
+`op_vault_dismantle` takes either `pageIndex` (one stash) or `groups` (rarity groups
+from `VAULT_RARITY_GROUPS`, the same grouping as CLEAN UP BY RARITY) for the whole
+category, never both. The preview returns per-group counts (`groups`); the token
+covers the chosen items and the AFK Materials fragment stacks, so a different choice
+needs a new review. `rework_items(remove_empty_stashes=True)` removes every empty stash
+of the categories the removal touched in the same transaction, also ones that were
+empty before (`removedPages`), keeping the lowest-numbered one when all are empty; the
+preview reports that count as `emptyStashes`. The event records `rarities` or
+`pageIndex`.

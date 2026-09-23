@@ -8,7 +8,83 @@ A local/offline save editor for **Hero Siege** (Pixel Prone Games). Manage items
 
 Single file, no install, no Python needed. Just run it.
 
-## What's new in v2.15.4
+## Local build: v2.15.10-s10 — dismantle a whole AFK category
+
+- **DISMANTLE BY RARITY…** in the category **…** menu of an AFK expedition category
+  does what a stash's DISMANTLE does, for every stash at once. Tick the rarities (for
+  example Satanic and Set, leaving Heroic), review the totals and confirm once:
+  Satanic and above equipment becomes the Prospector's fragments in AFK Materials,
+  items below Satanic are deleted, custom-named items stay. One backup is kept, and
+  the category's empty stashes can be removed in the same step (one always stays).
+
+## Local build: v2.15.9-s10-local — stacks and AFK dismantle
+
+- **Materials stack.** Keys, materials, runes and gems of the same kind merge into
+  native stacks of up to 999: automatically when AFK FARM transfers them to AFK
+  Materials, and in any category with **COMPACT ITEMS**. Custom-named items, the
+  game's single-item materials and larger manual stacks stay as they are. A repeated
+  AFK transfer cannot bring merged items back.
+- **DISMANTLE** on each stash of an AFK expedition category breaks Satanic, Angelic,
+  Heroic and Unholy equipment down the way the Prospector does it (D/C/B/A tier: 6,
+  13, 20 or 25 Satanic Crystal Fragments; S: a Gypsy's or Mallet Fragment; SS: a
+  Dice, Gypsy's or Mallet Fragment), stacked into AFK Materials. Items below Satanic
+  are deleted: gold cannot be added outside the game. Rarity and tier come from AFK
+  FARM's own records when they are on this computer, otherwise from the catalog. A
+  preview shows the counts first; a backup of the Vault is kept.
+
+## Local build: v2.15.8-s10-local — AFK stacks keep their count
+
+- AFK transfers keep a stackable item's native stack count (1 to 999), so the
+  Prospector fragment stacks AFK FARM 0.6.2 delivers arrive as full stacks. A count
+  outside that range is skipped with a reason; a stackable without a count stays one.
+
+## Local build: v2.15.7-s10-local — split the old AFK Farm category
+
+- **SPLIT BY EXPEDITION…** in the category menu of the shared **AFK Farm** category
+  moves every imported AFK item into its expedition's own category
+  (`AFK · <date> · <label>`), laid out on rarity stashes exactly like new imports.
+  Items are matched by their import identity, not by the stash they happen to sit
+  on. A preview lists the categories and counts first; the move is one transaction
+  with a dedicated `before-split` backup, emptied AFK Farm stashes are removed, and
+  AFK Farm itself is removed once nothing is left in it. Items without an AFK import
+  stay where they are. Later transfers of a split expedition go to its category.
+  Measured on a copy of a real Vault: 3,351 items in 1.1 s.
+
+## Local build: v2.15.6-s10-local — faster Vault, AFK categories, clean-up
+
+- **Large Vault categories open quickly.** The grid now loads only what it draws
+  (icon, size, position, rarity) and fetches an item's tooltip when you point at
+  it; stashes are drawn as they scroll into view, and moving an item redraws only
+  the two stashes involved. Measured on a 5,230-item AFK category: the listing went
+  from 3–5 s and 17.5 MB to about 0.2 s and 2.9 MB, and the page from about 36,000
+  elements to under 1,000 until you scroll. Tooltips are also cheaper to build
+  everywhere, because the catalog definitions are no longer copied per item.
+- **AFK transfers are about 60 times faster.** A batch of AFK records is stored in
+  one database transaction with one backup, instead of one full database backup per
+  item (measured: 500 records in about 2 s instead of about 130 s).
+- **Each AFK expedition gets its own category** (`AFK · <date> · <label>`), with
+  stashes named after the rarity of the gear inside: Unholy, Angelic, Heroic, Set,
+  Satanic, Runeword, Normal, Other, best first. Renaming the category keeps later
+  transfers of the same expedition in it. Expeditions that already started in the
+  shared **AFK Farm** category continue there.
+- **Clean up by rarity** (category **…** menu): delete every item of the rarities
+  you tick in one category, for example all Satanic items of an AFK run. Items with
+  a custom name are kept; a review shows the exact count first; a dedicated backup
+  is written; emptied stashes can be removed; deleted AFK imports do not come back
+  when the same expedition is transferred again. Hero Siege must be closed.
+
+## Local merged build: v2.15.5-s10-local
+
+This source build combines AFK Farm ingestion, confirmed category/stash deletion,
+and the local Miner helmet template. Deleting AFK items now retains their import
+identities, so retrying the same expedition cannot bring them back. Vault schema 7
+migrates older databases after a backup; older editors reject the upgraded schema.
+
+Run **`ItemEditor.bat`** from this folder to use the merged version. The published
+EXE above has not been rebuilt with these local changes. See
+[merge verification](MERGE_VERIFICATION_2026-09-22.md) for tests and known baseline failures.
+
+## Previously added in v2.15.4
 
 The red "the game runs under a different Windows user" warning no longer appears when
 the only thing that happened is that the game was started before your first forge; the
@@ -121,6 +197,19 @@ See [the v2.13.1 release notes](RELEASE_NOTES_v2.13.1.md).
 
 See [the v2.13.0 release notes](RELEASE_NOTES_v2.13.0.md) and the
 [Custom Item Forge engineering record](CUSTOM_ITEM_FORGE_RESEARCH.md).
+
+## Infinite Vault category and stash deletion
+
+- Choose a category, open its **…** menu, and select **DELETE CATEGORY** to
+  delete the complete category, all its stash tabs, and their items.
+- Each stash header has **DELETE STASH**, which removes only that tab and its
+  contents. A confirmation shows the exact name, tab count, and item count.
+- Every confirmed deletion creates a separate
+  `hs_infinite_vault.sqlite3.before-delete-<id>.bak` beside the Vault database.
+  These backups are retained across later edits; deletion is not a History undo.
+- Changed contents require a fresh confirmation. Close Hero Siege and resolve
+  pending transfers first. The last category and each category's last stash are
+  protected. Remaining stash names and item positions stay unchanged.
 
 ## Previously added in v2.12.0
 
@@ -429,6 +518,53 @@ tags, and leaves a draft; *Item Editor release* builds the exe with
 (`py -3 tools/cut_release.py --check`).
 
 The repo contains the Python source (`hs_item_editor_gui.py`) and the data files the editor needs. The exe on the Releases page has all of this bundled in — end users only need the exe.
+
+## Local API: AFK Expedition spool ingest
+
+[HS AFK Expedition](../HS-AFK-Expedition/README.md) writes the items an
+expedition produced to `%LOCALAPPDATA%\Hero_Siege\afk\spool\<expedition_id>.ndjson`.
+While the editor is running, that spool can be pushed into Infinite Vault
+through the same loopback server the UI uses (`127.0.0.1:8765`-`8774`; every
+`POST` needs a JSON body and the `X-Hero-Siege-Item-Editor: 1` header):
+
+- `POST /api/vault/ingest` with
+  `{"expedition_id": "...", "label": "optional text", "records": [spool records]}`
+  (at most 500 records per call). Records with `"kind": "item"` become native
+  stash entries built from the game's own definition (`a`, `b`, `c`, `j`, and
+  `n` when present): gear gets `w: 1` plus `m: 1` for uniques or `o: 1`
+  otherwise and lands in the expedition's own category
+  `AFK · <date> · <label or expedition_id>` on stashes named after its rarity
+  group (`Heroic`, `Satanic`, `Satanic (2)`, ...); an expedition that already has a
+  stash in the older shared **AFK Farm** category continues there on
+  `<expedition_id> · <date>[ · label]` (spill-over `... (2)`, `... (3)`). With
+  `"layout": "defer"` the gear stays unplaced until a request with
+  `"finalize": true` (records may be empty) lays out the whole expedition once, so
+  its rarity stashes come out in order. Each batch is one SQLite transaction per
+  category. The native stackable classes (Keys, Boss Parts /
+  Tarot, Materials, Runes / Gems / Orbs) become `o: 1` records in
+  **AFK Materials**. Positions come from the Vault's own layout planner.
+  Other record kinds are ignored, malformed records are reported under
+  `skipped` with a reason instead of failing the batch, and every record is
+  keyed by `(expedition_id, seq)`, so re-posting a spool deposits nothing new.
+  Import identities survive category/stash deletion and editor restarts; a retry
+  does not recreate deleted items or their category/stash.
+  Reply: `{"expedition_id", "deposited", "duplicate", "ignored",
+  "skipped": [{"seq", "reason"}], "collections": {"farm": {"id", "name",
+  "pageIndex", "pageName"}, "materials": {"id", "name"}}}`.
+- `GET /api/vault/tooltips?ids=<id>,<id>,...` (up to 200) returns
+  `{"tooltips": {id: gameTooltip}}` for available items; the grid uses it with
+  `GET /api/vault/items?...&lite=1`, which leaves the tooltip model out.
+- `POST /api/vault/purge` with `{"action": "preview"|"delete", "collectionId",
+  "groups": ["Satanic", ...], "previewToken", "removeEmptied": true}` deletes every
+  item of the chosen rarity groups in one category (custom-named items are kept).
+- `GET /api/vault/ingest/status?expedition_id=...` returns
+  `{"expedition_id", "deposited"}`: how many of that expedition's records the
+  Vault holds, has already returned to the Shared Stash, or has intentionally deleted.
+
+Only the SQLite vault is written, so ingest works while Hero Siege is running;
+returning the items to the Shared Stash is the ordinary Vault withdrawal and
+still requires the game to be closed. `HS-AFK-Expedition\tools\ingest_spool.py`
+is a standard-library client for this endpoint.
 
 ## Notes
 

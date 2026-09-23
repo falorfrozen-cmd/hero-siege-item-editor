@@ -155,6 +155,29 @@ class TooltipModelDatabase:
         value = self._stat_labels.get(str(int(stat_key)))
         return copy.deepcopy(value) if isinstance(value, dict) else {}
 
+    # Read-only views for ``build_tooltip_model``, which only reads these
+    # records and builds every output line from fresh dicts.  Copying a whole
+    # definition per item made a 5,000-item Vault category spend most of its
+    # load time in ``copy.deepcopy``.  Callers outside this module keep the
+    # defensive copies above.
+    def _profile_view(self, profile_id: str) -> Mapping[str, Any] | None:
+        if not self.available:
+            return None
+        value = self._profiles.get(profile_id)
+        return value if isinstance(value, dict) else None
+
+    def _definition_view(self, definition_id: str) -> Mapping[str, Any] | None:
+        if not self.available:
+            return None
+        value = self._definitions.get(definition_id)
+        return value if isinstance(value, dict) else None
+
+    def _stat_label_view(self, stat_key: int) -> Mapping[str, Any]:
+        if not self.available:
+            return {}
+        value = self._stat_labels.get(str(int(stat_key)))
+        return value if isinstance(value, dict) else {}
+
     def summary(self) -> dict[str, Any]:
         output = self.status.as_dict()
         if self.available:
@@ -675,7 +698,7 @@ def _dynamic_line(
     local = next(
         (row for row in definition["stats"] if int(row["statKey"]) == key), None
     )
-    global_label = db.stat_label(key)
+    global_label = db._stat_label_view(key)
     stat = {
         "statKey": key,
         "label": (
@@ -740,7 +763,7 @@ def build_tooltip_model(
                 "Dice identity targets are not yet verified for this compatible build."
             ),
         }
-    profile_model = database.profile(profile_id) if profile_id else None
+    profile_model = database._profile_view(profile_id) if profile_id else None
     canonical_name = str(profile.get("name") or row.get("name") or "Unknown item")
     alias = custom_name.strip() if isinstance(custom_name, str) and custom_name.strip() else None
     seed_values = {field: _seed(data.get(field)) for field in ("a", "i", "s")}
@@ -791,7 +814,7 @@ def build_tooltip_model(
         for component_index, component in enumerate(profile_model["components"]):
             save_field = str(component["saveField"])
             role = str(component["role"])
-            definition = database.definition(str(component["definitionId"]))
+            definition = database._definition_view(str(component["definitionId"]))
             if definition is None:  # Defensive; validated assets cannot reach this.
                 unsupported.append(f"definition_missing:{component['definitionId']}")
                 continue
@@ -984,7 +1007,7 @@ def build_tooltip_model(
         # per-address result.
         socket_line = lines_by_key.get(20)
         if socket_line is None:
-            socket_label = database.stat_label(20).get("label") or "Sockets"
+            socket_label = database._stat_label_view(20).get("label") or "Sockets"
             socket_line = _stat_line(
                 {
                     "statKey": 20,
