@@ -3226,6 +3226,7 @@ class InfiniteVault:
         event_type: str,
         collection_name: str | None = None,
         details: Mapping[str, Any] | None = None,
+        remove_empty_stashes: bool = False,
     ) -> dict[str, Any]:
         """Remove, change and add items in one backed-up transaction.
 
@@ -3235,7 +3236,10 @@ class InfiniteVault:
         (``raw_item_json``, ``source_item_key``, ``label``, ``source``) are added to
         ``insert_collection`` without a position. The removed and changed items
         must still match ``preview_token``. A ``before-<event>`` copy of the
-        database is written first, and the event is an undo barrier.
+        database is written first, and the event is an undo barrier. With
+        ``remove_empty_stashes`` every empty stash of the categories the removal
+        touched is removed as well (also ones that were empty before), keeping
+        at least one stash in each category.
         """
 
         if event_type not in self._REWORK_EVENTS:
@@ -3309,9 +3313,20 @@ class InfiniteVault:
                      item["source_key"], item["label"], item["source"], now, now),
                 )
                 inserted.append(item_id)
+            removed_pages: dict[str, list[int]] = {}
+            if remove_empty_stashes:
+                for collection_id in sorted({int(by_id[item_id]["collection_id"]) for item_id in remove_ids}):
+                    page_indexes = [int(row[0]) for row in connection.execute(
+                        "SELECT page_index FROM stash_pages WHERE collection_id=? ORDER BY page_index DESC",
+                        (collection_id,),
+                    )]
+                    gone = sorted(self._remove_emptied_pages(connection, collection_id, page_indexes))
+                    if gone:
+                        removed_pages[str(collection_id)] = gone
+                        connection.execute("UPDATE collections SET updated_at=? WHERE id=?", (now, collection_id))
             summary = {
                 "removed": len(remove_ids), "updated": len(updates), "inserted": len(inserted),
-                "insertedIds": inserted, "backupName": backup_path.name,
+                "insertedIds": inserted, "removedPages": removed_pages, "backupName": backup_path.name,
             }
             self._event(connection, event_type, collection_name=collection_name,
                         details={**dict(details or {}), **{k: v for k, v in summary.items() if k != "insertedIds"}})

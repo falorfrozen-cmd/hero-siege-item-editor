@@ -403,3 +403,15 @@ from the AFK spool (rarity 27, tier 32, corruption) or the catalog (rarity, tier
 letter): equipment classes 0-8, 10, 18 of rarity 6+ and tier 0-5 become the
 Prospector's fragments (recipes read live from the installed build), rarity below 6
 is deleted, anything else is kept; fragments top up AFK Materials stacks first.
+
+## Dismantle by rarity (2.15.10)
+
+`op_vault_dismantle` takes either `pageIndex` (one stash) or `groups` (rarity groups
+from `VAULT_RARITY_GROUPS`, the same grouping as CLEAN UP BY RARITY) for the whole
+category, never both. The preview returns per-group counts (`groups`); the token
+covers the chosen items and the AFK Materials fragment stacks, so a different choice
+needs a new review. `rework_items(remove_empty_stashes=True)` removes every empty stash
+of the categories the removal touched in the same transaction, also ones that were
+empty before (`removedPages`), keeping the lowest-numbered one when all are empty; the
+preview reports that count as `emptyStashes`. The event records `rarities` or
+`pageIndex`.

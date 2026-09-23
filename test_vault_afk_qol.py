@@ -421,6 +421,69 @@ class AfkDismantleTests(unittest.TestCase):
         self.assertEqual(len(self.store.list_all_available_items(collection=category)), 2)
         self.assertTrue(editor.vault_meta()["collections"][[c["id"] for c in editor.vault_meta()["collections"]].index(category)]["afk"])
 
+    def test_a_whole_category_by_rarity(self):
+        self.ingest([material(1, 60, 990, name="Satanic Crystal Fragment")], "exp_mats")
+        gear = [belt(1, "Satanic belt 1", 0), belt(2, "Satanic belt 2", 0), belt(3, "Normal belt 3", 0, unique=False),
+                belt(4, "Heroic belt 4", 12), belt(5, "Satanic belt 5", 0), belt(6, "Angelic belt 6", 44)]
+        result = self.ingest(gear, "exp_all")
+        self.spool("exp_all", {1: (8, 6, 1), 2: (8, 6, 3), 3: (8, 2, 0), 4: (8, 9, 4), 5: (8, 6, 2), 6: (8, 7, 0)})
+        category = result["collections"]["farm"]["id"]
+        named = next(r for r in self.store.list_all_available_items(collection=category) if r.label == "Satanic belt 5")
+        self.store.set_item_custom_name(named.id, "Keeper")
+        spare = self.store.add_stash_page(category)
+        self.store.rename_stash_page(category, spare.page_index, "Already empty")
+        stashes_before = {p.name for p in self.store.list_stash_pages(category)}
+        self.assertTrue({"Satanic", "Normal", "Heroic", "Angelic", "Already empty"} <= stashes_before)
+
+        body = {"collectionId": category, "groups": ["Satanic", "Normal", "Heroic"], "removeEmptied": True}
+        preview = editor.op_vault_dismantle({**body, "action": "preview"})
+        self.assertNotIn("err", preview, preview.get("err"))
+        self.assertEqual(
+            (preview["dismantle"], preview["delete"], preview["keptNamed"], preview["fragments"], preview["random"]),
+            (3, 1, 1, 38, 1),
+        )
+        self.assertEqual(preview["groups"]["Satanic"], {"dismantle": 2, "delete": 0, "keep": 0, "keptNamed": 1})
+        self.assertEqual(preview["emptyStashes"], 3, "Normal and Heroic empty out; one stash was empty already")
+        self.assertNotIn("Angelic", preview["groups"], "an unticked rarity is not touched")
+        changed = editor.op_vault_dismantle({**body, "groups": ["Satanic", "Heroic"], "action": "dismantle",
+                                             "previewToken": preview["previewToken"]})
+        self.assertIn("err", changed, "a different choice needs its own review")
+
+        done = editor.op_vault_dismantle({**body, "action": "dismantle", "previewToken": preview["previewToken"]})
+        self.assertNotIn("err", done, done.get("err"))
+        self.assertEqual(done["removedStashes"], 3)
+        self.assertIn("removed 3 empty stashes", done["ok"])
+        self.assertIn("Satanic Crystal Fragment", done["ok"], "fragment names keep their capitals")
+        left = sorted(r.label for r in self.store.list_all_available_items(collection=category))
+        self.assertEqual(left, ["Angelic belt 6", "Satanic belt 5"], "the unticked Angelic and the named item stay")
+        stashes_after = {p.name for p in self.store.list_stash_pages(category)}
+        self.assertEqual(stashes_before - stashes_after, {"Normal", "Heroic", "Already empty"},
+                         "the stash with the kept item stays")
+        materials = editor._afk_find_collection(self.store, editor.AFK_INGEST_MATERIALS_COLLECTION)
+        crystal = sorted(r.decoded_item()["data"]["o"] for r in self.store.list_all_available_items(collection=materials.id)
+                         if r.label == "Satanic Crystal Fragment")
+        self.assertEqual(crystal, [29.0, 999.0])
+        self.assertTrue(list(self.root.glob("vault.sqlite3.before-items-dismantled-*.bak")))
+        self.assertEqual(self.ingest(gear, "exp_all")["deposited"], 0, "a repeated transfer cannot bring them back")
+        dismantled = next(e for e in self.store.list_events(limit=5) if e["eventType"] == "items_dismantled")
+        self.assertEqual(dismantled["details"]["rarities"], ["Heroic", "Normal", "Satanic"])
+        self.assertEqual(sum(len(pages) for pages in dismantled["details"]["removedPages"].values()), 3)
+
+    def test_the_last_stash_of_a_category_stays(self):
+        result = self.ingest([belt(1, "Satanic belt 1", 0), belt(2, "Satanic belt 2", 0)], "exp_one")
+        self.spool("exp_one", {1: (8, 6, 0), 2: (8, 6, 1)})
+        category = result["collections"]["farm"]["id"]
+        body = {"collectionId": category, "groups": ["Satanic"], "removeEmptied": True}
+        self.store.add_stash_page(category)
+        preview = editor.op_vault_dismantle({**body, "action": "preview"})
+        self.assertEqual(preview["emptyStashes"], 1, "two stashes end up empty; one of them stays")
+        done = editor.op_vault_dismantle({**body, "action": "dismantle", "previewToken": preview["previewToken"]})
+        self.assertNotIn("err", done, done.get("err"))
+        self.assertEqual(self.store.list_all_available_items(collection=category), [])
+        self.assertEqual([p.page_index for p in self.store.list_stash_pages(category)], [0], "the first stash stays")
+        for bad in ({"groups": []}, {"groups": ["Bogus"]}, {"groups": ["Satanic"], "pageIndex": 0}, {}):
+            self.assertIn("err", editor.op_vault_dismantle({"action": "preview", "collectionId": category, **bad}), bad)
+
 
 class AfkFarmSplitTests(unittest.TestCase):
     """The shared legacy AFK Farm category is split into one category per

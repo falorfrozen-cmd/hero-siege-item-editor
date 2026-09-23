@@ -195,7 +195,7 @@ def _resource_base() -> Path:
 BASE = _resource_base()
 CATALOG_FILE = BASE / "hs_full_catalog.json"
 PORT = 8765
-APP_VERSION = "2.15.9-s10-local"
+APP_VERSION = "2.15.10-s10-local"
 APPLICATION_ID = "hero-siege-item-editor"
 CATALOG_PROFILE = "Season 10"
 MAX_POST_BYTES = 2 * 1024 * 1024
@@ -4584,26 +4584,39 @@ def _dismantle_decision(facts: dict) -> str:
     return "keep"
 
 
-def _vault_dismantle_plan(store, collection_id: int, page_index: int) -> dict:
-    records = [r for r in store.list_all_available_items(collection=collection_id) if r.page_index == page_index]
+def _vault_dismantle_plan(store, collection_id: int, page_index: int | None = None,
+                          groups: set[str] | None = None) -> dict:
+    """What DISMANTLE does to one stash (``page_index``) or to every item of the
+    chosen rarity groups in the category (``groups``), counted per group too."""
+
+    records = store.list_all_available_items(collection=collection_id)
+    if page_index is not None:
+        records = [r for r in records if r.page_index == page_index]
+    if groups is not None:
+        records = [r for r in records if _vault_item_derived(r)["group"] in groups]
     spool = _afk_spool_facts(records)
     plan = {"remove": [], "dismantle": 0, "delete": 0, "keep": 0, "keptNamed": 0, "fragments": 0, "random": 0,
-            "outputs": {}, "fromRecords": 0}
+            "outputs": {}, "fromRecords": 0, "groups": {}}
     rng = random.SystemRandom()
     for record in records:
+        tally = plan["groups"].setdefault(_vault_item_derived(record)["group"],
+                                          {"dismantle": 0, "delete": 0, "keep": 0, "keptNamed": 0})
         if record.custom_name:
             plan["keptNamed"] += 1
+            tally["keptNamed"] += 1
             continue
         facts = spool.get(record.id)
         plan["fromRecords"] += facts is not None
-        decision = _dismantle_decision(facts or _vault_catalog_facts(record))
+        facts = facts or _vault_catalog_facts(record)
+        decision = _dismantle_decision(facts)
+        tally[decision] += 1
         if decision == "keep":
             plan["keep"] += 1
             continue
         plan["remove"].append(record.id)
         plan[decision] += 1
         if decision == "dismantle":
-            tier = (facts or _vault_catalog_facts(record))["tier"]
+            tier = facts["tier"]
             if tier in PROSPECT_TIER_FRAGMENTS:
                 base, amount = 60, PROSPECT_TIER_FRAGMENTS[tier]
                 plan["fragments"] += amount
@@ -4647,20 +4660,28 @@ def _fragment_stack_changes(outputs: dict[int, int], materials_records) -> tuple
 
 
 def op_vault_dismantle(body: dict) -> dict:
-    """Preview or run DISMANTLE on one stash of an AFK expedition category.
+    """Preview or run DISMANTLE in an AFK expedition category: on one stash
+    (``pageIndex``) or on every item of the chosen rarity groups (``groups``).
 
     Satanic and above equipment the Prospector takes becomes its fragments in
     AFK Materials (stacked); items below Satanic are deleted (they cannot be
     sold outside the game); custom-named and other items stay. One backed-up
     transaction; removed AFK imports cannot come back with a repeated transfer.
+    ``removeEmptied`` also removes every stash of the category that is empty
+    afterwards (one stays); the preview counts them as ``emptyStashes``.
     """
 
     try:
-        collection_id, page_index = body.get("collectionId"), body.get("pageIndex")
+        collection_id, page_index, groups = body.get("collectionId"), body.get("pageIndex"), body.get("groups")
         if isinstance(collection_id, bool) or not isinstance(collection_id, int):
             raise VaultValidationError("A concrete Vault category is required.")
-        if isinstance(page_index, bool) or not isinstance(page_index, int) or page_index < 0:
-            raise VaultValidationError("A concrete stash is required.")
+        if groups is None:
+            if isinstance(page_index, bool) or not isinstance(page_index, int) or page_index < 0:
+                raise VaultValidationError("A concrete stash is required.")
+        elif page_index is not None:
+            raise VaultValidationError("Dismantle one stash or chosen rarities, not both.")
+        elif not isinstance(groups, list) or not groups or any(group not in VAULT_RARITY_GROUPS for group in groups):
+            raise VaultValidationError("Choose at least one rarity to dismantle.")
         action = body.get("action")
         if action not in {"preview", "dismantle"}:
             raise VaultValidationError("Unknown dismantle action.")
@@ -4668,16 +4689,24 @@ def op_vault_dismantle(body: dict) -> dict:
             store = vault_store()
             if collection_id not in store.marked_collection_ids(AFK_INGEST_MARKER):
                 return {"err": "Dismantle is available in AFK expedition categories."}
-            plan = _vault_dismantle_plan(store, collection_id, page_index)
-            counts = {k: plan[k] for k in ("dismantle", "delete", "keep", "keptNamed", "fragments", "random", "fromRecords")}
+            plan = _vault_dismantle_plan(store, collection_id, page_index=page_index,
+                                         groups=set(groups) if groups is not None else None)
+            counts = {k: plan[k] for k in ("dismantle", "delete", "keep", "keptNamed", "fragments", "random",
+                                           "fromRecords", "groups")}
             if not plan["remove"]:
-                return {"err": "Nothing in this stash can be dismantled or cleared.", **counts}
+                where = "this stash" if groups is None else "the chosen rarities"
+                return {"err": f"Nothing in {where} can be dismantled or cleared.", **counts}
             materials = _afk_find_collection(store, AFK_INGEST_MATERIALS_COLLECTION)
             materials_records = store.list_all_available_items(collection=materials.id) if materials else []
             watched = [r.id for r in materials_records if (key := _vault_stack_identity(r)) and key[0] == 14]
             token = store.preview_item_rework(plan["remove"] + watched)
             if action == "preview":
-                return {**counts, "previewToken": token}
+                removing = set(plan["remove"])
+                occupied = {r.page_index for r in store.list_all_available_items(collection=collection_id)
+                            if r.id not in removing and r.page_index is not None}
+                stashes = [p.page_index for p in store.list_stash_pages(collection_id)]
+                empty = sum(1 for index in stashes if index not in occupied)
+                return {**counts, "emptyStashes": min(empty, len(stashes) - 1), "previewToken": token}
             if body.get("previewToken") != token:
                 return {"err": "The stash or AFK Materials changed. Review again."}
             if materials is None:
@@ -4685,22 +4714,29 @@ def op_vault_dismantle(body: dict) -> dict:
             updates, inserts = _fragment_stack_changes(plan["outputs"], materials_records)
             rework = store.preview_item_rework(plan["remove"] + [item_id for item_id, _ in updates])
             name = next((row.name for row in store.list_collections() if row.id == collection_id), None)
+            scope = {"pageIndex": page_index} if groups is None else {"rarities": sorted(set(groups))}
             result = store.rework_items(
                 remove=plan["remove"], update=updates, insert=inserts, insert_collection=materials.id,
                 preview_token=rework, event_type="items_dismantled", collection_name=name,
-                details={"collectionId": collection_id, "pageIndex": page_index, **counts,
+                details={"collectionId": collection_id, **scope, **counts,
                          "outputs": {str(k): v for k, v in plan["outputs"].items()}},
+                remove_empty_stashes=body.get("removeEmptied") is True,
             )
             if updates or inserts:
                 _vault_initialize_layout(store, materials.id)
+        removed_stashes = sum(len(pages) for pages in result["removedPages"].values())
         parts = []
         if plan["dismantle"]:
             got = ", ".join(f"{amount} {PROSPECT_FRAGMENT_NAMES.get(base, base)}" for base, amount in sorted(plan["outputs"].items()))
             parts.append(f"dismantled {plan['dismantle']} into {got}")
         if plan["delete"]:
             parts.append(f"deleted {plan['delete']} below Satanic")
+        if removed_stashes:
+            parts.append(f"removed {removed_stashes} empty stash{'es' if removed_stashes != 1 else ''}")
+        message = "; ".join(parts) or "nothing changed"
         return {**counts, **result, "outputs": {PROSPECT_FRAGMENT_NAMES.get(b, str(b)): a for b, a in plan["outputs"].items()},
-                "backup": result["backupName"], "ok": ("; ".join(parts) or "Nothing changed").capitalize()}
+                "removedStashes": removed_stashes, "backup": result["backupName"],
+                "ok": message[:1].upper() + message[1:]}
     except (VaultError, OSError, sqlite3.Error, TypeError, ValueError) as exc:
         return {"err": str(exc)}
 
@@ -10268,6 +10304,7 @@ async function openVault(reset=true){
         <div class="vault-tool-row"><button class="vault-mini" id="vaultrefresh">REFRESH</button><button class="vault-mini" id="vaultcompact">COMPACT ITEMS</button></div>
         <button class="vault-mini" id="vaulthistory">HISTORY / UNDO</button>
         <button class="vault-mini danger" id="vaultcleanup" ${vaultMeta.gameRunning?'disabled':''} title="Delete every item of chosen rarities in this category">CLEAN UP BY RARITY…</button>
+        ${(collections.find(c=>String(c.id)===String(vaultState.collectionId))||{}).afk?`<button class="vault-mini danger" id="vaultdismantleall" title="Break Satanic and above down like the Prospector in every stash of the rarities you tick; delete what is below Satanic">DISMANTLE BY RARITY…</button>`:''}
         ${(collections.find(c=>String(c.id)===String(vaultState.collectionId))||{}).name==='AFK Farm'?`<button class="vault-mini" id="vaultafksplit" ${vaultMeta.gameRunning?'disabled':''} title="Move each expedition into its own category, sorted into rarity stashes">SPLIT BY EXPEDITION…</button>`:''}
       </div></details>
     </div>
@@ -10287,6 +10324,7 @@ async function openVault(reset=true){
   document.getElementById('vaulthistory').onclick=openVaultHistory;
   document.getElementById('vaultcleanup').onclick=openVaultCleanup;
   const afkSplitButton=document.getElementById('vaultafksplit');if(afkSplitButton)afkSplitButton.onclick=openVaultAfkSplit;
+  const dismantleAllButton=document.getElementById('vaultdismantleall');if(dismantleAllButton)dismantleAllButton.onclick=openVaultDismantleByRarity;
   await loadVaultItems();
 }
 function vaultBulkSessionKey(direction,sourceTab='all',collectionId='all',destinationTab='auto'){return `hsVaultBulk:${direction}:${sourceTab}:${collectionId}:${destinationTab}`}
@@ -10626,6 +10664,13 @@ function openVaultCleanup(){
 function vaultCategoryIsAfk(){
   return !!((vaultMeta&&vaultMeta.collections)||[]).find(c=>String(c.id)===String(vaultState.collectionId)&&c.afk);
 }
+function vaultDismantleSummary(preview){
+  const lines=[];
+  if(preview.dismantle)lines.push(`<strong>Dismantle ${preview.dismantle} item${preview.dismantle===1?'':'s'}</strong> → ${preview.fragments?`${preview.fragments} Satanic Crystal Fragments`:''}${preview.fragments&&preview.random?' and ':''}${preview.random?`${preview.random} random S/SS fragment${preview.random===1?'':'s'} (Dice, Gypsy's or Mallet)`:''}`);
+  if(preview.delete)lines.push(`<strong>Delete ${preview.delete} item${preview.delete===1?'':'s'} below Satanic</strong> (no gold: they cannot be sold outside the game)`);
+  if(preview.keep||preview.keptNamed)lines.push(`Keep ${preview.keep+preview.keptNamed} item${preview.keep+preview.keptNamed===1?'':'s'} (custom-named, or not taken by the Prospector)`);
+  return lines.map(line=>`<div class="vault-bulk-note">${line}</div>`).join('');
+}
 async function openVaultDismantle(pageIndex,stashName){
   const previous=document.getElementById('sockmodal');if(previous)previous.remove();
   const modal=document.createElement('div');modal.id='sockmodal';
@@ -10637,11 +10682,7 @@ async function openVaultDismantle(pageIndex,stashName){
   const body={collectionId:+vaultState.collectionId,pageIndex};
   const preview=await j('/api/vault/dismantle',{method:'POST',body:JSON.stringify({...body,action:'preview'})});
   if(preview.err){host.innerHTML=`<strong>Nothing to dismantle</strong><div class="vault-bulk-note warn">${esc(preview.err)}</div>`;return}
-  const lines=[];
-  if(preview.dismantle)lines.push(`<strong>Dismantle ${preview.dismantle} item${preview.dismantle===1?'':'s'}</strong> → ${preview.fragments?`${preview.fragments} Satanic Crystal Fragments`:''}${preview.fragments&&preview.random?' and ':''}${preview.random?`${preview.random} random S/SS fragment${preview.random===1?'':'s'} (Dice, Gypsy's or Mallet)`:''}`);
-  if(preview.delete)lines.push(`<strong>Delete ${preview.delete} item${preview.delete===1?'':'s'} below Satanic</strong> (no gold: they cannot be sold outside the game)`);
-  if(preview.keep||preview.keptNamed)lines.push(`Keep ${preview.keep+preview.keptNamed} item${preview.keep+preview.keptNamed===1?'':'s'} (custom-named, or not taken by the Prospector)`);
-  host.innerHTML=lines.map(line=>`<div class="vault-bulk-note">${line}</div>`).join('');
+  host.innerHTML=vaultDismantleSummary(preview);
   go.textContent=`DISMANTLE ${preview.dismantle+preview.delete} ITEM${preview.dismantle+preview.delete===1?'':'S'}`;go.disabled=false;
   go.onclick=async()=>{
     if(busy)return;busy=true;go.disabled=true;go.textContent='WORKING…';
@@ -10653,6 +10694,47 @@ async function openVaultDismantle(pageIndex,stashName){
     }finally{busy=false}
   };
   go.focus();
+}
+function openVaultDismantleByRarity(){
+  const rows=vaultState.rows||[],counts={};
+  for(const row of rows){if(row.customName)continue;const group=vaultRowGroup(row);counts[group]=(counts[group]||0)+1}
+  const groups=VAULT_RARITY_GROUPS.filter(group=>counts[group]);
+  if(!groups.length){flash({err:'This category has no item to dismantle.'});return}
+  const previous=document.getElementById('sockmodal');if(previous)previous.remove();
+  const modal=document.createElement('div');modal.id='sockmodal';
+  const category=(vaultMeta.collections||[]).find(c=>String(c.id)===String(vaultState.collectionId));
+  modal.innerHTML=`<div id="sockbox" role="dialog" aria-modal="true" aria-labelledby="vaultdismantlealltitle" style="width:min(600px,92vw)"><h3 id="vaultdismantlealltitle">Dismantle ${esc(category?category.name:'this category')}</h3><div class="muted" style="margin:6px 0 10px">Every stash of the rarities you tick is handled in one step. Satanic, Angelic, Heroic and Unholy equipment is broken down like the Prospector does it; the fragments go to AFK Materials, stacked. Items below Satanic are deleted: they cannot be sold outside the game. Custom-named items stay. A backup of the Vault is kept first.</div><div class="vault-cleanup-groups">${groups.map(group=>`<label class="jlrow" style="justify-content:flex-start;gap:10px"><input type="checkbox" value="${attr(group)}"><span class="r-${attr(group)}">${esc(group)}</span><span class="muted">${counts[group]} item${counts[group]===1?'':'s'}</span></label>`).join('')}</div><label class="jlrow" style="justify-content:flex-start;gap:10px;margin-top:6px"><input type="checkbox" id="vaultdismantleallempty" checked><span>Also remove the category's empty stashes (one always stays)</span></label><div id="vaultdismantleallpreview" class="vault-bulk-preview" role="status" aria-live="polite"><strong>Tick the rarities to dismantle.</strong></div><div class="vault-bulk-actions"><button class="act vault-bulk-confirm out" id="vaultdismantleallgo" type="button" disabled>REVIEW</button><button class="act" id="vaultdismantleallcancel" type="button">CANCEL</button></div></div>`;
+  document.body.appendChild(modal);
+  const go=document.getElementById('vaultdismantleallgo'),cancel=document.getElementById('vaultdismantleallcancel'),host=document.getElementById('vaultdismantleallpreview'),boxes=[...modal.querySelectorAll('.vault-cleanup-groups input[type=checkbox]')],emptied=document.getElementById('vaultdismantleallempty');
+  let preview=null,busy=false;
+  const close=()=>{if(!busy)modal.remove()};cancel.onclick=close;modal.onclick=e=>{if(e.target===modal)close()};modal.onkeydown=e=>{if(e.key==='Escape')close()};
+  const chosen=()=>boxes.filter(box=>box.checked).map(box=>box.value);
+  const stashNote=()=>{const note=document.getElementById('vaultdismantleallstashes');if(note&&preview)note.textContent=`${preview.emptyStashes} empty stash${preview.emptyStashes===1?'':'es'} afterwards: ${emptied.checked?'removed':'kept'}.`};
+  emptied.onchange=stashNote;
+  boxes.forEach(box=>box.onchange=()=>{preview=null;const picked=chosen();go.disabled=!picked.length;go.textContent='REVIEW';host.innerHTML=picked.length?`<strong>${picked.reduce((sum,group)=>sum+counts[group],0)} items selected.</strong><div class="vault-bulk-note">Review to see what happens to them before anything changes.</div>`:'<strong>Tick the rarities to dismantle.</strong>'});
+  go.onclick=async()=>{
+    const groupsChosen=chosen();if(!groupsChosen.length||busy)return;busy=true;go.disabled=true;
+    const body={collectionId:+vaultState.collectionId,groups:groupsChosen};
+    try{
+      if(!preview){
+        go.textContent='CHECKING…';
+        const result=await j('/api/vault/dismantle',{method:'POST',body:JSON.stringify({...body,action:'preview'})});
+        if(result.err){host.innerHTML=`<strong>Nothing to dismantle</strong><div class="vault-bulk-note warn">${esc(result.err)}</div>`;go.textContent='REVIEW';return}
+        preview={...result,groupsChosen};
+        const parts=Object.entries(result.groups||{}).filter(([,tally])=>tally.dismantle+tally.delete).map(([group,tally])=>`${esc(group)} ${tally.dismantle+tally.delete}`).join(' · ');
+        host.innerHTML=`${vaultDismantleSummary(result)}${parts?`<div class="vault-bulk-tabs"><span>${parts}</span></div>`:''}${result.emptyStashes?'<div class="vault-bulk-note" id="vaultdismantleallstashes"></div>':''}<div class="vault-bulk-note warn">Dismantled or deleted AFK items are not brought back by transferring the same expedition again.</div>`;
+        stashNote();
+        go.textContent=`DISMANTLE ${result.dismantle+result.delete} ITEM${result.dismantle+result.delete===1?'':'S'}`;
+        return;
+      }
+      go.textContent='WORKING…';
+      const done=await j('/api/vault/dismantle',{method:'POST',body:JSON.stringify({collectionId:body.collectionId,groups:preview.groupsChosen,action:'dismantle',previewToken:preview.previewToken,removeEmptied:emptied.checked})});
+      flash(done);
+      if(done.err){preview=null;host.innerHTML=`<strong>Nothing was changed</strong><div class="vault-bulk-note warn">${esc(done.err)}</div>`;go.textContent='REVIEW';return}
+      busy=false;modal.remove();vaultCompareItems.clear();await openVault(false);
+    }finally{busy=false;if(document.body.contains(modal))go.disabled=!chosen().length}
+  };
+  if(boxes[0])boxes[0].focus();
 }
 async function openVaultAfkSplit(){
   if(GAME_RUNNING){flash({err:'Close Hero Siege before reorganizing the Vault.'});return}
