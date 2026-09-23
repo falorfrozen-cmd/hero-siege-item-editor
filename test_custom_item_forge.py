@@ -302,7 +302,6 @@ class CustomItemForgeTests(unittest.TestCase):
         self.assertIn("!row.advanced||showUnknown.checked", source)
         self.assertNotIn('data-fe-unknown checked', source)
         self.assertIn("row.safeEditable?'':'readonly'", source)
-        self.assertTrue((BASE / "CLAUDE_CUSTOM_FORGE_STAT_DECODE_REQUEST.md").is_file())
 
     def test_atomic_source_and_runtime_files_round_trip(self):
         result = self.store.apply(

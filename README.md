@@ -423,6 +423,11 @@ The standalone repository runs all application tests. The deeper generated-pool
 parity class is skipped unless the separate research oracle and fixtures are
 checked out in a sibling `_research` directory.
 
+Releases are cut from GitHub Actions: *Item Editor tag* moves `APP_VERSION`,
+tags, and leaves a draft; *Item Editor release* builds the exe with
+`requirements-build.txt` and attaches it. The tooling is in `tools/`
+(`py -3 tools/cut_release.py --check`).
+
 The repo contains the Python source (`hs_item_editor_gui.py`) and the data files the editor needs. The exe on the Releases page has all of this bundled in — end users only need the exe.
 
 ## Notes

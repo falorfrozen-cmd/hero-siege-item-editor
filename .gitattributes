@@ -1,0 +1,4 @@
+# The data files are pinned by SHA-256 of their exact committed bytes
+# (exact_tooltip.py, dice_skill_selector.py). Never let a checkout rewrite
+# their line endings, whatever core.autocrlf says.
+*.json -text
