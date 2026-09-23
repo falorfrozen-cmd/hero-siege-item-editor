@@ -125,6 +125,12 @@ class ItemEditorSeason10Tests(unittest.TestCase):
         self.old_catalog_profiles = [row.get("rollProfile") for row in editor.CAT]
         self.old_catalog_selectors = [row.get("skillSelector") for row in editor.CAT]
         editor.SAVES = self.saves
+        # The Global Item Finder also searches the Infinite Vault: keep that in
+        # the temporary folder too, never the player's real Vault.
+        self.old_vault = (editor.VAULT_DB_FILE, editor._VAULT_STORE, editor._VAULT_STORE_PATH)
+        editor.VAULT_DB_FILE = self.saves / "hs_infinite_vault.sqlite3"
+        editor._VAULT_STORE = None
+        editor._VAULT_STORE_PATH = None
         editor.LOADOUTS_FILE = self.saves / "hs_loadouts.json"
         editor.BUILD_EXPORT_DIR = self.saves / "exports"
         editor.ROLL_DB = FixtureRollDatabase()
@@ -183,6 +189,7 @@ class ItemEditorSeason10Tests(unittest.TestCase):
     def tearDown(self):
         self.game_patch.stop()
         editor.SAVES = self.old_saves
+        editor.VAULT_DB_FILE, editor._VAULT_STORE, editor._VAULT_STORE_PATH = self.old_vault
         editor.LOADOUTS_FILE = self.old_loadouts_file
         editor.BUILD_EXPORT_DIR = self.old_build_export_dir
         editor.ROLL_DB = self.old_roll_db
