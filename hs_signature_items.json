@@ -34,6 +34,33 @@
         "affix": null,
         "lore": "Every monster wants the throne. Let them die trying to take it."
       }
+    },
+    {
+      "id": "miner",
+      "name": "Miner's Helmet",
+      "base": {
+        "cls": 0,
+        "key": "helmet_normal_great_helm",
+        "name": "Great Helm"
+      },
+      "tagline": "A reinforced mining helmet: 4x ore while worn, and Vein Resonance digs the two nearest veins with every finished dig.",
+      "needs": "ForgePact 1.4.5 or later",
+      "config": {
+        "keepNative": false,
+        "stats": {
+          "154": 1000,
+          "29": 500,
+          "25": 20,
+          "173": 20,
+          "281": 5
+        },
+        "name": "Miner's Helmet",
+        "rarity": 10,
+        "tier": 5,
+        "mechanic": "miner",
+        "affix": "4x mining ore while equipped\nVein Resonance: each finished dig also digs the two nearest veins",
+        "lore": "Below the mountain, every glimmer is a promise."
+      }
     }
   ]
 }
