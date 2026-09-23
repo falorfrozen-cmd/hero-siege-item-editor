@@ -8,6 +8,12 @@ A local/offline save editor for **Hero Siege** (Pixel Prone Games). Manage items
 
 Single file, no install, no Python needed. Just run it.
 
+## Local build: v2.15.8-s10-local — AFK stacks keep their count
+
+- AFK transfers keep a stackable item's native stack count (1 to 999), so the
+  Prospector fragment stacks AFK FARM 0.6.2 delivers arrive as full stacks. A count
+  outside that range is skipped with a reason; a stackable without a count stays one.
+
 ## Local build: v2.15.7-s10-local — split the old AFK Farm category
 
 - **SPLIT BY EXPEDITION…** in the category menu of the shared **AFK Farm** category

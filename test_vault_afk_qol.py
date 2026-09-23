@@ -270,6 +270,31 @@ class VaultAfkQolTests(unittest.TestCase):
         self.assertEqual(self.store.find_marked_collection("afkExpedition", "x-1").name, "Renamed")
 
 
+class AfkStackCountTests(unittest.TestCase):
+    """A native stack keeps its count in the Vault (Prospector fragments come as
+    stacks of up to 999); a stackable drop without a count stays a single."""
+
+    setUp = VaultAfkQolTests.setUp
+    ingest = VaultAfkQolTests.ingest
+
+    def test_stack_counts_are_kept_and_bad_counts_are_skipped(self):
+        stacks = [
+            spool_record(1, 14, "Satanic Crystal Fragment", {"o": 999.0, "b": 60.0, "a": 11.0, "j": 0, "c": 0.0}),
+            spool_record(2, 14, "Satanic Crystal Fragment", {"o": 192.0, "b": 60.0, "a": 12.0, "j": 0, "c": 0.0}),
+            spool_record(3, 14, "Crystal", {"n": 2.0, "b": 29, "a": 13.0, "j": 0, "c": 0.0}),
+            spool_record(4, 14, "Too many", {"o": 1000.0, "b": 60.0, "a": 14.0, "j": 0, "c": 0.0}),
+            spool_record(5, 14, "Half", {"o": 2.5, "b": 60.0, "a": 15.0, "j": 0, "c": 0.0}),
+        ]
+        result = self.ingest(stacks, "exp_stacks")
+        self.assertEqual(result["deposited"], 3)
+        self.assertEqual(sorted(entry["seq"] for entry in result["skipped"]), [4, 5])
+        counts = {}
+        for record in self.store.list_all_available_items():
+            counts[record.label] = counts.get(record.label, []) + [record.decoded_item()["data"]["o"]]
+        self.assertEqual(sorted(counts["Satanic Crystal Fragment"]), [192.0, 999.0])
+        self.assertEqual(counts["Crystal"], [1.0])
+
+
 class AfkFarmSplitTests(unittest.TestCase):
     """The shared legacy AFK Farm category is split into one category per
     expedition, each laid out on rarity stashes like a new import."""

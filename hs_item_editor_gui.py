@@ -195,7 +195,7 @@ def _resource_base() -> Path:
 BASE = _resource_base()
 CATALOG_FILE = BASE / "hs_full_catalog.json"
 PORT = 8765
-APP_VERSION = "2.15.7-s10-local"
+APP_VERSION = "2.15.8-s10-local"
 APPLICATION_ID = "hero-siege-item-editor"
 CATALOG_PROFILE = "Season 10"
 MAX_POST_BYTES = 2 * 1024 * 1024
@@ -4646,7 +4646,14 @@ def _afk_prepare_record(expedition_id: str, record: dict) -> dict:
     if "n" in definition:
         data["n"] = _afk_number(definition["n"], "itemDefinitionStruct.n")
     if stackable or kind != 1.0:
+        # A native stack keeps its count (AFK FARM delivers Prospector
+        # fragments as stacks of up to 999); a drop without one is a single.
         data["o"] = 1.0
+        if stackable and definition.get("o") is not None:
+            amount = _afk_number(definition["o"], "itemDefinitionStruct.o")
+            if not amount.is_integer() or not 1 <= amount <= FULL_STACK_AMOUNT:
+                raise ValueError(f"stack count must be a whole number from 1 to {FULL_STACK_AMOUNT}")
+            data["o"] = amount
     else:
         data["m"] = 1.0
     deposit_key = _afk_deposit_key(expedition_id, seq)
