@@ -295,6 +295,133 @@ class AfkStackCountTests(unittest.TestCase):
         self.assertEqual(counts["Crystal"], [1.0])
 
 
+def material(seq, base, amount=None, name="Crystal"):
+    definition = {"b": float(base), "a": float(1000 + seq), "j": 0, "c": 0.0}
+    if amount is not None:
+        definition["o"] = float(amount)
+    return spool_record(seq, 14, name, definition)
+
+
+class VaultStackTests(unittest.TestCase):
+    """Stackable items of one kind merge into native stacks of up to 999."""
+
+    setUp = VaultAfkQolTests.setUp
+    ingest = VaultAfkQolTests.ingest
+
+    def amounts(self, collection):
+        return sorted((r.label, r.decoded_item()["data"].get("o", 1.0))
+                      for r in self.store.list_all_available_items(collection=collection))
+
+    def test_afk_materials_arrive_stacked_and_a_repeat_brings_nothing_back(self):
+        records = [material(1, 29), material(2, 29), material(3, 29, 4), material(4, 30, name="Other")]
+        self.ingest(records, "exp_stack")
+        materials = editor._afk_find_collection(self.store, editor.AFK_INGEST_MATERIALS_COLLECTION)
+        self.assertEqual(self.amounts(materials.id), [("Crystal", 6.0), ("Other", 1.0)])
+        again = self.ingest(records, "exp_stack")
+        self.assertEqual((again["deposited"], again["duplicate"]), (0, 4))
+        self.assertEqual(self.amounts(materials.id), [("Crystal", 6.0), ("Other", 1.0)])
+
+    def test_compact_merges_up_to_999_and_leaves_named_singletons_and_large_stacks(self):
+        category = self.store.create_collection("Mats")
+        entries = [material(i, 29, 400) for i in range(1, 5)] + [
+            material(10, 59, name="Reflection"), material(11, 59, name="Reflection"),
+            material(12, 29, 999, name="Huge"), material(13, 29, name="Named")]
+        prepared = [editor._afk_prepare_record("mats", entry) for entry in entries]
+        # A manual stack larger than the native maximum (the editor allows it) is left alone.
+        huge = next(p for p in prepared if p["label"] == "Huge")
+        huge["raw"] = huge["raw"].replace('"o":999.0', '"o":5000.0')
+        results = self.store.deposit_many(category.id, [{
+            "raw_item_json": p["raw"], "source_item_key": p["key"], "label": p["label"], "source": "test",
+            "deposit_key": p["depositKey"]} for p in prepared])
+        self.assertTrue(all(r["status"] == "deposited" for r in results))
+        named = next(r["record"] for r in results if r["record"].label == "Named")
+        self.store.set_item_custom_name(named.id, "Keep me")
+        done = editor.op_vault_layout({"action": "compact", "collectionId": category.id})
+        self.assertNotIn("err", done, done.get("err"))
+        self.assertIn("merged into existing stacks", done["ok"])
+        self.assertEqual(self.amounts(category.id), [
+            ("Crystal", 601.0), ("Crystal", 999.0), ("Huge", 5000.0), ("Named", 1.0),
+            ("Reflection", 1.0), ("Reflection", 1.0)])
+        self.assertTrue(list(self.root.glob("vault.sqlite3.before-items-stacked-*.bak")))
+        undo = self.store.preview_metadata_undo()
+        self.assertTrue(undo is None or undo["eventType"] == "collection_layout_updated")
+
+
+class AfkDismantleTests(unittest.TestCase):
+    """DISMANTLE on an AFK stash: the Prospector's break-down for Satanic and
+    above, below Satanic deleted, fragments stacked into AFK Materials."""
+
+    setUp = VaultAfkQolTests.setUp
+    ingest = VaultAfkQolTests.ingest
+
+    def spool(self, expedition, facts):
+        folder = self.root / "afk" / "spool"
+        folder.mkdir(parents=True, exist_ok=True)
+        with (folder / f"{expedition}.ndjson").open("w", encoding="utf-8") as stream:
+            for seq, (cls, rarity, tier) in sorted(facts.items()):
+                stream.write(json.dumps({"expedition_id": expedition, "seq": seq, "kind": "item", "type": cls, "item": {
+                    "itemType": float(cls), "itemInfoStruct": {"27": rarity, "32": tier},
+                    "itemDefinitionStruct": {"b": 0.0, "a": 1.0}}}, separators=(",", ":")) + "\n")
+
+    def page(self, category, name):
+        return next(p.page_index for p in self.store.list_stash_pages(category) if p.name == name)
+
+    def run_dismantle(self, category, page):
+        preview = editor.op_vault_dismantle({"action": "preview", "collectionId": category, "pageIndex": page})
+        self.assertNotIn("err", preview, preview.get("err"))
+        done = editor.op_vault_dismantle({"action": "dismantle", "collectionId": category, "pageIndex": page,
+                                          "previewToken": preview["previewToken"]})
+        self.assertNotIn("err", done, done.get("err"))
+        return preview, done
+
+    def test_satanic_and_above_become_fragments_and_lower_items_are_deleted(self):
+        self.ingest([material(1, 60, 990, name="Satanic Crystal Fragment")], "exp_mats")
+        gear = [belt(1, "Satanic belt 1", 0), belt(2, "Satanic belt 2", 0), belt(3, "Normal belt 3", 0, unique=False),
+                belt(4, "Heroic belt 4", 12), belt(5, "Satanic belt 5", 0)]
+        result = self.ingest(gear, "exp_d")
+        self.spool("exp_d", {1: (8, 6, 1), 2: (8, 6, 3), 3: (8, 2, 0), 4: (8, 9, 4), 5: (8, 6, 2)})
+        category = result["collections"]["farm"]["id"]
+        named = next(r for r in self.store.list_all_available_items(collection=category) if r.label == "Satanic belt 5")
+        self.store.set_item_custom_name(named.id, "Keeper")
+
+        preview, done = self.run_dismantle(category, self.page(category, "Satanic"))
+        self.assertEqual((preview["dismantle"], preview["delete"], preview["keptNamed"], preview["fragments"], preview["fromRecords"]),
+                         (2, 0, 1, 38, 2))
+        self.assertTrue(list(self.root.glob("vault.sqlite3.before-items-dismantled-*.bak")))
+        materials = editor._afk_find_collection(self.store, editor.AFK_INGEST_MATERIALS_COLLECTION)
+        stacks = sorted(r.decoded_item()["data"]["o"] for r in self.store.list_all_available_items(collection=materials.id))
+        self.assertEqual(stacks, [29.0, 999.0], "the partial stack is topped up to 999, the rest starts a new one")
+
+        self.run_dismantle(category, self.page(category, "Normal"))
+        preview, _ = self.run_dismantle(category, self.page(category, "Heroic"))
+        self.assertEqual((preview["dismantle"], preview["random"]), (1, 1))
+        names = sorted(r.label for r in self.store.list_all_available_items(collection=materials.id))
+        self.assertTrue(set(names) - {"Satanic Crystal Fragment"} <= {"Gypsy's Fragment", "Mallet Fragment"})
+        self.assertEqual(len(names), 3)
+        left = [r.label for r in self.store.list_all_available_items(collection=category)]
+        self.assertEqual(left, ["Satanic belt 5"], "only the custom-named item stays")
+        again = self.ingest(gear, "exp_d")
+        self.assertEqual(again["deposited"], 0, "a repeated transfer cannot bring dismantled items back")
+        undo = self.store.preview_metadata_undo()
+        self.assertTrue(undo is None or undo["eventType"] == "collection_layout_updated")
+
+    def test_refusals_and_the_catalog_fallback(self):
+        result = self.ingest([belt(1, "Normal belt 1", 0, unique=False), belt(2, "Satanic belt 2", 0)], "exp_c")
+        category = result["collections"]["farm"]["id"]
+        other = self.store.create_collection("Not AFK")
+        self.assertIn("err", editor.op_vault_dismantle({"action": "preview", "collectionId": other.id, "pageIndex": 0}))
+        self.assertIn("err", editor.op_vault_dismantle({"action": "boom", "collectionId": category, "pageIndex": 0}))
+        page = self.page(category, "Normal")
+        preview = editor.op_vault_dismantle({"action": "preview", "collectionId": category, "pageIndex": page})
+        self.assertEqual((preview["delete"], preview["fromRecords"]), (1, 0), "without AFK records the catalog decides")
+        self.ingest([material(7, 60, 3, name="Satanic Crystal Fragment")], "exp_m2")
+        stale = editor.op_vault_dismantle({"action": "dismantle", "collectionId": category, "pageIndex": page,
+                                           "previewToken": "0" * 64})
+        self.assertIn("err", stale)
+        self.assertEqual(len(self.store.list_all_available_items(collection=category)), 2)
+        self.assertTrue(editor.vault_meta()["collections"][[c["id"] for c in editor.vault_meta()["collections"]].index(category)]["afk"])
+
+
 class AfkFarmSplitTests(unittest.TestCase):
     """The shared legacy AFK Farm category is split into one category per
     expedition, each laid out on rarity stashes like a new import."""

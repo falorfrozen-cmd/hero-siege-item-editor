@@ -195,7 +195,7 @@ def _resource_base() -> Path:
 BASE = _resource_base()
 CATALOG_FILE = BASE / "hs_full_catalog.json"
 PORT = 8765
-APP_VERSION = "2.15.8-s10-local"
+APP_VERSION = "2.15.9-s10-local"
 APPLICATION_ID = "hero-siege-item-editor"
 CATALOG_PROFILE = "Season 10"
 MAX_POST_BYTES = 2 * 1024 * 1024
@@ -3780,9 +3780,11 @@ def vault_meta() -> dict:
     ]
     default = next((row for row in collections if row.name == "Vault"),
                    collections[0] if collections else None)
+    afk_categories = store.marked_collection_ids(AFK_INGEST_MARKER)
     collection_payloads = [
         {
             **row.as_dict(),
+            "afk": row.id in afk_categories,
             "stashes": [
                 page.as_dict() for page in store.list_stash_pages(row.id)
             ],
@@ -3969,15 +3971,19 @@ def op_vault_layout(body: dict) -> dict:
         return {"err": "Unknown Vault layout action."}
     try:
         store = vault_store()
+        stacked = _vault_stack_category(store, collection_id) if action == "compact" else {}
         records, plan, pages, initialized = _vault_initialize_layout(
             store, collection_id, preserve_existing=action != "compact"
         )
         if action in {"ensure", "compact"}:
+            merged = stacked.get("removed", 0)
             return {
                 "ok": (
-                    "Vault grids compacted safely"
+                    ("Vault grids compacted safely"
+                     + (f"; {merged} stackable item{'s' if merged != 1 else ''} merged into existing stacks" if merged else ""))
                     if action == "compact" else "Vault layout is ready"
                 ),
+                "stacked": stacked,
                 "changed": initialized,
                 "pageCount": len(pages),
                 "stashes": [page.as_dict() for page in pages],
@@ -4430,6 +4436,271 @@ def op_vault_afk_split(body: dict) -> dict:
             f"categor{'ies' if len(targets) != 1 else 'y'}"
             + ("; the empty AFK Farm category was removed" if removed_farm else "")
         )}
+    except (VaultError, OSError, sqlite3.Error, TypeError, ValueError) as exc:
+        return {"err": str(exc)}
+
+
+# ------------------------------------------------------------------ stacks
+# Stackable items of one kind (class, base, sub, kind, n) merge into native
+# stacks of up to FULL_STACK_AMOUNT. Custom-named items, singleton addresses and
+# larger manual stacks are left alone. Absorbed items keep their deposit keys as
+# deleted, so an AFK transfer of the same records cannot bring them back.
+def _vault_stack_identity(record) -> tuple | None:
+    if record.custom_name:
+        return None
+    derived = _vault_item_derived(record)
+    cls = derived.get("cls")
+    if cls not in STACKABLE_CLS:
+        return None
+    data = record.decoded_item().get("data", {})
+    base = data.get("b")
+    if not isinstance(base, (int, float)) or isinstance(base, bool) or (cls, int(base)) in MATERIAL_SINGLETON_ADDRESSES:
+        return None
+    amount = native_stack_count(data)
+    if amount is None or amount > FULL_STACK_AMOUNT:
+        return None
+    return (cls, float(base), float(data.get("j", 0) or 0), float(data.get("c", 0) or 0), data.get("n"))
+
+
+def _vault_restack_raw(record, amount: int) -> str:
+    entry = dict(record.decoded_item())
+    entry["data"] = {**entry.get("data", {}), "o": float(amount)}
+    return _vault_item_json(entry)
+
+
+def _vault_stack_plan(records) -> tuple[list[tuple[str, str]], list[str]]:
+    groups: dict[tuple, list] = {}
+    for record in records:
+        key = _vault_stack_identity(record)
+        if key is not None:
+            groups.setdefault(key, []).append(record)
+    updates: list[tuple[str, str]] = []
+    removes: list[str] = []
+    for members in groups.values():
+        if len(members) < 2:
+            continue
+        members.sort(key=lambda r: (r.page_index is None, r.page_index or 0, r.layout_y or 0, r.layout_x or 0, r.created_at, r.id))
+        amounts = [native_stack_count(r.decoded_item().get("data", {})) for r in members]
+        total = sum(amounts)
+        sizes = [FULL_STACK_AMOUNT] * (total // FULL_STACK_AMOUNT) + ([total % FULL_STACK_AMOUNT] if total % FULL_STACK_AMOUNT else [])
+        if len(sizes) >= len(members):
+            continue
+        for record, amount, size in zip(members, amounts, sizes):
+            if size != amount:
+                updates.append((record.id, _vault_restack_raw(record, size)))
+        removes.extend(record.id for record in members[len(sizes):])
+    return updates, removes
+
+
+def _vault_stack_category(store, collection_id: int) -> dict:
+    updates, removes = _vault_stack_plan(store.list_all_available_items(collection=collection_id))
+    if not removes:
+        return {"removed": 0, "updated": 0}
+    token = store.preview_item_rework([*removes, *(item_id for item_id, _ in updates)])
+    name = next((row.name for row in store.list_collections() if row.id == collection_id), None)
+    return store.rework_items(remove=removes, update=updates, preview_token=token, event_type="items_stacked",
+                              collection_name=name, details={"collectionId": collection_id})
+
+
+# ------------------------------------------------------------------ dismantle
+# The game's Prospector recipes for Satanic and above equipment, read live from
+# the installed build (global.prospectItem / prospectResult, AFK FARM
+# `afk convert probe`, 2026-09-23): item classes 0-8, 10 and 18, not corrupted;
+# tier D/C/B/A give 6/13/20/25 Satanic Crystal Fragments (class 14, base 60), S
+# one of bases 72/73 and SS one of 71/72/73. Below Satanic cannot be sold outside
+# the game (gold is protected by the game), so it is deleted, as the player asked.
+PROSPECT_EQUIPMENT_CLS = frozenset({0, 1, 2, 3, 4, 5, 6, 7, 8, 10, 18})
+PROSPECT_TIER_FRAGMENTS = {0: 6, 1: 13, 2: 20, 3: 25}
+PROSPECT_RANDOM_FRAGMENTS = {4: (72, 73), 5: (71, 72, 73)}
+PROSPECT_FRAGMENT_NAMES = {60: "Satanic Crystal Fragment", 71: "Dice Fragment", 72: "Gypsy's Fragment", 73: "Mallet Fragment"}
+_TIER_BY_LETTER = {"D": 0, "C": 1, "B": 2, "A": 3, "S": 4, "SS": 5}
+_RARITY_BY_NAME = {"Satanic": 6, "Angelic": 7, "Heroic": 9, "Unholy": 10}
+_SPOOL_SEQ_RE = re.compile(r'\{"expedition_id":"[^"]*","seq":(\d+),')
+
+
+def _afk_spool_facts(records) -> dict[str, dict]:
+    """Exact rarity, tier and corruption from AFK FARM's own records, by item id."""
+
+    wanted: dict[str, dict[int, str]] = {}
+    for record in records:
+        key = record.deposit_key or ""
+        match = _AFK_KEY_RE.fullmatch(key)
+        if not match:
+            continue
+        slug, digest = match.groups()
+        if not slug or hashlib.sha256(slug.encode("utf-8")).hexdigest()[:16] != digest:
+            continue
+        wanted.setdefault(slug, {})[int(key[-10:])] = record.id
+    facts: dict[str, dict] = {}
+    folder = Path(VAULT_DB_FILE).parent / "afk" / "spool"
+    for expedition, seqs in wanted.items():
+        path = folder / f"{expedition}.ndjson"
+        if not path.is_file():
+            continue
+        try:
+            with path.open(encoding="utf-8") as stream:
+                for line in stream:
+                    if not seqs:
+                        break
+                    match = _SPOOL_SEQ_RE.match(line)
+                    if not match or int(match.group(1)) not in seqs:
+                        continue
+                    row = json.loads(line)
+                    item = row.get("item") or {}
+                    info = item.get("itemInfoStruct") or {}
+                    definition = item.get("itemDefinitionStruct") or {}
+                    rarity, tier = info.get("27"), info.get("32")
+                    facts[seqs.pop(int(match.group(1)))] = {
+                        "cls": int(item.get("itemType", row.get("type", -1))),
+                        "rarity": int(rarity) if isinstance(rarity, (int, float)) and not isinstance(rarity, bool) else None,
+                        "tier": int(tier) if isinstance(tier, (int, float)) and not isinstance(tier, bool) else None,
+                        "corrupted": bool(definition.get("r")),
+                    }
+        except (OSError, ValueError, TypeError):
+            continue
+    return facts
+
+
+def _vault_catalog_facts(record) -> dict:
+    derived = _vault_item_derived(record)
+    cid = derived.get("cid")
+    row = CAT[cid] if isinstance(cid, int) and not isinstance(cid, bool) and 0 <= cid < len(CAT) else {}
+    rarity = _RARITY_BY_NAME.get(row.get("rar") or derived.get("rar"))
+    if rarity is None and row.get("set"):
+        rarity = 4
+    if rarity is None and (row.get("rar") or derived.get("rar")) == "Normal":
+        rarity = 1
+    return {"cls": derived.get("cls"), "rarity": rarity, "tier": _TIER_BY_LETTER.get(row.get("tier")), "corrupted": False}
+
+
+def _dismantle_decision(facts: dict) -> str:
+    rarity = facts.get("rarity")
+    if rarity is None or facts.get("cls") in STACKABLE_CLS:
+        return "keep"
+    if rarity < 6:
+        return "delete"
+    if facts.get("cls") in PROSPECT_EQUIPMENT_CLS and facts.get("tier") in range(6) and not facts.get("corrupted"):
+        return "dismantle"
+    return "keep"
+
+
+def _vault_dismantle_plan(store, collection_id: int, page_index: int) -> dict:
+    records = [r for r in store.list_all_available_items(collection=collection_id) if r.page_index == page_index]
+    spool = _afk_spool_facts(records)
+    plan = {"remove": [], "dismantle": 0, "delete": 0, "keep": 0, "keptNamed": 0, "fragments": 0, "random": 0,
+            "outputs": {}, "fromRecords": 0}
+    rng = random.SystemRandom()
+    for record in records:
+        if record.custom_name:
+            plan["keptNamed"] += 1
+            continue
+        facts = spool.get(record.id)
+        plan["fromRecords"] += facts is not None
+        decision = _dismantle_decision(facts or _vault_catalog_facts(record))
+        if decision == "keep":
+            plan["keep"] += 1
+            continue
+        plan["remove"].append(record.id)
+        plan[decision] += 1
+        if decision == "dismantle":
+            tier = (facts or _vault_catalog_facts(record))["tier"]
+            if tier in PROSPECT_TIER_FRAGMENTS:
+                base, amount = 60, PROSPECT_TIER_FRAGMENTS[tier]
+                plan["fragments"] += amount
+            else:
+                base, amount = rng.choice(PROSPECT_RANDOM_FRAGMENTS[tier]), 1
+                plan["random"] += 1
+            plan["outputs"][base] = plan["outputs"].get(base, 0) + amount
+    return plan
+
+
+def _fragment_stack_changes(outputs: dict[int, int], materials_records) -> tuple[list[tuple[str, str]], list[dict]]:
+    """Top up existing fragment stacks in AFK Materials, then add new full ones."""
+
+    fillable: dict[float, list] = {}
+    for record in materials_records:
+        key = _vault_stack_identity(record)
+        if key and key[0] == 14 and key[2] == 0 and key[3] == 0 and key[4] is None:
+            fillable.setdefault(key[1], []).append(record)
+    updates: list[tuple[str, str]] = []
+    inserts: list[dict] = []
+    rng = random.SystemRandom()
+    for base, amount in sorted(outputs.items()):
+        for record in sorted(fillable.get(float(base), []), key=lambda r: (r.created_at, r.id)):
+            current = native_stack_count(record.decoded_item().get("data", {}))
+            take = min(FULL_STACK_AMOUNT - current, amount)
+            if take > 0:
+                updates.append((record.id, _vault_restack_raw(record, current + take)))
+                amount -= take
+            if amount <= 0:
+                break
+        while amount > 0:
+            size = min(FULL_STACK_AMOUNT, amount)
+            amount -= size
+            inserts.append({
+                "raw_item_json": _vault_item_json({"pos": [0.0, 0.0], "data": {
+                    "a": float(rng.randint(1, 2 ** 31 - 1)), "j": 0.0, "b": float(base), "c": 0.0, "o": float(size)}}),
+                "source_item_key": f"0-0-{rng.randint(1, 2 ** 47)}-14",
+                "label": PROSPECT_FRAGMENT_NAMES.get(base), "source": "afk-dismantle",
+            })
+    return updates, inserts
+
+
+def op_vault_dismantle(body: dict) -> dict:
+    """Preview or run DISMANTLE on one stash of an AFK expedition category.
+
+    Satanic and above equipment the Prospector takes becomes its fragments in
+    AFK Materials (stacked); items below Satanic are deleted (they cannot be
+    sold outside the game); custom-named and other items stay. One backed-up
+    transaction; removed AFK imports cannot come back with a repeated transfer.
+    """
+
+    try:
+        collection_id, page_index = body.get("collectionId"), body.get("pageIndex")
+        if isinstance(collection_id, bool) or not isinstance(collection_id, int):
+            raise VaultValidationError("A concrete Vault category is required.")
+        if isinstance(page_index, bool) or not isinstance(page_index, int) or page_index < 0:
+            raise VaultValidationError("A concrete stash is required.")
+        action = body.get("action")
+        if action not in {"preview", "dismantle"}:
+            raise VaultValidationError("Unknown dismantle action.")
+        with SAVE_WRITE_LOCK:
+            store = vault_store()
+            if collection_id not in store.marked_collection_ids(AFK_INGEST_MARKER):
+                return {"err": "Dismantle is available in AFK expedition categories."}
+            plan = _vault_dismantle_plan(store, collection_id, page_index)
+            counts = {k: plan[k] for k in ("dismantle", "delete", "keep", "keptNamed", "fragments", "random", "fromRecords")}
+            if not plan["remove"]:
+                return {"err": "Nothing in this stash can be dismantled or cleared.", **counts}
+            materials = _afk_find_collection(store, AFK_INGEST_MATERIALS_COLLECTION)
+            materials_records = store.list_all_available_items(collection=materials.id) if materials else []
+            watched = [r.id for r in materials_records if (key := _vault_stack_identity(r)) and key[0] == 14]
+            token = store.preview_item_rework(plan["remove"] + watched)
+            if action == "preview":
+                return {**counts, "previewToken": token}
+            if body.get("previewToken") != token:
+                return {"err": "The stash or AFK Materials changed. Review again."}
+            if materials is None:
+                materials = _afk_collection(store, AFK_INGEST_MATERIALS_COLLECTION)
+            updates, inserts = _fragment_stack_changes(plan["outputs"], materials_records)
+            rework = store.preview_item_rework(plan["remove"] + [item_id for item_id, _ in updates])
+            name = next((row.name for row in store.list_collections() if row.id == collection_id), None)
+            result = store.rework_items(
+                remove=plan["remove"], update=updates, insert=inserts, insert_collection=materials.id,
+                preview_token=rework, event_type="items_dismantled", collection_name=name,
+                details={"collectionId": collection_id, "pageIndex": page_index, **counts,
+                         "outputs": {str(k): v for k, v in plan["outputs"].items()}},
+            )
+            if updates or inserts:
+                _vault_initialize_layout(store, materials.id)
+        parts = []
+        if plan["dismantle"]:
+            got = ", ".join(f"{amount} {PROSPECT_FRAGMENT_NAMES.get(base, base)}" for base, amount in sorted(plan["outputs"].items()))
+            parts.append(f"dismantled {plan['dismantle']} into {got}")
+        if plan["delete"]:
+            parts.append(f"deleted {plan['delete']} below Satanic")
+        return {**counts, **result, "outputs": {PROSPECT_FRAGMENT_NAMES.get(b, str(b)): a for b, a in plan["outputs"].items()},
+                "backup": result["backupName"], "ok": ("; ".join(parts) or "Nothing changed").capitalize()}
     except (VaultError, OSError, sqlite3.Error, TypeError, ValueError) as exc:
         return {"err": str(exc)}
 
@@ -5018,6 +5289,7 @@ def op_vault_ingest(body: dict) -> dict:
         if stackables:
             materials = _afk_collection(store, AFK_INGEST_MATERIALS_COLLECTION)
             if deposit(materials.id, stackables) and layout != "defer":
+                _vault_stack_category(store, materials.id)
                 _vault_initialize_layout(store, materials.id)
 
         collections: dict = {}
@@ -5032,6 +5304,7 @@ def op_vault_ingest(body: dict) -> dict:
             if materials is None:
                 materials = _afk_find_collection(store, AFK_INGEST_MATERIALS_COLLECTION)
             if materials is not None:
+                _vault_stack_category(store, materials.id)
                 _vault_initialize_layout(store, materials.id)
         if farm is not None:
             if not legacy:
@@ -8940,6 +9213,8 @@ class H(BaseHTTPRequestHandler):
             self._json(op_vault_purge(body))
         elif path == "/api/vault/afk-split":
             self._json(op_vault_afk_split(body))
+        elif path == "/api/vault/dismantle":
+            self._json(op_vault_dismantle(body))
         else:
             self._json({"err": "not found"}, 404)
 
@@ -9462,7 +9737,7 @@ function vaultGridPageHTML(page,index,persistent=false,stash=null,lazy=false){
   const title=persistent
     ?`<input class="vault-stash-name" data-vault-stash-name="${pageIndex}" value="${attr(stashName)}" maxlength="128" aria-label="Stash name"> <span class="muted">(${stashItemCount})</span>`
     :`<h2>Vault Grid ${pageIndex+1} <span class="muted">(${page.items.length})</span></h2>`;
-  const actions=persistent?`<div class="stash-head-actions"><button class="stash-roll" data-vault-stash-roll="${pageIndex}" ${stashItemCount&&!GAME_RUNNING?'':'disabled'}>MAX / BEST</button><button class="stash-fill vault-stash-send" data-vault-stash-send="${pageIndex}" ${stashItemCount&&!GAME_RUNNING?'':'disabled'}>SEND TO SHARED STASH</button><button type="button" class="vault-mini danger" data-vault-stash-delete="${pageIndex}" aria-label="Delete stash ${attr(stashName)}" ${GAME_RUNNING?'disabled':''}>DELETE STASH</button></div>`:'';
+  const actions=persistent?`<div class="stash-head-actions"><button class="stash-roll" data-vault-stash-roll="${pageIndex}" ${stashItemCount&&!GAME_RUNNING?'':'disabled'}>MAX / BEST</button><button class="stash-fill vault-stash-send" data-vault-stash-send="${pageIndex}" ${stashItemCount&&!GAME_RUNNING?'':'disabled'}>SEND TO SHARED STASH</button>${vaultCategoryIsAfk()?`<button class="stash-fill vault-stash-dismantle" data-vault-stash-dismantle="${pageIndex}" ${stashItemCount?'':'disabled'} title="Break Satanic and above down like the Prospector; delete what is below Satanic">DISMANTLE</button>`:''}<button type="button" class="vault-mini danger" data-vault-stash-delete="${pageIndex}" aria-label="Delete stash ${attr(stashName)}" ${GAME_RUNNING?'disabled':''}>DELETE STASH</button></div>`:'';
   return `<section class="vault-grid-page" data-vault-stash-section="${pageIndex}"><div class="stash-tab-head vault-grid-head"><div class="vault-stash-title">${title}</div>${actions}</div><div class="vault-grid-scroll">${grid}</div></section>`;
 }
 function occFree(g,x,y,w,h,skipKey){
@@ -10191,6 +10466,10 @@ function bindVaultStashHeads(host,rows,stashes){
     const pageIndex=+button.dataset.vaultStashSend,input=host.querySelector(`[data-vault-stash-name="${pageIndex}"]`),stashRows=rows.filter(row=>+row.pageIndex===pageIndex);
     openVaultSelectionReturn(stashRows,input?input.value:`Stash ${pageIndex+1}`);
   });
+  host.querySelectorAll('[data-vault-stash-dismantle]').forEach(button=>button.onclick=()=>{
+    const pageIndex=+button.dataset.vaultStashDismantle,input=host.querySelector(`[data-vault-stash-name="${pageIndex}"]`);
+    openVaultDismantle(pageIndex,input?input.value:`Stash ${pageIndex+1}`);
+  });
   host.querySelectorAll('[data-vault-stash-delete]').forEach(button=>{
     button.dataset.lastStash=stashes.length<=1?'1':'0';
     button.disabled=GAME_RUNNING||stashes.length<=1;
@@ -10344,6 +10623,37 @@ function openVaultCleanup(){
   };
   if(boxes[0])boxes[0].focus();
 }
+function vaultCategoryIsAfk(){
+  return !!((vaultMeta&&vaultMeta.collections)||[]).find(c=>String(c.id)===String(vaultState.collectionId)&&c.afk);
+}
+async function openVaultDismantle(pageIndex,stashName){
+  const previous=document.getElementById('sockmodal');if(previous)previous.remove();
+  const modal=document.createElement('div');modal.id='sockmodal';
+  modal.innerHTML=`<div id="sockbox" role="dialog" aria-modal="true" aria-labelledby="vaultdismantletitle" style="width:min(600px,92vw)"><h3 id="vaultdismantletitle">Dismantle ${esc(stashName)}</h3><div class="muted" style="margin:6px 0 10px">Satanic, Angelic, Heroic and Unholy equipment is broken down like the Prospector does it; the fragments go to AFK Materials, stacked. Items below Satanic are deleted: they cannot be sold outside the game. Custom-named items stay. A backup of the Vault is kept first.</div><div id="vaultdismantlepreview"><strong>Checking…</strong></div><div class="vault-bulk-actions" style="margin-top:14px"><button class="vault-mini" id="vaultdismantlecancel">CANCEL</button><button class="vault-mini danger" id="vaultdismantlego" disabled>DISMANTLE</button></div></div>`;
+  document.body.appendChild(modal);
+  const go=document.getElementById('vaultdismantlego'),host=document.getElementById('vaultdismantlepreview');
+  let busy=false;
+  const close=()=>{if(!busy)modal.remove()};document.getElementById('vaultdismantlecancel').onclick=close;modal.onclick=e=>{if(e.target===modal)close()};modal.onkeydown=e=>{if(e.key==='Escape')close()};
+  const body={collectionId:+vaultState.collectionId,pageIndex};
+  const preview=await j('/api/vault/dismantle',{method:'POST',body:JSON.stringify({...body,action:'preview'})});
+  if(preview.err){host.innerHTML=`<strong>Nothing to dismantle</strong><div class="vault-bulk-note warn">${esc(preview.err)}</div>`;return}
+  const lines=[];
+  if(preview.dismantle)lines.push(`<strong>Dismantle ${preview.dismantle} item${preview.dismantle===1?'':'s'}</strong> → ${preview.fragments?`${preview.fragments} Satanic Crystal Fragments`:''}${preview.fragments&&preview.random?' and ':''}${preview.random?`${preview.random} random S/SS fragment${preview.random===1?'':'s'} (Dice, Gypsy's or Mallet)`:''}`);
+  if(preview.delete)lines.push(`<strong>Delete ${preview.delete} item${preview.delete===1?'':'s'} below Satanic</strong> (no gold: they cannot be sold outside the game)`);
+  if(preview.keep||preview.keptNamed)lines.push(`Keep ${preview.keep+preview.keptNamed} item${preview.keep+preview.keptNamed===1?'':'s'} (custom-named, or not taken by the Prospector)`);
+  host.innerHTML=lines.map(line=>`<div class="vault-bulk-note">${line}</div>`).join('');
+  go.textContent=`DISMANTLE ${preview.dismantle+preview.delete} ITEM${preview.dismantle+preview.delete===1?'':'S'}`;go.disabled=false;
+  go.onclick=async()=>{
+    if(busy)return;busy=true;go.disabled=true;go.textContent='WORKING…';
+    try{
+      const done=await j('/api/vault/dismantle',{method:'POST',body:JSON.stringify({...body,action:'dismantle',previewToken:preview.previewToken})});
+      flash(done);
+      if(done.err){host.innerHTML=`<strong>Nothing was changed</strong><div class="vault-bulk-note warn">${esc(done.err)}</div>`;go.textContent='DISMANTLE';return}
+      busy=false;modal.remove();vaultCompareItems.clear();await openVault(false);
+    }finally{busy=false}
+  };
+  go.focus();
+}
 async function openVaultAfkSplit(){
   if(GAME_RUNNING){flash({err:'Close Hero Siege before reorganizing the Vault.'});return}
   const previous=document.getElementById('sockmodal');if(previous)previous.remove();
@@ -10379,7 +10689,7 @@ async function addEmptyVaultGrid(){
   const created=document.querySelector(`[data-vault-stash-section="${result.stash.pageIndex}"]`);if(created)created.scrollIntoView({behavior:'smooth',block:'center'});
 }
 async function compactVaultGrids(){
-  if(!confirm('Compact this category into its first stashes?\n\nStash names and item data stay unchanged. Only item positions are reorganized.'))return;
+  if(!confirm('Compact this category into its first stashes?\n\nKeys, materials, runes and gems of the same kind are merged into stacks of up to 999, then item positions are reorganized. Custom-named items and stash names stay unchanged.'))return;
   const result=await j('/api/vault/layout',{method:'POST',body:JSON.stringify({action:'compact',collectionId:+vaultState.collectionId})});flash(result);if(!result.err)await loadVaultItems();
 }
 function vaultHistoryLabel(event){

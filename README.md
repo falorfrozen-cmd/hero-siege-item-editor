@@ -8,6 +8,21 @@ A local/offline save editor for **Hero Siege** (Pixel Prone Games). Manage items
 
 Single file, no install, no Python needed. Just run it.
 
+## Local build: v2.15.9-s10-local — stacks and AFK dismantle
+
+- **Materials stack.** Keys, materials, runes and gems of the same kind merge into
+  native stacks of up to 999: automatically when AFK FARM transfers them to AFK
+  Materials, and in any category with **COMPACT ITEMS**. Custom-named items, the
+  game's single-item materials and larger manual stacks stay as they are. A repeated
+  AFK transfer cannot bring merged items back.
+- **DISMANTLE** on each stash of an AFK expedition category breaks Satanic, Angelic,
+  Heroic and Unholy equipment down the way the Prospector does it (D/C/B/A tier: 6,
+  13, 20 or 25 Satanic Crystal Fragments; S: a Gypsy's or Mallet Fragment; SS: a
+  Dice, Gypsy's or Mallet Fragment), stacked into AFK Materials. Items below Satanic
+  are deleted: gold cannot be added outside the game. Rarity and tier come from AFK
+  FARM's own records when they are on this computer, otherwise from the catalog. A
+  preview shows the counts first; a backup of the Vault is kept.
+
 ## Local build: v2.15.8-s10-local — AFK stacks keep their count
 
 - AFK transfers keep a stackable item's native stack count (1 to 999), so the

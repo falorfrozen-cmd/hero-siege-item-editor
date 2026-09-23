@@ -384,3 +384,22 @@ the expedition their deposit key names (the key prefix of an expedition named by
 stash `<id> · <date> · <label>`, or a slug whose hash matches), each group goes to
 `_afk_expedition_category`, then `_afk_group_layout`; AFK Farm is deleted when empty.
 Ingest now checks an expedition's marked category before the legacy AFK Farm page.
+
+## Reworking items: stacks and dismantle (2.15.9)
+
+`preview_item_rework(ids)` and `rework_items(remove=, update=, insert=,
+insert_collection=, preview_token=, event_type=, ...)` change a set of items in one
+transaction: removed items leave their deposit keys in `deleted_deposit_keys`
+(an AFK re-transfer reports them as duplicates), updated items get a validated new
+payload and keep their layout, inserted items arrive unplaced. The token covers the
+full rows of every removed or updated item; a `before-<event>` copy is written first;
+`items_stacked` and `items_dismantled` are undo barriers. `marked_collection_ids`
+lists the categories created with a marker (AFK expedition categories).
+Stacking (`_vault_stack_plan`) groups stackable classes 12-15 by class, base, sub,
+kind and `n`, skips custom-named items, `MATERIAL_SINGLETON_ADDRESSES` and stacks
+over 999, and fills stacks of 999 in grid order; AFK ingest runs it on AFK Materials
+and COMPACT ITEMS on the category. DISMANTLE (`op_vault_dismantle`) decides per item
+from the AFK spool (rarity 27, tier 32, corruption) or the catalog (rarity, tier
+letter): equipment classes 0-8, 10, 18 of rarity 6+ and tier 0-5 become the
+Prospector's fragments (recipes read live from the installed build), rarity below 6
+is deleted, anything else is kept; fragments top up AFK Materials stacks first.

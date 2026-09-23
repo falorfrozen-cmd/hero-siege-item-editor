@@ -1536,7 +1536,8 @@ class InfiniteVault:
             if isinstance(event_id, int):
                 undone.add(event_id)
         for row in rows:
-            if row["event_type"] in {"category_contents_deleted", "stash_page_deleted", "items_purged", "items_split"}:
+            if row["event_type"] in {"category_contents_deleted", "stash_page_deleted", "items_purged", "items_split",
+                                     "items_stacked", "items_dismantled"}:
                 # Older layout/move undo may point into storage that was deleted.
                 return None
             if row["event_type"] in reversible and int(row["id"]) not in undone:
@@ -3153,6 +3154,168 @@ class InfiniteVault:
                 details={**dict(details or {}), **summary, "backupName": backup_path.name},
             )
             return {**summary, "backupName": backup_path.name}
+
+        return self._write(operation)
+
+    def marked_collection_ids(self, key: str) -> set[int]:
+        """Ids of the live categories created with a ``key`` marker."""
+
+        if not isinstance(key, str) or not key:
+            raise VaultValidationError("collection marker key must be text")
+        needle = json.dumps(key) + ":"
+        pattern = "%" + needle.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_") + "%"
+
+        def operation(connection: sqlite3.Connection) -> set[int]:
+            live = {int(row[0]) for row in connection.execute("SELECT id FROM collections")}
+            found: set[int] = set()
+            for (details_json,) in connection.execute(
+                """SELECT details_json FROM events
+                   WHERE event_type='collection_created' AND details_json LIKE ? ESCAPE '\\'""",
+                (pattern,),
+            ):
+                try:
+                    details = json.loads(str(details_json))
+                except json.JSONDecodeError:
+                    continue
+                collection_id = details.get("collectionId") if isinstance(details, dict) else None
+                if key in details and isinstance(collection_id, int) and not isinstance(collection_id, bool) and collection_id in live:
+                    found.add(collection_id)
+            return found
+
+        return self._read(operation)
+
+    _REWORK_EVENTS = frozenset({"items_stacked", "items_dismantled"})
+
+    def _rework_snapshot(
+        self, connection: sqlite3.Connection, item_ids: list[str]
+    ) -> tuple[list[sqlite3.Row], str]:
+        rows: list[sqlite3.Row] = []
+        for start in range(0, len(item_ids), 500):
+            chunk = item_ids[start:start + 500]
+            rows.extend(connection.execute(
+                f"SELECT * FROM items WHERE id IN ({','.join('?' * len(chunk))})", tuple(chunk)
+            ).fetchall())
+        if len(rows) != len(item_ids) or any(row["status"] != "available" for row in rows):
+            raise VaultConflictError("The items changed. Review again.")
+        rows.sort(key=lambda row: str(row["id"]))
+        token = hashlib.sha256(json.dumps(
+            {"rework": [dict(row) for row in rows]},
+            ensure_ascii=False, sort_keys=True, separators=(",", ":"),
+        ).encode("utf-8")).hexdigest()
+        return rows, token
+
+    def preview_item_rework(self, item_ids: Iterable[str]) -> str:
+        """A token over exactly the items a rework will remove or change."""
+
+        clean = sorted({_clean_id(item_id, "item id") for item_id in item_ids})
+
+        def operation(connection: sqlite3.Connection) -> str:
+            connection.execute("BEGIN")
+            return self._rework_snapshot(connection, clean)[1]
+
+        return self._read(operation)
+
+    def rework_items(
+        self,
+        *,
+        remove: Iterable[str] = (),
+        update: Iterable[tuple[str, str]] = (),
+        insert: Iterable[Mapping[str, Any]] = (),
+        insert_collection: int | str | None = None,
+        preview_token: str,
+        event_type: str,
+        collection_name: str | None = None,
+        details: Mapping[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        """Remove, change and add items in one backed-up transaction.
+
+        ``remove`` items leave with their deposit keys recorded as deleted, so an
+        AFK transfer of the same records cannot bring them back; ``update`` pairs
+        replace an item's payload (validated, its layout kept); ``insert`` entries
+        (``raw_item_json``, ``source_item_key``, ``label``, ``source``) are added to
+        ``insert_collection`` without a position. The removed and changed items
+        must still match ``preview_token``. A ``before-<event>`` copy of the
+        database is written first, and the event is an undo barrier.
+        """
+
+        if event_type not in self._REWORK_EVENTS:
+            raise VaultValidationError("unknown rework")
+        if not isinstance(preview_token, str) or len(preview_token) != 64:
+            raise VaultValidationError("A fresh review is required.")
+        remove_ids = sorted({_clean_id(item_id, "item id") for item_id in remove})
+        updates: list[tuple[str, str, str, dict[str, Any]]] = []
+        for item_id, raw_json in update:
+            decoded = validate_raw_item_json(raw_json)
+            updates.append((_clean_id(item_id, "item id"), raw_json, hashlib.sha256(raw_json.encode("utf-8")).hexdigest(), decoded))
+        if set(remove_ids) & {entry[0] for entry in updates}:
+            raise VaultValidationError("an item cannot be removed and changed at once")
+        inserts: list[dict[str, Any]] = []
+        for entry in insert:
+            raw_json = entry.get("raw_item_json")
+            decoded = validate_raw_item_json(raw_json)
+            source_key = _clean_optional_text(entry.get("source_item_key"), "source item key")
+            label = _clean_optional_text(entry.get("label"), "label")
+            source = _clean_optional_text(entry.get("source"), "source")
+            inserts.append({
+                "raw": raw_json, "sha": hashlib.sha256(raw_json.encode("utf-8")).hexdigest(),
+                "search": _search_document(decoded, (source_key, label, source)),
+                "source_key": source_key, "label": label, "source": source,
+            })
+        touched = sorted(set(remove_ids) | {entry[0] for entry in updates})
+        if not touched and not inserts:
+            raise VaultValidationError("Nothing to change.")
+
+        def operation(connection: sqlite3.Connection) -> dict[str, Any]:
+            rows, token = self._rework_snapshot(connection, touched)
+            if token != preview_token:
+                raise VaultConflictError("The items changed. Review again.")
+            by_id = {str(row["id"]): row for row in rows}
+            target = self._resolve_collection(connection, insert_collection) if inserts else None
+            backup_path = self.path.with_name(
+                f"{self.path.name}.before-{event_type.replace('_', '-')}-{uuid.uuid4().hex}.bak"
+            )
+            self._backup_existing(backup_path)
+            now = _utc_now()
+            for start in range(0, len(remove_ids), 500):
+                chunk = remove_ids[start:start + 500]
+                marks = ",".join("?" * len(chunk))
+                connection.execute(
+                    f"""INSERT OR IGNORE INTO deleted_deposit_keys(deposit_key, raw_sha256, deleted_at)
+                        SELECT deposit_key, raw_sha256, ? FROM items
+                        WHERE deposit_key IS NOT NULL AND id IN ({marks})""",
+                    (now, *chunk),
+                )
+                connection.execute(f"DELETE FROM items WHERE id IN ({marks})", tuple(chunk))
+            for item_id, raw_json, digest, decoded in updates:
+                row = by_id[item_id]
+                _validate_stored_raw_item_integrity(row["raw_json"], row["raw_sha256"])
+                search_text = _search_document(
+                    decoded, (row["source_item_key"], row["label"], row["source"], row["custom_name"])
+                )
+                connection.execute(
+                    "UPDATE items SET raw_json=?, raw_sha256=?, search_text=?, updated_at=? WHERE id=?",
+                    (raw_json, digest, search_text, now, item_id),
+                )
+            inserted: list[str] = []
+            for item in inserts:
+                item_id = uuid.uuid4().hex
+                connection.execute(
+                    """INSERT INTO items(
+                           id, collection_id, raw_json, raw_sha256, search_text,
+                           source_item_key, label, source, deposit_key, status,
+                           reserved_token, created_at, updated_at
+                       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, NULL, 'available', NULL, ?, ?)""",
+                    (item_id, target["id"], item["raw"], item["sha"], item["search"],
+                     item["source_key"], item["label"], item["source"], now, now),
+                )
+                inserted.append(item_id)
+            summary = {
+                "removed": len(remove_ids), "updated": len(updates), "inserted": len(inserted),
+                "insertedIds": inserted, "backupName": backup_path.name,
+            }
+            self._event(connection, event_type, collection_name=collection_name,
+                        details={**dict(details or {}), **{k: v for k, v in summary.items() if k != "insertedIds"}})
+            return summary
 
         return self._write(operation)
 
