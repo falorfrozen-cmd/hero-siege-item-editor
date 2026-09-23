@@ -25,6 +25,23 @@ EDITOR_SPEC.loader.exec_module(editor)
 
 
 class CustomForgeMechanicTests(unittest.TestCase):
+    def test_miner_helmet_template_round_trips(self):
+        row = next((row for row in editor.load_signature_items() if row['id'] == 'miner'), None)
+        self.assertIsNotNone(row, 'Miner helmet must be selectable in Signature items')
+        self.assertEqual(row['base']['cls'], 0)
+        config = row['config']
+        self.assertEqual(config['stats'], {'154': 1000, '29': 500, '25': 20, '173': 20, '281': 5})
+        selector = {'t': 0, 'a': 412831, 'b': 7, 'c': 0, 'j': 0}
+        self.store.apply(selector, label=row['name'], stats=config['stats'], keep_native=False,
+                         mechanic='miner', name=config['name'], affix=config['affix'])
+        self.assertEqual(self.store.get(selector)['mechanic'], 'miner')
+        self.assertIn('mechanic=miner', self.store.runtime_path.read_text())
+
+    def test_miner_rejects_non_helmet_without_writing(self):
+        with self.assertRaises(CustomForgeError):
+            self.store.apply(self.selector, label='Belt', stats={154: 1000}, keep_native=False, mechanic='miner')
+        self.assertFalse(self.store.json_path.exists())
+
     @classmethod
     def setUpClass(cls):
         cls.semantics = load_stat_semantics(BASE, expected_exe_sha256=EXPECTED_EXE_SHA256)
@@ -150,7 +167,8 @@ class CustomForgeMechanicTests(unittest.TestCase):
         self.assertTrue({"headhunter", "tyrant"} <= ids)
         for row in rows:
             cfg = row["config"]
-            result = self.store.apply(self.selector, label=row["name"], stats=cfg["stats"], keep_native=cfg["keepNative"],
+            selector = {**self.selector, "t": row["base"]["cls"]}
+            result = self.store.apply(selector, label=row["name"], stats=cfg["stats"], keep_native=cfg["keepNative"],
                                       lore=cfg["lore"], rarity=cfg["rarity"], mechanic=cfg["mechanic"], name=cfg["name"], affix=cfg["affix"])
             self.assertEqual(result["entry"]["name"], row["name"])
             self.assertEqual(result["entry"]["mechanic"], cfg["mechanic"])

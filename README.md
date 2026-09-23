@@ -8,7 +8,18 @@ A local/offline save editor for **Hero Siege** (Pixel Prone Games). Manage items
 
 Single file, no install, no Python needed. Just run it.
 
-## What's new in v2.15.4
+## Local merged build: v2.15.5-s10-local
+
+This source build combines AFK Farm ingestion, confirmed category/stash deletion,
+and the local Miner helmet template. Deleting AFK items now retains their import
+identities, so retrying the same expedition cannot bring them back. Vault schema 7
+migrates older databases after a backup; older editors reject the upgraded schema.
+
+Run **`ItemEditor.bat`** from this folder to use the merged version. The published
+EXE above has not been rebuilt with these local changes. See
+[merge verification](MERGE_VERIFICATION_2026-09-22.md) for tests and known baseline failures.
+
+## Previously added in v2.15.4
 
 The red "the game runs under a different Windows user" warning no longer appears when
 the only thing that happened is that the game was started before your first forge; the
@@ -121,6 +132,19 @@ See [the v2.13.1 release notes](RELEASE_NOTES_v2.13.1.md).
 
 See [the v2.13.0 release notes](RELEASE_NOTES_v2.13.0.md) and the
 [Custom Item Forge engineering record](CUSTOM_ITEM_FORGE_RESEARCH.md).
+
+## Infinite Vault category and stash deletion
+
+- Choose a category, open its **…** menu, and select **DELETE CATEGORY** to
+  delete the complete category, all its stash tabs, and their items.
+- Each stash header has **DELETE STASH**, which removes only that tab and its
+  contents. A confirmation shows the exact name, tab count, and item count.
+- Every confirmed deletion creates a separate
+  `hs_infinite_vault.sqlite3.before-delete-<id>.bak` beside the Vault database.
+  These backups are retained across later edits; deletion is not a History undo.
+- Changed contents require a fresh confirmation. Close Hero Siege and resolve
+  pending transfers first. The last category and each category's last stash are
+  protected. Remaining stash names and item positions stay unchanged.
 
 ## Previously added in v2.12.0
 
@@ -414,6 +438,41 @@ checked out in a sibling `_research` directory.
 
 The repo contains the Python source (`hs_item_editor_gui.py`) and the data files the editor needs. The exe on the Releases page has all of this bundled in — end users only need the exe.
 
+## Local API: AFK Expedition spool ingest
+
+[HS AFK Expedition](../HS-AFK-Expedition/README.md) writes the items an
+expedition produced to `%LOCALAPPDATA%\Hero_Siege\afk\spool\<expedition_id>.ndjson`.
+While the editor is running, that spool can be pushed into Infinite Vault
+through the same loopback server the UI uses (`127.0.0.1:8765`-`8774`; every
+`POST` needs a JSON body and the `X-Hero-Siege-Item-Editor: 1` header):
+
+- `POST /api/vault/ingest` with
+  `{"expedition_id": "...", "label": "optional text", "records": [spool records]}`
+  (at most 500 records per call). Records with `"kind": "item"` become native
+  stash entries built from the game's own definition (`a`, `b`, `c`, `j`, and
+  `n` when present): gear gets `w: 1` plus `m: 1` for uniques or `o: 1`
+  otherwise and lands in the **AFK Farm** category on a stash named
+  `<expedition_id> · <date>[ · label]` (spill-over pages are named
+  `... (2)`, `... (3)`); the native stackable classes (Keys, Boss Parts /
+  Tarot, Materials, Runes / Gems / Orbs) become `o: 1` records in
+  **AFK Materials**. Positions come from the Vault's own layout planner.
+  Other record kinds are ignored, malformed records are reported under
+  `skipped` with a reason instead of failing the batch, and every record is
+  keyed by `(expedition_id, seq)`, so re-posting a spool deposits nothing new.
+  Import identities survive category/stash deletion and editor restarts; a retry
+  does not recreate deleted items or their category/stash.
+  Reply: `{"expedition_id", "deposited", "duplicate", "ignored",
+  "skipped": [{"seq", "reason"}], "collections": {"farm": {"id", "name",
+  "pageIndex", "pageName"}, "materials": {"id", "name"}}}`.
+- `GET /api/vault/ingest/status?expedition_id=...` returns
+  `{"expedition_id", "deposited"}`: how many of that expedition's records the
+  Vault holds, has already returned to the Shared Stash, or has intentionally deleted.
+
+Only the SQLite vault is written, so ingest works while Hero Siege is running;
+returning the items to the Shared Stash is the ordinary Vault withdrawal and
+still requires the game to be closed. `HS-AFK-Expedition\tools\ingest_spool.py`
+is a standard-library client for this endpoint.
+
 ## Notes
 
 - Reads and writes local save files only — no game process injection and no anti-cheat interaction
@@ -434,3 +493,7 @@ The repo contains the Python source (`hs_item_editor_gui.py`) and the data files
 ## Credits
 
 Built with Python stdlib. Item data extracted from the game's own asset repository via YYToolkit.
+
+## Local Miner helmet prototype
+
+Item Forge → Forge a signature item now includes Miner's Helmet: +1000 Defense, +500% Enhanced Defense, +20% Movement Speed, +20% All Resistances and +5 Light Radius. It requires the matching experimental ForgePact plugin for 4x ore while equipped and a golden mining pulse. The public plugin does not implement this mechanic yet; nearby-vein harvesting is not enabled. This template uses the existing fresh-item identity, Shared Stash destination and Custom Forge sidecar, with the normal closed-game and backup checks.

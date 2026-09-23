@@ -17,6 +17,7 @@ import os
 import random
 import re
 import shutil
+import sqlite3
 import subprocess
 import sys
 import tempfile
@@ -101,6 +102,7 @@ except ModuleNotFoundError:
 try:
     from infinite_vault import (
         InfiniteVault,
+        MAX_STASH_NAME_LENGTH,
         MAX_TEXT_FIELD_LENGTH,
         VAULT_GRID_COLUMNS,
         VAULT_GRID_ROWS,
@@ -115,6 +117,7 @@ try:
 except ModuleNotFoundError:
     from HSItemEditor.infinite_vault import (
         InfiniteVault,
+        MAX_STASH_NAME_LENGTH,
         MAX_TEXT_FIELD_LENGTH,
         VAULT_GRID_COLUMNS,
         VAULT_GRID_ROWS,
@@ -190,7 +193,7 @@ def _resource_base() -> Path:
 BASE = _resource_base()
 CATALOG_FILE = BASE / "hs_full_catalog.json"
 PORT = 8765
-APP_VERSION = "2.15.4-s10"
+APP_VERSION = "2.15.5-s10-local"
 APPLICATION_ID = "hero-siege-item-editor"
 CATALOG_PROFILE = "Season 10"
 MAX_POST_BYTES = 2 * 1024 * 1024
@@ -3667,13 +3670,23 @@ def _vault_record_size(record) -> tuple[int, int]:
 
 
 def _vault_layout_plan(
-    records, *, preserve_existing: bool = True
+    records, *, preserve_existing: bool = True, page_indexes=None, first_page: int | None = None
 ) -> dict[str, tuple[int, int, int, int, int]]:
-    """Return deterministic, non-overlapping page/x/y/w/h placements."""
+    """Return deterministic, non-overlapping page/x/y/w/h placements.
+
+    Records without a kept position fill pages from ``first_page`` upward, so
+    an AFK ingest can keep one expedition's drops on that expedition's stash.
+    """
 
     occupied: dict[int, set[tuple[int, int]]] = {}
     planned: dict[str, tuple[int, int, int, int, int]] = {}
     unplaced: list[tuple[object, int, int]] = []
+    candidate_pages = sorted(set(page_indexes or []) | {
+        record.page_index for record in records if record.page_index is not None
+    })
+    if first_page is not None:
+        candidate_pages = sorted({first_page} | {p for p in candidate_pages if p >= first_page})
+    candidate_pages = candidate_pages or [0]
 
     def available(page: int, x: int, y: int, width: int, height: int) -> bool:
         if (
@@ -3730,7 +3743,8 @@ def _vault_layout_plan(
             unplaced.append((record, width, height))
 
     for record, width, height in unplaced:
-        page = 0
+        page_position = 0
+        page = candidate_pages[page_position]
         position: tuple[int, int] | None = None
         while position is None:
             for y in range(VAULT_GRID_ROWS - height + 1):
@@ -3741,7 +3755,10 @@ def _vault_layout_plan(
                 if position is not None:
                     break
             if position is None:
-                page += 1
+                page_position += 1
+                if page_position == len(candidate_pages):
+                    candidate_pages.append(candidate_pages[-1] + 1)
+                page = candidate_pages[page_position]
         claim(record, page, position[0], position[1], width, height)
     return planned
 
@@ -3766,6 +3783,26 @@ def _save_vault_layout_changes(store, collection_id: int, records, plan) -> int:
     return len(changes)
 
 
+def _vault_initialize_layout(
+    store, collection_id: int, *, preserve_existing: bool = True, first_page: int | None = None
+):
+    """Keep named page identities while placing new drops into their expedition."""
+    records = store.list_all_available_items(collection=collection_id)
+    pages = store.list_stash_pages(collection_id)
+    plan = _vault_layout_plan(
+        records, preserve_existing=preserve_existing, first_page=first_page,
+        page_indexes=[page.page_index for page in pages],
+    )
+    required_indexes = {placement[0] for placement in plan.values()}
+    missing = required_indexes - {page.page_index for page in pages}
+    if missing:
+        pages = store.ensure_stash_pages(collection_id, sorted(missing))
+    changed = _save_vault_layout_changes(store, collection_id, records, plan)
+    if changed:
+        pages = store.list_stash_pages(collection_id)
+    return records, plan, pages, changed
+
+
 def op_vault_layout(body: dict) -> dict:
     """Initialize or move persistent Vault grid metadata safely."""
 
@@ -3778,21 +3815,8 @@ def op_vault_layout(body: dict) -> dict:
         return {"err": "Unknown Vault layout action."}
     try:
         store = vault_store()
-        records = store.list_all_available_items(collection=collection_id)
-        plan = _vault_layout_plan(
-            records, preserve_existing=action != "compact"
-        )
-        required_page_count = 1 + max(
-            (placement[0] for placement in plan.values()), default=0
-        )
-        pages = store.list_stash_pages(collection_id)
-        existing_indexes = {page.page_index for page in pages}
-        if any(index not in existing_indexes for index in range(required_page_count)):
-            pages = store.ensure_stash_page_count(
-                collection_id, required_page_count
-            )
-        initialized = _save_vault_layout_changes(
-            store, collection_id, records, plan
+        records, plan, pages, initialized = _vault_initialize_layout(
+            store, collection_id, preserve_existing=action != "compact"
         )
         if action in {"ensure", "compact"}:
             return {
@@ -3997,6 +4021,8 @@ def op_vault_resolve_batch(body: dict) -> dict:
 def op_vault_collections(body: dict) -> dict:
     try:
         action = body.get("action")
+        if action in {"previewDelete", "delete"}:
+            return op_vault_storage_delete(body)
         store = vault_store()
         if action == "create":
             row = store.create_collection(body.get("name"))
@@ -4004,24 +4030,18 @@ def op_vault_collections(body: dict) -> dict:
         if action == "rename":
             row = store.rename_collection(int(body.get("collectionId")), body.get("name"))
             return {"ok": f"Collection renamed: {row.name}", "collection": row.as_dict()}
-        if action == "delete":
-            collections = store.list_collections()
-            if len(collections) <= 1:
-                return {"err": "The last vault collection cannot be deleted."}
-            collection_id = int(body.get("collectionId"))
-            name = next((row.name for row in collections if row.id == collection_id), "collection")
-            store.delete_collection(collection_id)
-            return {"ok": f"Empty collection deleted: {name}"}
         return {"err": "unknown vault collection action"}
     except (VaultError, TypeError, ValueError) as exc:
         return {"err": str(exc)}
 
 
 def op_vault_stashes(body: dict) -> dict:
-    """Add or quickly rename one concrete stash inside a Vault category."""
+    """Manage one concrete stash inside a Vault category."""
 
     try:
         action = body.get("action")
+        if action in {"previewDelete", "delete"}:
+            return op_vault_storage_delete(body, stash=True)
         collection_id = int(body.get("collectionId"))
         store = vault_store()
         if action == "add":
@@ -4038,6 +4058,34 @@ def op_vault_stashes(body: dict) -> dict:
             return {"ok": f"Stash renamed: {page.name}", "stash": page.as_dict()}
         return {"err": "unknown Vault stash action"}
     except (VaultError, TypeError, ValueError) as exc:
+        return {"err": str(exc)}
+
+
+def op_vault_storage_delete(body: dict, *, stash: bool = False) -> dict:
+    """Preview or confirm a deletion without touching the game's save files."""
+    try:
+        collection_id = body.get("collectionId")
+        page_index = body.get("pageIndex") if stash else None
+        if isinstance(collection_id, bool) or not isinstance(collection_id, int):
+            raise VaultValidationError("A concrete Vault category is required.")
+        if stash and (isinstance(page_index, bool) or not isinstance(page_index, int)):
+            raise VaultValidationError("A concrete stash page index is required.")
+        with SAVE_WRITE_LOCK:
+            if game_running():
+                return {"err": "Close Hero Siege before deleting Vault contents."}
+            store = vault_store()
+            if body.get("action") == "previewDelete":
+                return store.preview_storage_deletion(collection_id, page_index=page_index)
+            result = store.delete_storage(
+                collection_id, page_index=page_index,
+                preview_token=body.get("previewToken"),
+            )
+        return {**result, "ok": (
+            f"Deleted {result['name']} and {result['itemCount']} "
+            f"item{'s' if result['itemCount'] != 1 else ''}. "
+            f"Backup: {result['backupName']}"
+        )}
+    except (VaultError, OSError, sqlite3.Error, TypeError, ValueError) as exc:
         return {"err": str(exc)}
 
 
@@ -4141,6 +4189,366 @@ def op_vault_undo(body: dict) -> dict:
         }
     except (VaultError, TypeError, ValueError) as exc:
         return {"err": str(exc)}
+
+
+# ---------------------------------------------------------------------------
+# HS AFK Expedition spool ingest (SQLite only; ``stash.hss`` is never touched)
+# ---------------------------------------------------------------------------
+AFK_INGEST_FARM_COLLECTION = "AFK Farm"
+AFK_INGEST_MATERIALS_COLLECTION = "AFK Materials"
+AFK_INGEST_SOURCE = "afk-expedition"
+AFK_INGEST_MAX_RECORDS = 500
+AFK_INGEST_MAX_EXPEDITION_ID_LENGTH = 96
+AFK_INGEST_MAX_LABEL_LENGTH = 128
+AFK_INGEST_MAX_TIMESTAMP = 10 ** 15
+
+
+def _afk_expedition_id(value: object) -> str:
+    """Validate the expedition id that names the deposit keys and the stash page."""
+
+    if not isinstance(value, str):
+        raise VaultValidationError("expedition_id must be text")
+    expedition_id = value.strip()
+    if not expedition_id:
+        raise VaultValidationError("expedition_id cannot be empty")
+    if len(expedition_id) > AFK_INGEST_MAX_EXPEDITION_ID_LENGTH:
+        raise VaultValidationError(
+            f"expedition_id cannot exceed {AFK_INGEST_MAX_EXPEDITION_ID_LENGTH} characters"
+        )
+    if not expedition_id.isprintable():
+        raise VaultValidationError("expedition_id cannot contain control characters")
+    return expedition_id
+
+
+def _afk_deposit_key_prefix(expedition_id: str) -> str:
+    """Return the storage-safe deposit-key prefix shared by one expedition.
+
+    ``InfiniteVault`` accepts only ``[A-Za-z0-9_-]{16,128}`` deposit keys, so
+    the readable slug is paired with a hash of the exact id: two ids that slug
+    to the same text, or where one is a prefix of the other, still get
+    distinct prefixes and therefore distinct status counts.
+    """
+
+    slug = re.sub(r"[^A-Za-z0-9_-]", "_", expedition_id)[:40]
+    digest = hashlib.sha256(expedition_id.encode("utf-8")).hexdigest()[:16]
+    return f"afk-{slug}-{digest}-"
+
+
+def _afk_deposit_key(expedition_id: str, seq: int) -> str:
+    return f"{_afk_deposit_key_prefix(expedition_id)}{seq:010d}"
+
+
+def _afk_number(value: object, field: str) -> float:
+    """Read one finite numeric field as the float the game itself writes."""
+
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        raise ValueError(f"{field} must be a number")
+    number = float(value)
+    if not math.isfinite(number):
+        raise ValueError(f"{field} must be finite")
+    return number
+
+
+def _afk_seq(value: object) -> int:
+    if isinstance(value, float) and math.isfinite(value) and value.is_integer():
+        value = int(value)
+    if isinstance(value, bool) or not isinstance(value, int) or value < 0:
+        raise ValueError("seq must be a non-negative integer")
+    return value
+
+
+def _afk_reported_seq(value: object):
+    """Echo a record's ``seq`` in a skip entry only when it is JSON-safe."""
+
+    if isinstance(value, bool) or not isinstance(value, (int, str)):
+        return None
+    return value if isinstance(value, int) else value[:64]
+
+
+def _afk_prepare_record(expedition_id: str, record: dict) -> dict:
+    """Map one spool item record onto the native stash entry shape.
+
+    ``data`` mirrors ``make_data``: the game's own compact ``a``/``b``/``c``/``j``
+    definition (plus ``n`` when the drop carried it), ``w`` and ``m``/``o`` for
+    gear, and an ``o`` stack of one for the native stackable classes.  Every
+    value is derived from the record itself so the same record always yields
+    the same key, JSON text and deposit key, which is what keeps a re-post a
+    no-op inside ``InfiniteVault.deposit``.
+    """
+
+    seq = _afk_seq(record.get("seq"))
+    item = record.get("item")
+    if not isinstance(item, dict):
+        raise ValueError("item must be an object")
+    definition = item.get("itemDefinitionStruct")
+    if not isinstance(definition, dict):
+        raise ValueError("item.itemDefinitionStruct must be an object")
+    cls_value = item.get("itemType", record.get("type"))
+    cls_number = _afk_number(cls_value, "item.itemType")
+    if cls_number < 0 or not cls_number.is_integer() or int(cls_number) not in CLASS_NAMES:
+        raise ValueError(f"unknown item class {cls_value!r}")
+    cls = int(cls_number)
+    for field in ("a", "b"):
+        if field not in definition:
+            raise ValueError(f"itemDefinitionStruct.{field} is missing")
+    seed = _afk_number(definition["a"], "itemDefinitionStruct.a")
+    base = _afk_number(definition["b"], "itemDefinitionStruct.b")
+    sub = _afk_number(definition.get("j", 0), "itemDefinitionStruct.j")
+    kind = _afk_number(definition.get("c", 0), "itemDefinitionStruct.c")
+    stackable = cls in STACKABLE_CLS
+    data = {} if stackable else {"w": 1.0}
+    data.update({"a": seed, "j": sub, "b": base, "c": kind})
+    if "n" in definition:
+        data["n"] = _afk_number(definition["n"], "itemDefinitionStruct.n")
+    if stackable or kind != 1.0:
+        data["o"] = 1.0
+    else:
+        data["m"] = 1.0
+    deposit_key = _afk_deposit_key(expedition_id, seq)
+    stamp = item.get("itemTimeStamp")
+    if (
+        not isinstance(stamp, bool) and isinstance(stamp, (int, float))
+        and math.isfinite(float(stamp)) and float(stamp).is_integer()
+        and 0 <= stamp <= AFK_INGEST_MAX_TIMESTAMP
+    ):
+        numeric = int(stamp)
+    else:
+        numeric = int.from_bytes(
+            hashlib.sha256(deposit_key.encode("ascii")).digest()[:6], "big"
+        )
+    name = record.get("name")
+    label = None
+    if isinstance(name, str):
+        label = re.sub(r"[\x00\r\n]", " ", name).strip()[:AFK_INGEST_MAX_LABEL_LENGTH] or None
+    when = record.get("t")
+    date = None
+    if isinstance(when, str) and re.fullmatch(r"\d{4}-\d{2}-\d{2}", when[:10]):
+        date = when[:10]
+    return {
+        "seq": seq,
+        "cls": cls,
+        "stackable": stackable,
+        "key": f"0-0-{numeric}-{cls}",
+        "raw": _vault_item_json({"pos": [0.0, 0.0], "data": data}),
+        "label": label,
+        "depositKey": deposit_key,
+        "date": date,
+    }
+
+
+def _afk_find_collection(store, name: str):
+    key = name.casefold()
+    return next((row for row in store.list_collections() if row.name.casefold() == key), None)
+
+
+def _afk_collection(store, name: str):
+    """Return the named collection, creating it on first use."""
+
+    row = _afk_find_collection(store, name)
+    if row is not None:
+        return row
+    try:
+        return store.create_collection(name)
+    except VaultConflictError:
+        row = _afk_find_collection(store, name)
+        if row is None:
+            raise
+        return row
+
+
+_AFK_DEFAULT_STASH_NAME_RE = re.compile(r"Stash [1-9]\d*(?: \([2-9]\d*\))?\Z")
+
+
+def _afk_expedition_pages(pages, expedition_id: str) -> list:
+    marker = f"{expedition_id} \u00b7 ".casefold()
+    return sorted(
+        (page for page in pages if page.name.casefold().startswith(marker)),
+        key=lambda page: page.page_index,
+    )
+
+
+def _afk_find_expedition_page(pages, expedition_id: str):
+    matches = _afk_expedition_pages(pages, expedition_id)
+    return matches[0] if matches else None
+
+
+def _afk_name_overflow_pages(
+    store, collection_id: int, expedition_id: str, expedition_page, pages, used_indexes
+) -> None:
+    """Name the default pages an expedition spilled onto after its own page.
+
+    A 17x18 stash holds about fifty pieces of gear, so a long expedition
+    continues on the following pages, which ``ensure_stash_pages``
+    created as "Stash N".  Renaming them "<expedition page> (2)", "(3)", ...
+    keeps the Vault readable and lets the next batch find them by prefix.
+    """
+
+    ordinal = len(_afk_expedition_pages(pages, expedition_id)) + 1
+    for page in sorted(pages, key=lambda page: page.page_index):
+        if page.page_index <= expedition_page.page_index or page.page_index not in used_indexes:
+            continue
+        if not _AFK_DEFAULT_STASH_NAME_RE.fullmatch(page.name):
+            continue
+        suffix = f" ({ordinal})"
+        name = expedition_page.name[:MAX_STASH_NAME_LENGTH - len(suffix)] + suffix
+        try:
+            store.rename_stash_page(collection_id, page.page_index, name)
+        except VaultConflictError:
+            continue
+        ordinal += 1
+
+
+def _afk_expedition_page(store, collection_id: int, expedition_id: str, page_name: str):
+    """Return the expedition's own stash page inside AFK Farm, creating it once."""
+
+    pages = store.list_stash_pages(collection_id)
+    page = _afk_find_expedition_page(pages, expedition_id)
+    if page is not None:
+        return page
+    if len(pages) == 1 and pages[0].item_count == 0 and pages[0].name.casefold() == "stash 1":
+        # The page create_collection made is still untouched: name it instead.
+        page = pages[0]
+    else:
+        page = store.add_stash_page(collection_id)
+    return store.rename_stash_page(collection_id, page.page_index, page_name)
+
+
+def op_vault_ingest(body: dict) -> dict:
+    """Deposit HS AFK Expedition spool records into Infinite Vault, idempotently.
+
+    Gear goes to ``AFK Farm`` on one stash page per expedition; the native
+    stackable classes (keys, tarot/boss parts, materials, runes/gems/orbs) go
+    to ``AFK Materials``.  Each record is keyed by ``(expedition_id, seq)`` so
+    re-posting a spool deposits nothing new, and a malformed record is skipped
+    with a reason instead of failing the batch.  Only the SQLite vault is
+    written; ``stash.hss`` and the game's files are untouched, so the game may
+    be running.
+    """
+
+    try:
+        expedition_id = _afk_expedition_id(body.get("expedition_id"))
+        records = body.get("records")
+        if not isinstance(records, list):
+            raise VaultValidationError("records must be a list")
+        if len(records) > AFK_INGEST_MAX_RECORDS:
+            raise VaultValidationError(
+                f"at most {AFK_INGEST_MAX_RECORDS} records can be ingested per request"
+            )
+        label = body.get("label")
+        if label is not None and not isinstance(label, str):
+            raise VaultValidationError("label must be text or null")
+        label = "".join(
+            char for char in (label or "") if char.isprintable()
+        ).strip()[:AFK_INGEST_MAX_LABEL_LENGTH]
+
+        prepared: list[dict] = []
+        skipped: list[dict] = []
+        ignored = 0
+        for record in records:
+            if not isinstance(record, dict):
+                skipped.append({"seq": None, "reason": "record is not an object"})
+                continue
+            if record.get("kind") != "item":
+                ignored += 1
+                continue
+            try:
+                prepared.append(_afk_prepare_record(expedition_id, record))
+            except ValueError as exc:
+                skipped.append({"seq": _afk_reported_seq(record.get("seq")), "reason": str(exc)})
+
+        store = vault_store()
+        existing = set(store.list_deposit_keys(_afk_deposit_key_prefix(expedition_id)))
+        deposited = duplicate = materials_new = 0
+        farm = farm_page = materials = None
+        farm_ids: list[str] = []
+        for entry in prepared:
+            if entry["depositKey"] in existing:
+                duplicate += 1
+                continue
+            if entry["stackable"]:
+                if materials is None:
+                    materials = _afk_collection(store, AFK_INGEST_MATERIALS_COLLECTION)
+                collection = materials
+            else:
+                if farm is None:
+                    farm = _afk_collection(store, AFK_INGEST_FARM_COLLECTION)
+                    date = entry["date"] or time.strftime("%Y-%m-%d", time.gmtime())
+                    page_name = f"{expedition_id} \u00b7 {date}"
+                    if label:
+                        page_name = f"{page_name} \u00b7 {label}"
+                    farm_page = _afk_expedition_page(
+                        store, farm.id, expedition_id, page_name[:MAX_STASH_NAME_LENGTH]
+                    )
+                collection = farm
+            try:
+                row = store.deposit(
+                    collection.id, entry["raw"],
+                    source_item_key=entry["key"], label=entry["label"],
+                    source=AFK_INGEST_SOURCE, deposit_key=entry["depositKey"],
+                )
+            except VaultStateError:
+                # Already ingested earlier and since withdrawn or deleted.
+                duplicate += 1
+                continue
+            except VaultConflictError as exc:
+                skipped.append({"seq": entry["seq"], "reason": str(exc)})
+                continue
+            existing.add(entry["depositKey"])
+            deposited += 1
+            if entry["stackable"]:
+                materials_new += 1
+            else:
+                farm_ids.append(row.id)
+        if farm_ids:
+            _, plan, pages, _ = _vault_initialize_layout(
+                store, farm.id, first_page=farm_page.page_index
+            )
+            _afk_name_overflow_pages(
+                store, farm.id, expedition_id, farm_page, pages,
+                {plan[item_id][0] for item_id in farm_ids if item_id in plan},
+            )
+        if materials_new:
+            _vault_initialize_layout(store, materials.id)
+
+        collections: dict = {}
+        if farm is None:
+            farm = _afk_find_collection(store, AFK_INGEST_FARM_COLLECTION)
+            if farm is not None:
+                farm_page = _afk_find_expedition_page(
+                    store.list_stash_pages(farm.id), expedition_id
+                )
+        if farm is not None:
+            collections["farm"] = {
+                "id": farm.id,
+                "name": farm.name,
+                "pageIndex": farm_page.page_index if farm_page else None,
+                "pageName": farm_page.name if farm_page else None,
+            }
+        if materials is None:
+            materials = _afk_find_collection(store, AFK_INGEST_MATERIALS_COLLECTION)
+        if materials is not None:
+            collections["materials"] = {"id": materials.id, "name": materials.name}
+        return {
+            "expedition_id": expedition_id,
+            "deposited": deposited,
+            "duplicate": duplicate,
+            "ignored": ignored,
+            "skipped": skipped,
+            "collections": collections,
+        }
+    except VaultError as exc:
+        return {"err": str(exc)}
+
+
+def vault_ingest_status(query: dict) -> dict:
+    """Count accepted records, including those later withdrawn or deleted."""
+
+    try:
+        expedition_id = _afk_expedition_id(query.get("expedition_id", [""])[0])
+        keys = vault_store().list_deposit_keys(_afk_deposit_key_prefix(expedition_id))
+    except VaultError as exc:
+        return {"err": str(exc)}
+    return {"expedition_id": expedition_id, "deposited": len(keys)}
 
 
 def _existing_vault_request(store, request_id: str, request_hash: str, direction: str):
@@ -7905,6 +8313,8 @@ class H(BaseHTTPRequestHandler):
                 self._json({"err": f"Infinite Vault query failed: {exc}"}, 500)
         elif u.path == "/api/vault/history":
             self._json(vault_history())
+        elif u.path == "/api/vault/ingest/status":
+            self._json(vault_ingest_status(parse_qs(u.query, keep_blank_values=True)))
         elif u.path == "/api/sets":
             self._json(SETS)
         elif u.path == "/api/runewords":
@@ -8000,6 +8410,8 @@ class H(BaseHTTPRequestHandler):
             self._json(op_vault_roll(body))
         elif path == "/api/vault/undo":
             self._json(op_vault_undo(body))
+        elif path == "/api/vault/ingest":
+            self._json(op_vault_ingest(body))
         else:
             self._json({"err": "not found"}, 404)
 
@@ -8264,6 +8676,7 @@ input,select{background:#0b111a;color:#dfe7f0;border-color:#2d3b50;border-radius
 .vault-category-bar{display:grid;grid-template-columns:auto minmax(220px,430px) auto auto;gap:8px;align-items:center;max-width:1120px;margin:0 0 16px}.vault-category-bar select{height:40px;min-width:0;border-color:#3b526b;background:#0d1622;color:#edf6ff;font-size:12px;font-weight:750}.vault-category-add,.vault-stash-add{height:40px;padding:0 14px;border:1px solid #3a607d;border-radius:8px;background:#14283a;color:#c8eaff;cursor:pointer;font-size:10px;font-weight:900;letter-spacing:.35px}.vault-category-add:hover,.vault-stash-add:hover{border-color:#56c7e4;background:#19364d;color:#f1fcff}.vault-stash-add{border-color:rgba(82,221,169,.45);background:rgba(37,126,92,.18);color:#9aebc9}.vault-stash-add:hover{border-color:#62e3b3;background:rgba(38,126,91,.32)}.vault-category-add:disabled,.vault-stash-add:disabled{opacity:.4;cursor:not-allowed}.vault-stash-title{display:flex;align-items:center;min-width:0}.vault-stash-name{width:min(280px,38vw);min-width:110px;padding:5px 7px;border:1px solid transparent;border-radius:6px;background:transparent;color:#f1c66f;font:850 14px/1.2 inherit}.vault-stash-name:hover{border-color:#3b4e65;background:#0d1621}.vault-stash-name:focus{outline:none;border-color:#55bad0;background:#09121c;box-shadow:0 0 0 2px rgba(85,186,208,.15)}.vault-stash-name:disabled{opacity:.55}.vault-stash-send{border-color:rgba(84,185,255,.48);background:linear-gradient(180deg,rgba(42,108,157,.28),rgba(25,67,102,.3));color:#bfeaff}.vault-stash-send:hover{border-color:#54b9ff;background:rgba(42,108,157,.4)}
 @media(max-width:1260px){body{grid-template-columns:232px minmax(500px,1fr) 350px}.top-actions{min-width:280px}.brand{min-width:195px}.version{max-width:175px}#mid{padding-left:17px;padding-right:17px}.finder-bar{grid-template-columns:1fr 1fr}.finder-bar #ofq,.finder-bar #ofgo{grid-column:1/-1}.access-grid{grid-template-columns:1fr}.vault-compare-grid{grid-template-columns:1fr}}
 @media(max-width:760px){.vault-page-head{align-items:flex-start}.vault-category-bar{grid-template-columns:1fr auto auto}.vault-category-add{grid-column:1/-1}.vault-stash-name{width:min(240px,52vw)}.vault-grid-head{align-items:flex-start;flex-direction:column}.stash-head-actions{flex-wrap:wrap}.vault-transfer-options{grid-template-columns:1fr}.vault-compare-bar{flex-wrap:wrap}.vault-compare-slots{flex-basis:100%}}
+.vault-mini:disabled{opacity:.38;cursor:not-allowed}
 </style></head><body>
 <header id="topbar">
   <div class="brand">
@@ -8404,6 +8817,8 @@ async function boot(){
     document.getElementById('status').textContent=o.gameRunning?'GAME RUNNING - VIEW ONLY, WRITING LOCKED':'GAME CLOSED - EDITING ENABLED';
     document.getElementById('status').className=o.gameRunning?'warn':'';
     document.querySelectorAll('.stash-fill').forEach(button=>button.disabled=GAME_RUNNING);
+    document.querySelectorAll('[data-vault-stash-delete]').forEach(button=>button.disabled=GAME_RUNNING||button.dataset.lastStash==='1');
+    const deleteCategory=document.getElementById('vaultdelete');if(deleteCategory)deleteCategory.disabled=GAME_RUNNING||(vaultMeta.collections||[]).length<=1;
     document.querySelectorAll('.vault-bulk-button').forEach(button=>button.disabled=GAME_RUNNING||button.dataset.staticDisabled==='1'||vaultBulkBusy);
     document.querySelectorAll('.vault-bulk-confirm').forEach(button=>button.disabled=GAME_RUNNING||vaultBulkBusy||button.dataset.ready==='0');},5000);
   document.querySelector('[data-view=stash]').onclick=openStash;
@@ -8514,7 +8929,7 @@ function vaultGridPageHTML(page,index,persistent=false,stash=null){
   const title=persistent
     ?`<input class="vault-stash-name" data-vault-stash-name="${pageIndex}" value="${attr(stashName)}" maxlength="128" aria-label="Stash name"> <span class="muted">(${stashItemCount})</span>`
     :`<h2>Vault Grid ${pageIndex+1} <span class="muted">(${page.items.length})</span></h2>`;
-  const actions=persistent?`<div class="stash-head-actions"><button class="stash-roll" data-vault-stash-roll="${pageIndex}" ${stashItemCount&&!GAME_RUNNING?'':'disabled'}>MAX / BEST</button><button class="stash-fill vault-stash-send" data-vault-stash-send="${pageIndex}" ${stashItemCount&&!GAME_RUNNING?'':'disabled'}>SEND TO SHARED STASH</button></div>`:'';
+  const actions=persistent?`<div class="stash-head-actions"><button class="stash-roll" data-vault-stash-roll="${pageIndex}" ${stashItemCount&&!GAME_RUNNING?'':'disabled'}>MAX / BEST</button><button class="stash-fill vault-stash-send" data-vault-stash-send="${pageIndex}" ${stashItemCount&&!GAME_RUNNING?'':'disabled'}>SEND TO SHARED STASH</button><button type="button" class="vault-mini danger" data-vault-stash-delete="${pageIndex}" aria-label="Delete stash ${attr(stashName)}" ${GAME_RUNNING?'disabled':''}>DELETE STASH</button></div>`:'';
   return `<section class="vault-grid-page" data-vault-stash-section="${pageIndex}"><div class="stash-tab-head vault-grid-head"><div class="vault-stash-title">${title}</div>${actions}</div><div class="vault-grid-scroll">${grid}</div></section>`;
 }
 function occFree(g,x,y,w,h,skipKey){
@@ -9031,7 +9446,7 @@ async function openVault(reset=true){
       <select id="vaultcategory" aria-label="Vault category">${categoryOptions}</select>
       <button type="button" class="vault-stash-add" id="vaultnewgrid">+ STASH</button>
       <details class="vault-tools"><summary aria-label="More category options" title="More category options">&#8230;</summary><div class="vault-tools-menu">
-        <div class="vault-tool-row"><button class="vault-mini" id="vaultrename">RENAME CATEGORY</button><button class="vault-mini danger" id="vaultdelete">DELETE EMPTY</button></div>
+        <div class="vault-tool-row"><button class="vault-mini" id="vaultrename">RENAME CATEGORY</button><button class="vault-mini danger" id="vaultdelete" ${vaultMeta.gameRunning||collections.length<=1?'disabled':''} title="${collections.length<=1?'Keep at least one category':'Delete this category and its contents'}">DELETE CATEGORY</button></div>
         <div class="vault-tool-row"><button class="vault-mini" id="vaultrefresh">REFRESH</button><button class="vault-mini" id="vaultcompact">COMPACT ITEMS</button></div>
         <button class="vault-mini" id="vaulthistory">HISTORY / UNDO</button>
       </div></details>
@@ -9046,7 +9461,7 @@ async function openVault(reset=true){
   document.getElementById('vaultrefresh').onclick=()=>openVault(false);
   document.getElementById('vaultnew').onclick=()=>manageVaultCollection('create');
   document.getElementById('vaultrename').onclick=()=>manageVaultCollection('rename');
-  document.getElementById('vaultdelete').onclick=()=>manageVaultCollection('delete');
+  document.getElementById('vaultdelete').onclick=()=>openVaultDelete();
   document.getElementById('vaultnewgrid').onclick=addEmptyVaultGrid;
   document.getElementById('vaultcompact').onclick=compactVaultGrids;
   document.getElementById('vaulthistory').onclick=openVaultHistory;
@@ -9205,6 +9620,12 @@ function renderVaultItems(payload){
     const pageIndex=+button.dataset.vaultStashSend,input=host.querySelector(`[data-vault-stash-name="${pageIndex}"]`),stashRows=rows.filter(row=>+row.pageIndex===pageIndex);
     openVaultSelectionReturn(stashRows,input?input.value:`Stash ${pageIndex+1}`);
   });
+  host.querySelectorAll('[data-vault-stash-delete]').forEach(button=>{
+    button.dataset.lastStash=stashes.length<=1?'1':'0';
+    button.disabled=GAME_RUNNING||stashes.length<=1;
+    button.title=stashes.length<=1?'Keep at least one stash, or delete the category':'Delete this stash and its contents';
+    button.onclick=()=>openVaultDelete(+button.dataset.vaultStashDelete);
+  });
   if(vaultState.highlightItem){const item=[...host.querySelectorAll('[data-vault-id]')].find(el=>el.dataset.vaultId===vaultState.highlightItem);if(item){item.scrollIntoView({behavior:'smooth',block:'center'});item.classList.add('found-pulse');setTimeout(()=>item.classList.remove('found-pulse'),3800);vaultState.highlightItem=null}}
 }
 let vaultDragInfo=null,vaultIgnoreSelectionClick=false;
@@ -9267,6 +9688,7 @@ async function compactVaultGrids(){
   const result=await j('/api/vault/layout',{method:'POST',body:JSON.stringify({action:'compact',collectionId:+vaultState.collectionId})});flash(result);if(!result.err)await loadVaultItems();
 }
 function vaultHistoryLabel(event){
+  if(event.eventType==='category_contents_deleted'||event.eventType==='stash_page_deleted')return `Deleted ${event.details.name} · ${event.details.itemCount} items · backup: ${event.details.backupName}`;
   const labels={item_deposited:'Stored item in Vault',item_custom_name_updated:'Changed custom name',item_moved:'Moved item',items_moved:'Moved selected items',collection_layout_updated:'Organized Vault grid',metadata_undo_applied:'Undid metadata action',withdrawal_reserved:'Prepared item return',withdrawal_committed:'Returned item to Shared Stash',bulk_deposit_prepared:'Prepared Shared Stash transfer',bulk_withdrawal_prepared:'Prepared Vault return'};
   return labels[event.eventType]||String(event.eventType||'Vault operation').replaceAll('_',' ');
 }
@@ -9461,13 +9883,51 @@ async function manageVaultCollection(action){
   const current=(vaultMeta.collections||[]).find(c=>String(c.id)===String(vaultState.collectionId));
   if(action==='create'){const name=await askVaultCategoryName('New Category');if(name==null)return;body.name=name}
   else if(action==='rename'){if(!current)return;const name=await askVaultCategoryName('Rename Category',current.name);if(name==null)return;body.collectionId=current.id;body.name=name}
-  else{if(!current||!confirm(`Delete empty category "${current.name}"?`))return;body.collectionId=current.id}
+  else{return}
   const r=await j('/api/vault/collections',{method:'POST',body:JSON.stringify(body)});flash(r);if(!r.err){
     if(action==='create')vaultState.collectionId=r.collection.id;
-    else if(action==='delete')vaultState.collectionId=null;
     try{if(vaultState.collectionId==null)localStorage.removeItem('hsVaultCategoryId');else localStorage.setItem('hsVaultCategoryId',String(vaultState.collectionId))}catch(e){}
     openVault(false);
   }
+}
+async function openVaultDelete(pageIndex=null){
+  const collectionId=+vaultState.collectionId,isStash=pageIndex!==null;
+  const endpoint=isStash?'/api/vault/stashes':'/api/vault/collections';
+  const target={collectionId,...(isStash?{pageIndex}:{})};
+  const previous=document.getElementById('sockmodal');if(previous)previous.remove();
+  const origin=document.activeElement,modal=document.createElement('div');modal.id='sockmodal';
+  modal.innerHTML=`<div id="sockbox" role="dialog" aria-modal="true" aria-labelledby="vaultdeletetitle" style="width:min(570px,92vw)"><h3 id="vaultdeletetitle">Delete ${isStash?'stash':'category'}</h3><div id="vaultdeletepreview" class="vault-bulk-preview" role="status" aria-live="polite">Checking contents…</div><div class="vault-bulk-actions"><button type="button" class="act vault-mini danger" id="vaultdeleteconfirm" disabled>DELETE ${isStash?'STASH':'CATEGORY'}</button><button type="button" class="act" id="vaultdeletecancel">CANCEL</button></div></div>`;
+  document.body.appendChild(modal);
+  const host=document.getElementById('vaultdeletepreview'),go=document.getElementById('vaultdeleteconfirm'),cancel=document.getElementById('vaultdeletecancel');
+  let preview=null,busy=false;
+  const close=()=>{if(busy)return;modal.remove();if(origin&&origin.isConnected)origin.focus()};
+  cancel.onclick=close;modal.onclick=e=>{if(e.target===modal)close()};
+  modal.onkeydown=e=>{
+    if(e.key==='Escape'){e.preventDefault();close()}
+    if(e.key==='Tab'){const buttons=[go,cancel].filter(button=>!button.disabled);if(!buttons.length)return;e.preventDefault();buttons[(buttons.indexOf(document.activeElement)+(e.shiftKey?-1:1)+buttons.length)%buttons.length].focus()}
+  };
+  cancel.focus();
+  const load=async()=>{
+    preview=null;go.disabled=true;go.textContent=`DELETE ${isStash?'STASH':'CATEGORY'}`;
+    let result;try{result=await j(endpoint,{method:'POST',body:JSON.stringify({action:'previewDelete',...target})})}catch(error){result={err:'Could not check the contents. Close this dialog and try again.'}}
+    if(!modal.isConnected)return;
+    if(result.err){host.innerHTML=`<strong>Deletion unavailable</strong><div class="vault-bulk-note warn">${esc(result.err)}</div>`;return}
+    preview=result;
+    host.innerHTML=`<strong>${esc(result.name)}</strong><div class="vault-bulk-tabs"><span>${result.stashCount} stash tab${result.stashCount===1?'':'s'}</span><span>${result.itemCount} item${result.itemCount===1?'':'s'}</span></div><div class="vault-bulk-note warn">This deletes ${isStash?'this stash tab':'this category and all its stash tabs'} and every item inside. Items will not be moved to Shared Stash.</div><div class="vault-bulk-note">A separate Vault backup will be saved before deletion. This action cannot be undone from History.</div>`;
+    go.disabled=false;
+  };
+  go.onclick=async()=>{
+    if(!preview){await load();return}
+    busy=true;go.disabled=true;cancel.disabled=true;go.textContent='DELETING…';
+    let result;try{result=await j(endpoint,{method:'POST',body:JSON.stringify({action:'delete',...target,previewToken:preview.previewToken})})}catch(error){result={err:'Connection interrupted. Refresh the Vault to check whether deletion completed.'}}
+    if(result.err){busy=false;cancel.disabled=false;preview=null;host.innerHTML=`<strong>Check the Vault before continuing</strong><div class="vault-bulk-note warn">${esc(result.err)}</div>`;go.textContent='REVIEW AGAIN';go.disabled=false;cancel.focus();return}
+    flash(result);vaultCompareItems.clear();vaultState.highlightItem=null;
+    if(!isStash){vaultState.collectionId=null;try{localStorage.removeItem('hsVaultCategoryId')}catch(e){}}
+    try{await openVault(false)}catch(error){flash({err:'Deletion completed, but the view could not refresh. Reopen Infinite Vault.'})}
+    host.innerHTML=`<strong>Deleted ${esc(result.name)}</strong><div class="vault-bulk-note">${result.itemCount} item${result.itemCount===1?'':'s'} deleted. Backup saved beside the Vault database:</div><div class="vault-bulk-note" style="overflow-wrap:anywhere">${esc(result.backupName)}</div>`;
+    go.hidden=true;cancel.textContent='DONE';cancel.disabled=false;busy=false;cancel.focus();
+  };
+  await load();
 }
 async function openVaultDepositDialog(target,key,el){
   const old=document.getElementById('sockmodal');if(old)old.remove();

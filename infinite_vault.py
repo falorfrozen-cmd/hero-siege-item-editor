@@ -30,7 +30,7 @@ from pathlib import Path
 from typing import Any, Callable, Iterable, Mapping, TypeVar
 
 
-SCHEMA_VERSION = 6
+SCHEMA_VERSION = 7
 DEFAULT_COLLECTION_NAME = "Vault"
 MAX_COLLECTION_NAME_LENGTH = 128
 MAX_STASH_NAME_LENGTH = 128
@@ -360,6 +360,12 @@ CREATE TABLE items (
     )
 );
 
+CREATE TABLE deleted_deposit_keys (
+    deposit_key TEXT PRIMARY KEY,
+    raw_sha256 TEXT NOT NULL,
+    deleted_at TEXT NOT NULL
+) WITHOUT ROWID;
+
 CREATE TABLE transfer_batches (
     request_id TEXT PRIMARY KEY,
     request_hash TEXT NOT NULL,
@@ -433,7 +439,7 @@ CREATE INDEX transfer_batches_status_idx
 CREATE INDEX transfers_batch_idx ON transfers(batch_id, batch_ordinal);
 CREATE INDEX events_created_idx ON events(created_at, id);
 
-INSERT INTO schema_meta(key, value) VALUES ('schema_version', '6');
+INSERT INTO schema_meta(key, value) VALUES ('schema_version', '7');
 INSERT INTO collections(name, name_key, created_at, updated_at)
 VALUES ('Vault', 'vault', strftime('%Y-%m-%dT%H:%M:%fZ', 'now'),
         strftime('%Y-%m-%dT%H:%M:%fZ', 'now'));
@@ -442,15 +448,17 @@ SELECT id, 0, 'Stash 1', 'stash 1',
        strftime('%Y-%m-%dT%H:%M:%fZ', 'now'),
        strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
 FROM collections WHERE name_key='vault';
-PRAGMA user_version = 6;
+PRAGMA user_version = 7;
 COMMIT;
 """
 
 _REQUIRED_TABLES = frozenset({
-    "schema_meta", "collections", "stash_pages", "items", "transfer_batches", "transfers", "events"
+    "schema_meta", "collections", "stash_pages", "items", "transfer_batches", "transfers", "events",
+    "deleted_deposit_keys",
 })
 
 _REQUIRED_COLUMNS = {
+    "deleted_deposit_keys": frozenset({"deposit_key", "raw_sha256", "deleted_at"}),
     "schema_meta": frozenset({"key", "value"}),
     "collections": frozenset({"id", "name", "name_key", "created_at", "updated_at"}),
     "stash_pages": frozenset({
@@ -482,9 +490,15 @@ _REQUIRED_COLUMNS = {
     }),
 }
 
-_REQUIRED_COLUMNS_V5 = {
+_REQUIRED_COLUMNS_V6 = {
     table: columns
     for table, columns in _REQUIRED_COLUMNS.items()
+    if table != "deleted_deposit_keys"
+}
+
+_REQUIRED_COLUMNS_V5 = {
+    table: columns
+    for table, columns in _REQUIRED_COLUMNS_V6.items()
     if table != "stash_pages"
 }
 
@@ -1109,6 +1123,25 @@ class InfiniteVault:
                 f"vault schema migration from 5 to 6 failed: {exc}"
             ) from exc
 
+    @staticmethod
+    def _migrate_v6_to_v7(connection: sqlite3.Connection) -> None:
+        """Retain consumed import keys even after their items are deleted."""
+        try:
+            connection.execute("BEGIN IMMEDIATE")
+            connection.execute(
+                """CREATE TABLE deleted_deposit_keys (
+                       deposit_key TEXT PRIMARY KEY,
+                       raw_sha256 TEXT NOT NULL,
+                       deleted_at TEXT NOT NULL
+                   ) WITHOUT ROWID"""
+            )
+            connection.execute("UPDATE schema_meta SET value='7' WHERE key='schema_version'")
+            connection.execute("PRAGMA user_version = 7")
+            connection.commit()
+        except Exception as exc:
+            connection.rollback()
+            raise VaultSchemaError(f"vault schema migration from 6 to 7 failed: {exc}") from exc
+
     def _initialize(self) -> None:
         if self.path.exists() and self.path.is_dir():
             raise VaultValidationError("vault database path points to a directory")
@@ -1153,7 +1186,7 @@ class InfiniteVault:
                     f"vault schema {version} is newer than supported schema {SCHEMA_VERSION}"
                 )
             if version < SCHEMA_VERSION:
-                if version not in {2, 3, 4, 5}:
+                if version not in {2, 3, 4, 5, 6}:
                     raise VaultSchemaError(
                         f"vault schema {version} has no supported migration to {SCHEMA_VERSION}"
                     )
@@ -1168,6 +1201,8 @@ class InfiniteVault:
                         else _REQUIRED_COLUMNS_V4
                         if version == 4
                         else _REQUIRED_COLUMNS_V5
+                        if version == 5
+                        else _REQUIRED_COLUMNS_V6
                     ),
                     version,
                 )
@@ -1187,6 +1222,9 @@ class InfiniteVault:
                     version = 5
                 if version == 5:
                     self._migrate_v5_to_v6(connection)
+                    version = 6
+                if version == 6:
+                    self._migrate_v6_to_v7(connection)
                 integrity = connection.execute("PRAGMA quick_check").fetchone()[0]
                 if integrity != "ok":
                     raise VaultSchemaError(
@@ -1205,14 +1243,15 @@ class InfiniteVault:
         finally:
             connection.close()
 
-    def _backup_existing(self) -> None:
+    def _backup_existing(self, backup_path: Path | None = None) -> None:
         """Atomically replace the sidecar with a consistent pre-mutation copy."""
 
         if not self.path.exists():
             return
-        self.backup_path.parent.mkdir(parents=True, exist_ok=True)
-        temporary = self.backup_path.with_name(
-            f".{self.backup_path.name}.{uuid.uuid4().hex}.tmp"
+        backup_path = backup_path or self.backup_path
+        backup_path.parent.mkdir(parents=True, exist_ok=True)
+        temporary = backup_path.with_name(
+            f".{backup_path.name}.{uuid.uuid4().hex}.tmp"
         )
         if self.path.stat().st_size == 0:
             temporary.write_bytes(b"")
@@ -1237,7 +1276,7 @@ class InfiniteVault:
                 temporary.unlink(missing_ok=True)
                 raise backup_error
         try:
-            os.replace(temporary, self.backup_path)
+            os.replace(temporary, backup_path)
         except Exception:
             temporary.unlink(missing_ok=True)
             raise
@@ -1497,6 +1536,9 @@ class InfiniteVault:
             if isinstance(event_id, int):
                 undone.add(event_id)
         for row in rows:
+            if row["event_type"] in {"category_contents_deleted", "stash_page_deleted"}:
+                # Older layout/move undo may point into storage that was deleted.
+                return None
             if row["event_type"] in reversible and int(row["id"]) not in undone:
                 return row, InfiniteVault._event_payload(row)
         return None
@@ -1851,6 +1893,17 @@ class InfiniteVault:
             raise VaultValidationError(
                 f"a category cannot initialize more than {MAX_PAGE_SIZE} stashes at once"
             )
+        return self.ensure_stash_pages(collection, list(range(page_count)))
+
+    def ensure_stash_pages(
+        self, collection: int | str, page_indexes: list[int]
+    ) -> list[StashPageRecord]:
+        """Initialize only required pages; deleted gaps must stay deleted."""
+        if not isinstance(page_indexes, list) or len(page_indexes) > MAX_PAGE_SIZE:
+            raise VaultValidationError("invalid stash page indexes")
+        if any(isinstance(i, bool) or not isinstance(i, int) or not 0 <= i <= SQLITE_MAX_INTEGER
+               for i in page_indexes):
+            raise VaultValidationError("stash page indexes must be non-negative integers")
 
         def operation(connection: sqlite3.Connection) -> list[StashPageRecord]:
             target = self._resolve_collection(connection, collection)
@@ -1863,7 +1916,7 @@ class InfiniteVault:
             }
             now = _utc_now()
             created: list[int] = []
-            for page_index in range(page_count):
+            for page_index in sorted(set(page_indexes)):
                 if page_index in existing:
                     continue
                 name, name_key = self._next_stash_name(
@@ -2012,6 +2065,123 @@ class InfiniteVault:
 
         self._write(operation)
 
+    def _deletion_snapshot(
+        self, connection: sqlite3.Connection, collection: int | str,
+        page_index: int | None,
+    ) -> dict[str, Any]:
+        target = self._resolve_collection(connection, collection)
+        if page_index is not None and (
+            isinstance(page_index, bool) or not isinstance(page_index, int)
+            or not 0 <= page_index <= SQLITE_MAX_INTEGER
+        ):
+            raise VaultValidationError("stash page index must be a non-negative integer")
+        pages = connection.execute(
+            "SELECT * FROM stash_pages WHERE collection_id=? ORDER BY page_index",
+            (target["id"],),
+        ).fetchall()
+        page = next((row for row in pages if row["page_index"] == page_index), None)
+        if page_index is not None and page is None:
+            raise VaultNotFoundError("the stash no longer exists in this category")
+        if page_index is None:
+            if connection.execute("SELECT COUNT(*) FROM collections").fetchone()[0] <= 1:
+                raise VaultStateError("The last Vault category cannot be deleted.")
+        elif len(pages) <= 1:
+            raise VaultStateError("The last stash in a category cannot be deleted. Delete the category instead.")
+        # Unresolved ownership anywhere in the category makes deletion unsafe,
+        # including pending deposits whose grid has not yet been assigned.
+        for table in ("transfers", "transfer_batches"):
+            if connection.execute(
+                f"SELECT 1 FROM {table} WHERE collection_id=? AND status IN ('prepared','conflict') LIMIT 1",
+                (target["id"],),
+            ).fetchone():
+                raise VaultStateError("Resolve pending transfers in this category before deleting.")
+        if connection.execute(
+            "SELECT 1 FROM items WHERE collection_id=? AND status!='available' LIMIT 1",
+            (target["id"],),
+        ).fetchone():
+            raise VaultStateError("Resolve reserved or pending items in this category before deleting.")
+        rows = connection.execute(
+            "SELECT * FROM items WHERE collection_id=?" +
+            (" AND page_index=?" if page_index is not None else "") + " ORDER BY id",
+            (target["id"], page_index) if page_index is not None else (target["id"],),
+        ).fetchall()
+        snapshot = {
+            "collection": dict(target),
+            "pages": [dict(row) for row in pages],
+            "pageIndex": page_index,
+            "items": [dict(row) for row in rows],
+        }
+        token = hashlib.sha256(json.dumps(
+            snapshot, ensure_ascii=False, sort_keys=True, separators=(",", ":")
+        ).encode("utf-8")).hexdigest()
+        return {
+            "collectionId": int(target["id"]), "collectionName": target["name"],
+            "pageIndex": page_index, "name": page["name"] if page else target["name"],
+            "stashCount": 1 if page else len(pages), "itemCount": len(rows),
+            "previewToken": token,
+        }
+
+    def preview_storage_deletion(
+        self, collection: int | str, *, page_index: int | None = None,
+    ) -> dict[str, Any]:
+        def operation(connection: sqlite3.Connection) -> dict[str, Any]:
+            connection.execute("BEGIN")
+            return self._deletion_snapshot(connection, collection, page_index)
+        return self._read(operation)
+
+    def delete_storage(
+        self, collection: int | str, *, preview_token: str,
+        page_index: int | None = None,
+    ) -> dict[str, Any]:
+        """Delete exactly the confirmed category/stash, with a retained backup."""
+        if not isinstance(preview_token, str) or len(preview_token) != 64:
+            raise VaultValidationError("A fresh deletion preview is required.")
+
+        def operation(connection: sqlite3.Connection) -> dict[str, Any]:
+            preview = self._deletion_snapshot(connection, collection, page_index)
+            if preview_token != preview["previewToken"]:
+                raise VaultConflictError("The category or stash changed. Review a fresh deletion preview.")
+            backup_path = self.path.with_name(
+                f"{self.path.name}.before-delete-{uuid.uuid4().hex}.bak"
+            )
+            # A dedicated copy survives subsequent writes to the rolling .bak.
+            # The process lock and BEGIN IMMEDIATE keep this snapshot stable.
+            self._backup_existing(backup_path)
+            collection_id = preview["collectionId"]
+            connection.execute(
+                """INSERT INTO deleted_deposit_keys(deposit_key, raw_sha256, deleted_at)
+                   SELECT deposit_key, raw_sha256, ? FROM items
+                   WHERE deposit_key IS NOT NULL AND collection_id=?""" +
+                (" AND page_index=?" if page_index is not None else ""),
+                (_utc_now(), collection_id, page_index) if page_index is not None
+                else (_utc_now(), collection_id),
+            )
+            connection.execute(
+                "DELETE FROM items WHERE collection_id=?" +
+                (" AND page_index=?" if page_index is not None else ""),
+                (collection_id, page_index) if page_index is not None else (collection_id,),
+            )
+            if page_index is None:
+                connection.execute("DELETE FROM collections WHERE id=?", (collection_id,))
+            else:
+                connection.execute(
+                    "DELETE FROM stash_pages WHERE collection_id=? AND page_index=?",
+                    (collection_id, page_index),
+                )
+                connection.execute(
+                    "UPDATE collections SET updated_at=? WHERE id=?", (_utc_now(), collection_id)
+                )
+            self._event(
+                connection,
+                "category_contents_deleted" if page_index is None else "stash_page_deleted",
+                collection_name=preview["collectionName"],
+                details={k: v for k, v in preview.items() if k != "previewToken"}
+                | {"backupName": backup_path.name},
+            )
+            return {**preview, "backupName": backup_path.name}
+
+        return self._write(operation)
+
     def deposit(
         self,
         collection: int | str,
@@ -2035,6 +2205,10 @@ class InfiniteVault:
         def operation(connection: sqlite3.Connection) -> VaultItemRecord:
             target = self._resolve_collection(connection, collection)
             if clean_deposit_key is not None:
+                if connection.execute(
+                    "SELECT 1 FROM deleted_deposit_keys WHERE deposit_key=?", (clean_deposit_key,)
+                ).fetchone() is not None:
+                    raise VaultStateError("deposit key belongs to an item already deleted")
                 prior = connection.execute(
                     """SELECT i.*, c.name AS collection_name
                        FROM items AS i JOIN collections AS c ON c.id = i.collection_id
@@ -2346,6 +2520,47 @@ class InfiniteVault:
                     tuple(arguments),
                 ).fetchone()[0]
             )
+
+        return self._read(operation)
+
+    def list_deposit_keys(self, prefix: str) -> list[str]:
+        """Return every deposit key starting with ``prefix``.
+
+        Keys of items that were later withdrawn or deleted still count: the
+        journals keep them and ``deposit`` refuses to reuse them, so an
+        external producer asking "how much of mine is in" sees a stable total.
+        """
+
+        if not isinstance(prefix, str) or not prefix:
+            raise VaultValidationError("deposit key prefix must be non-empty text")
+        pattern = (
+            prefix.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_") + "%"
+        )
+
+        def operation(connection: sqlite3.Connection) -> list[str]:
+            keys = {
+                str(row[0])
+                for row in connection.execute(
+                    "SELECT deposit_key FROM items WHERE deposit_key LIKE ? ESCAPE '\\'",
+                    (pattern,),
+                ).fetchall()
+            }
+            keys.update(
+                str(row[0])
+                for row in connection.execute(
+                    """SELECT deposit_key FROM transfers
+                       WHERE direction='withdrawal' AND status='committed'
+                         AND deposit_key LIKE ? ESCAPE '\\'""",
+                    (pattern,),
+                ).fetchall()
+            )
+            keys.update(
+                str(row[0]) for row in connection.execute(
+                    "SELECT deposit_key FROM deleted_deposit_keys WHERE deposit_key LIKE ? ESCAPE '\\'",
+                    (pattern,),
+                ).fetchall()
+            )
+            return sorted(keys)
 
         return self._read(operation)
 
