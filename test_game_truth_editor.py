@@ -171,7 +171,7 @@ class SavesFixture(unittest.TestCase):
 
     def live(self, updated_ms=None):
         (self.truth / "status.json").write_text(json.dumps(
-            {"schema": 1, "forgepact": "1.4.6", "build": BUILD,
+            {"schema": 1, "forgepact": "1.4.5", "build": BUILD,
              "updated": updated_ms if updated_ms is not None else int(time.time() * 1000)}), encoding="utf-8")
 
     def request_lines(self, request_id):

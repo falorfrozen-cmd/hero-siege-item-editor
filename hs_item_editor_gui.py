@@ -1870,7 +1870,7 @@ def op_truth_verify(body: dict) -> dict:
         return {"err": f"The check could not be queued: {exc}"}
     if not request_id:
         return {"ok": "Every item is already verified by the game.", "status": game_truth_status()}
-    when = "now" if capture["reporting"] else "as soon as Hero Siege runs with ForgePact 1.4.6 or newer"
+    when = "now" if capture["reporting"] else "as soon as Hero Siege runs with ForgePact 1.4.5 or newer"
     return {"ok": f"The game will check {count:,} items {when}.", "request": request_id, "items": count,
             "status": game_truth_status()}
 
@@ -9876,12 +9876,12 @@ input,select{background:#140c0e;color:var(--tx);border:1px solid var(--line);bor
 .res:hover{border-color:var(--gold)}
 .res.sel{background:#33211c;border-color:var(--gold)}
 .r-Satanic{color:#ff5050}.r-Heroic{color:#54e87a}.r-Angelic{color:#ffe080}.r-Unholy{color:#c77dff}
-.r-Normal,.r-Common{color:#cfcfcf}.r-Superior{color:#7db5ff}.r-Rare{color:#ffd84d}.r-Legendary{color:#ff9c40}
+.r-Normal,.r-Common{color:#cfcfcf}.r-Superior{color:#7db5ff}.r-Rare{color:#ffd84d}.r-Legendary{color:#ff9c40}.r-Mythic{color:#c56cf0}
 .r-Mythic{color:#5bd6d6}.r-Runeword{color:#b0a8ff}
 .b-Satanic{background:#3a1414;border-color:#ff5050}.b-Heroic{background:#11331c;border-color:#54e87a}
 .b-Angelic{background:#3a3416;border-color:#ffe080}.b-Unholy{background:#2c1840;border-color:#c77dff}
 .b-Normal,.b-Common{background:#26211f;border-color:#777}.b-Superior{background:#16263a;border-color:#7db5ff}
-.b-Rare{background:#383011;border-color:#ffd84d}.b-Legendary{background:#3a2410;border-color:#ff9c40}
+.b-Rare{background:#383011;border-color:#ffd84d}.b-Legendary{background:#3a2410;border-color:#ff9c40}.b-Mythic{background:#2a1336;border-color:#b115eb}
 .b-Mythic{background:#0f3030;border-color:#5bd6d6}.b-Runeword{background:#1d1a38;border-color:#b0a8ff}.b-_{background:#222;border-color:#555}
 button.act{background:#5a3413;color:#ffd9a0;border:1px solid #8a5a26;border-radius:4px;padding:8px;margin-top:8px;cursor:pointer;font-size:13px}
 button.act:hover{background:#6f421a}
@@ -10658,7 +10658,7 @@ async function refreshTruthStatus(){
     'Game text: the tooltip exactly as the game draws it. While an item tooltip is open in the game, the game also draws the tooltips of your other items in the background, a few per frame; until then an item shows the game\'s own line labels.',
     drawn&&drawing.state==='running'?`Drawing now: ${(Number(drawn.done)||0).toLocaleString()} / ${(Number(drawn.total)||0).toLocaleString()}.`:'',
     on?(live?`ForgePact ${fp&&fp.forgepact?fp.forgepact+' ':''}is running: new items are recorded, and unverified ones are checked automatically.`
-      :'Items are recorded and checked while the game runs (ForgePact 1.4.6 or newer).')
+      :'Items are recorded and checked while the game runs (ForgePact 1.4.5 or newer).')
       :'Capture is off: nothing new is recorded or checked.',
     action==='verify'?'Click to have the game check the unverified items now.':'',
     action==='clear'?'The game closed or failed during a check. Clearing lets checks run again; an item that stops the game again is skipped next time.':'',
@@ -10683,7 +10683,7 @@ async function refreshTruthStatus(){
   TRUTH_LAST_STATE=state;TRUTH_LAST_DRAWING=drawingState;TRUTH_LAST_DRAWN=cov.drawn;
 }
 // ---- item tooltip ----
-const TOOLTIP_RARITIES=new Set(['Satanic','Heroic','Angelic','Unholy','Runeword','Normal','Common','Superior','Rare','Legendary']);
+const TOOLTIP_RARITIES=new Set(['Satanic','Heroic','Angelic','Unholy','Runeword','Normal','Common','Superior','Rare','Legendary','Mythic']);
 function tooltipRarityClass(value){return TOOLTIP_RARITIES.has(value)?value:'_'}
 function tooltipLineKey(line,index){
   if(line&&line._comparisonKey)return String(line._comparisonKey);

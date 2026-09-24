@@ -11,14 +11,14 @@ build: 199 matched line for line; ranges were right, rolled values often were no
 2.16.0 shows the game's own values wherever the game has built the item:
 
 - the full name with the magic prefix and suffix, the rolled rarity (Common,
-  Superior, Rare, Legendary, Satanic, …), the tier and the level requirement;
+  Superior, Rare, Mythic, Satanic, …), the tier and the level requirement;
 - every stat and every random affix, with its range;
 - a **✓ Game verified** line, and in the details view the lines where the old
   estimate differed.
 
 Where the numbers come from:
 
-- **ForgePact 1.4.6 or newer** records each item the game finishes building while
+- **ForgePact 1.4.5 or newer** records each item the game finishes building while
   the game runs. The editor asks for this by creating
   `%LOCALAPPDATA%\Hero_Siege\itemtruth\capture.request`; the **GAME TRUTH** line
   turns it off and on.

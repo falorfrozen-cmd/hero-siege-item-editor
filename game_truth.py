@@ -10,7 +10,7 @@ line for line, and no generated affix was shown at all).
 
 This module keeps what the game actually built instead:
 
-* ForgePact's Item Truth journal (ForgePact 1.4.6+): one NDJSON line per
+* ForgePact's Item Truth journal (ForgePact 1.4.5+): one NDJSON line per
   finished item while the game runs, under ``<root>/journal``. ForgePact
   writes it only while ``<root>/capture.request`` exists, which this editor
   creates.
@@ -62,11 +62,11 @@ PLACEMENT_FIELDS = frozenset({"g", "w", "zz", "pos"})
 # them out (a single item): absent and 1 mean the same thing.
 DEFAULT_ONE_FIELDS = frozenset({"m", "o"})
 
-# itemInfoStruct["27"] - the rolled rarity. 1/3/5-10 were measured when the
-# Custom Forge learned to set it; 2 is what normal drops with two affixes
-# carry, drawn in the "superior" colour (translationsMain.csv "superior").
+# itemInfoStruct["27"] - the rolled rarity, named as the game's own tooltip type
+# line names it ("Superior Ring", "Rare Belt", "Mythic Belt"), measured on 7,628
+# tooltips the game drew on 2026-09-24.
 RARITY_NAMES = {
-    1: "Common", 2: "Superior", 3: "Rare", 5: "Legendary",
+    1: "Common", 2: "Superior", 3: "Rare", 5: "Mythic",
     6: "Satanic", 7: "Angelic", 9: "Heroic", 10: "Unholy",
 }
 # itemInfoStruct["32"] - the tooltip's tier letter.

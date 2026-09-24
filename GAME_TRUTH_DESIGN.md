@@ -34,7 +34,7 @@ an estimate and says so.
 
 The work is split into three steps, each useful on its own.
 
-## Step 1 — the game's records (Item Editor 2.16.0, ForgePact 1.4.6)
+## Step 1 — the game's records (Item Editor 2.16.0, ForgePact 1.4.5)
 
 ### Capture (ForgePact, `ItemTruth.hpp` + `ModuleMain.cpp`)
 
@@ -106,7 +106,7 @@ keeps an unknown build.
 - Labels are still the editor's (stat semantics names); proc and skill-grant
   lines are shown key by key (step 3).
 
-## Step 2 — the game checks any item on request (Item Editor 2.16.0, ForgePact 1.4.6)
+## Step 2 — the game checks any item on request (Item Editor 2.16.0, ForgePact 1.4.5)
 
 The records of step 1 cover what the game happens to build. Step 2 covers the
 rest: every item the player owns, whether or not the game has loaded it.
@@ -143,7 +143,7 @@ Next on the same queue: **MAX/BEST verified by the game** - the replay proposes
 the best candidate seeds, the game builds them, and the editor keeps the one that
 is truly best on the running build (9 of 33 "100 %" items were one step short).
 
-## Step 3 — the game's own text (Item Editor 2.16.0, ForgePact 1.4.6)
+## Step 3 — the game's own text (Item Editor 2.16.0, ForgePact 1.4.5)
 
 Steps 1 and 2 make the numbers the game's. Step 3 makes the text the game's: the
 tooltip is not rebuilt from rules, it is recorded as the game draws it.

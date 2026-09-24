@@ -851,7 +851,7 @@ class CaptureTests(unittest.TestCase):
             root = Path(folder)
             now = time.time()
             (root / "status.json").write_text(json.dumps(
-                {"schema": 1, "forgepact": "1.4.6", "build": BUILD, "updated": int(now * 1000) - 5000,
+                {"schema": 1, "forgepact": "1.4.5", "build": BUILD, "updated": int(now * 1000) - 5000,
                  "written": 12}), encoding="utf-8")
             status = gt.capture_status(root, now=now)
             self.assertTrue(status["reporting"])

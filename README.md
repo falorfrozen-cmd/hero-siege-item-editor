@@ -17,11 +17,11 @@ to redo it in Python with the 2026-08-28 build's rules: on the 2026-09-16 build
 only 199 of 755 owned items came out line for line, and no random affix was shown
 at all. Now the game is the referee:
 
-- **Game-verified tooltips.** ForgePact (1.4.6 or newer) records each item the
+- **Game-verified tooltips.** ForgePact (1.4.5 or newer) records each item the
   game finishes building, while the game runs; AFK FARM's delivery records already
   hold every delivered item. The editor reads both into its own store and shows
   the game's own values: the full name (`Slicing Short War Bow`), the rolled rarity
-  (Common, Superior, Rare, Legendary, …), the tier, the level requirement, every
+  (Common, Superior, Rare, Mythic, …), the tier, the level requirement, every
   affix with its range, and the real socket count. A green **✓ Game verified** line
   says so; the details view lists where the editor's old estimate differed.
 - **The game checks everything you own.** While the game runs (even at the main
