@@ -73,6 +73,7 @@ RARITY_NAMES = {
 TIER_NAMES = {1: "C", 2: "B", 3: "A", 4: "S", 5: "SS"}
 
 _SPOOL_PATTERNS = ("*_claim.ndjson", "worker_*.ndjson")
+_JOURNAL_PART = re.compile(r"(.+)-(\d+)\.ndjson")
 _BATCH = 2000
 # Bumped when the store keeps something new from journal lines it has read.
 _JOURNAL_READ_VERSION = "3"
@@ -454,7 +455,7 @@ class TruthStore:
             offset = row["offset"] if row["offset"] <= stat.st_size else 0   # replaced by a shorter file
         result.files = 1
         pending = 0
-        session = re.sub(r"-\d+\.ndjson$", "", path.name)   # a journal's parts continue each other
+        session = _journal_part(path.name)[0]   # a journal's parts continue each other
         journal = path.name.startswith("live")
         tail = self._session_tail(connection, session) if journal else None
         with self._write_lock, path.open("rb") as handle:
@@ -692,7 +693,7 @@ class TruthStore:
         directory = Path(folder)
         if not directory.is_dir():
             return total
-        for path in sorted(directory.glob("*.ndjson")):
+        for path in sorted(directory.glob("*.ndjson"), key=lambda path: _journal_part(path.name)):
             total.merge(self._ingest_file(path, _parse_journal_record))
         return total
 
@@ -710,7 +711,7 @@ class TruthStore:
         paths: set[Path] = set()
         for pattern in _SPOOL_PATTERNS:
             paths.update(directory.glob(pattern))
-        for path in sorted(paths):
+        for path in sorted(paths, key=lambda path: _journal_part(path.name)):
             total.merge(self._ingest_file(
                 path, lambda record: _parse_spool_record(record, current_build, build_since)
             ))
@@ -826,6 +827,14 @@ def _row_record(row: sqlite3.Row) -> dict[str, Any]:
         "native": json.loads(row["native_json"]) if row["native_json"] else None,
         "info": json.loads(row["info_json"]) if row["info_json"] else {},
     }
+
+
+def _journal_part(name: str) -> tuple[str, int]:
+    """(session, part) of a journal file name. ForgePact numbers a session's parts
+    without padding, so they are read in this order: part 10 after part 9, where
+    a name sort would put it after part 1."""
+    match = _JOURNAL_PART.fullmatch(name)
+    return (match[1], int(match[2])) if match else (name, 0)
 
 
 def _next_tail(tail: list | None, document: Any, progress: dict | None, tooltip: dict | None) -> list | None:

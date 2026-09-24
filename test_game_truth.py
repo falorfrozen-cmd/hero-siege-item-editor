@@ -466,6 +466,24 @@ class EvaluationRequestTests(unittest.TestCase):
         self.assertTrue(store.request_ended_session("2-b"), "a journal's parts continue each other")
         store.close()
 
+    def test_a_long_session_is_read_in_the_order_it_was_written(self):
+        # Parts are numbered without padding. Read in one pass (the first run, or
+        # a re-read), part 10 comes after part 9 - not after part 1 - so the
+        # session ends where it really ended: on the drawing the game closed in.
+        store = gt.TruthStore(self.folder / "truth.sqlite3")
+        journal = self.folder / "journal"
+        journal.mkdir()
+        for part in range(1, 10):
+            (journal / f"live-e-{part}.ndjson").write_text(journal_line(str(part)), encoding="utf-8")
+        (journal / "live-e-10.ndjson").write_text(json.dumps(
+            {"v": 1, "kind": "tipdraw", "req": "5-e", "build": BUILD, "t": 1, "total": 2, "done": 0, "ok": 0,
+             "failed": 0, "rejected": 0, "finished": False}) + "\n", encoding="utf-8")
+        store.ingest_journal_dir(journal)
+        self.assertTrue(store.request_ended_session("5-e"))
+        self.assertEqual(gt._journal_part("live-e-10.ndjson"), ("live-e", 10))
+        self.assertEqual(gt._journal_part("live.ndjson"), ("live.ndjson", 0))
+        store.close()
+
     def test_drawing_progress_and_strikes_are_kept(self):
         store = gt.TruthStore(self.folder / "truth.sqlite3")
         journal = self.folder / "journal"
