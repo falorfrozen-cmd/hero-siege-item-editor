@@ -143,16 +143,80 @@ Next on the same queue: **MAX/BEST verified by the game** - the replay proposes
 the best candidate seeds, the game builds them, and the editor keeps the one that
 is truly best on the running build (9 of 33 "100 %" items were one step short).
 
-## Step 3 — the game's own text (after step 2)
+## Step 3 — the game's own text (Item Editor 2.16.0, ForgePact 1.4.6)
 
-- Labels from the game's own translation files (`bin\translations*.csv`, the
-  player's language), keyed by the localization keys the stat semantics already
-  map; rarity names from the same files.
-- The row format of each format code (`DrawInventoryStatsNew`: 2 percent, 3 flat,
-  …) learned once per build from rows the game draws, checked against the drawn
-  text, then applied to every item.
-- Proc lines ("15% chance to cast level 25 Frost Nova when striking"), skill
-  grants and flags as the game writes them.
+Steps 1 and 2 make the numbers the game's. Step 3 makes the text the game's: the
+tooltip is not rebuilt from rules, it is recorded as the game draws it.
+
+### Recording what the game draws (ForgePact)
+
+- While capture is on, the first time in a session the game draws an item's
+  inventory tooltip (`DrawInventoryItemV2`), ForgePact records every text draw of
+  that pass - the `draw_text*` builtins, `draw_text_outline(_ext)`,
+  `DrawTooltipRichText` - with its arguments, the draw colour and alignment, and
+  the `DrawInventoryStatsNew` call it happened in; and every stat call that drew a
+  line (`[x, y, item, stat, label, format, style, …, per level, negated, colour]`).
+  One `"kind":"tooltip"` journal line per item. Nothing is drawn differently.
+- Once per session one pass also records every stat call, drawn or not: the
+  **tooltip table** (`"kind":"tooltip-table"`) - the 335 stat lines a tooltip can
+  draw on this build, in order, with label, format and colour.
+
+### Drawing requests: tooltips of items the player never hovers
+
+- The editor writes `itemtruth\tips\<id>.req` (lines like an evaluation request)
+  for every verified item whose tooltip the game has not drawn on the running build.
+- While the player has an item tooltip open, the hook of the game's own tooltip
+  pass - with the tooltip's own instance, in its draw event - also builds a few of
+  those items through the save loader and draws their tooltips into a 16x16 surface
+  nobody sees: at most 6 items and 3 ms per frame, **before** the game draws the
+  player's tooltip, so that one is always drawn last; the draw state (colour, alpha,
+  font, alignment) is put back. Each drawing is journaled like one the player saw,
+  with `"req":"<id>"`; progress lines are `"kind":"tipdraw"`.
+- A request cut short (the game closed or failed) is set aside as `.stopped` at the
+  next start. The editor clears it on its own; the item it stopped on gets a strike,
+  and an item with two strikes is not asked for again on that build (hovering it
+  still records it). An item a finished request drew that the editor still cannot
+  tie to its record is not asked for again in that session.
+- **Measured 2026-09-24:** 7,607 tooltips in about 2 minutes of an open tooltip
+  (6 per frame, 0 failures), after which all 7,628 owned items showed the game's
+  own text.
+
+### Tying a drawing to its record
+
+- A drawing is keyed by `itemTimeStamp` and `itemDataHash`. The game gives some
+  items - potions, essence vaults, forged gear, a few uniques (51 of 7,628) - a new
+  hash each time it builds them, with identical content. The store keeps a record's
+  content once, so every other hash the same content came with is kept as an
+  **alias** (`hash_aliases`), and a drawing under any of them reaches the record.
+  A drawing made for a request is also tied to the content of the record on the
+  journal line right before it (the item the game built for it).
+
+### Showing it (Item Editor)
+
+- `captured_tooltip_rows`: the draws of one pass, top to bottom. Outline copies
+  (the same text within 3 px) keep the last draw; pieces on one line join left to
+  right, a stat line's value and label with one space; colours are the game's
+  (GameMaker keeps them as 0xBBGGRR). A stat call's line is the first line at or
+  below the call that the call drew with left-aligned pieces - ForgePact's own
+  centred rows for a forged item are drawn inside the same call, above it. The key
+  hint (`ALT - Show Information`) is left out. A drawing made while ALT was held
+  (the game's information view) keeps the ranges the game added, and the editor
+  adds none of its own there.
+- The tooltip shows those rows in the game's colours, with a gap wherever the game
+  leaves one, and the editor's roll range after each rolled stat;
+  **✓ Game verified · game text**.
+- Before an item has been drawn, its stat lines take their label, value text,
+  colour and order from the tooltip table (**✓ Game verified · game labels**):
+  format 2 percent and 3 flat; style 8 value first and signed (`+449% Enhanced
+  Damage`, `-25% to All Enemy Resistances`), style 9 label first (`Ailment damage
+  increased by 35%`); per-level lines at level 100; negated lines below zero; two
+  decimals for fractions (`+1.50 to Projectile Speed`); no line for a 0; skill
+  grants as one line with their class (`+16 to Omnislash (Samurai)`); `to All
+  Skills` and the element skill lines with the class of stat 21; relic skills named
+  from the game's `translations*.csv` (`talent_name_relicMeatHook` → `Meat Hook`).
+  Checked against the 7,628 drawn tooltips: all 41,920 lines they share read the
+  same. The rest of such a tooltip (name, header, footer) stays the editor's until
+  the game draws the item.
 
 ## Files
 
@@ -161,6 +225,7 @@ is truly best on the running build (9 of 33 "100 %" items were one step short).
 | `%LOCALAPPDATA%\Hero_Siege\itemtruth\capture.request` | Item Editor | ForgePact |
 | `…\itemtruth\capture.off` | Item Editor (capture turned off) | Item Editor |
 | `…\itemtruth\requests\<id>.req` / `.working` / `.stopped` | Item Editor / ForgePact | ForgePact / Item Editor |
+| `…\itemtruth\tips\<id>.req` / `.working` / `.stopped` | Item Editor / ForgePact | ForgePact / Item Editor |
 | `…\itemtruth\journal\live-*.ndjson` | ForgePact | Item Editor |
 | `…\itemtruth\status.json` | ForgePact | Item Editor |
 | `…\itemtruth\truth.sqlite3` | Item Editor | Item Editor |

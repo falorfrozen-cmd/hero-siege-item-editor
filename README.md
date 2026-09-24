@@ -31,6 +31,17 @@ at all. Now the game is the referee:
   placed or saved. Measured: 342 items in about 2 seconds, after which all 7,628
   owned items were verified (699 on characters, 127 in the Shared Stash, 6,802 in
   the Vault).
+- **The game's own tooltip text.** While an item tooltip is open in the game,
+  ForgePact has the game also draw the tooltips of your other items off screen, a
+  few per frame, and records the text it drew. The editor shows each tooltip exactly
+  as the game draws it: the name and type line, socket contents, Attack Damage or
+  Defense, proc lines (`22% Chance when Casting [Fist of the Heavens] Level 70`),
+  every stat line with the game's wording, sign, order and colour, auras, sockets,
+  set pieces, star level, lore and the Tier / Requires Level footer, with the
+  editor's roll ranges beside the stats. Measured: the game drew 7,607 items in
+  about 2 minutes, and every owned item now shows the game's text. An item it has
+  not drawn yet shows its stat lines with the game's own labels, formats and colours
+  (on the 7,628 drawn tooltips, all 41,920 shared lines read the same).
 - **Honest estimates.** Until then, an item keeps the editor's own calculation,
   labelled **Estimate** instead of EXACT NUMBERS unless the game runs the build
   those rules were made for.
@@ -41,9 +52,9 @@ at all. Now the game is the referee:
   progress of a check, and a manual check; **CAPTURE ON/OFF** next to it turns the
   recording off or on (the choice is kept).
 
-Nothing is written into saves or the game: ForgePact only reads finished items,
-and only while the editor asks for it (`%LOCALAPPDATA%\Hero_Siege\itemtruth\capture.request`).
-The design, including the next step (the game's own tooltip text), is in
+Nothing is written into saves or the game: ForgePact only reads finished items and
+the text the game draws, and only while the editor asks for it
+(`%LOCALAPPDATA%\Hero_Siege\itemtruth\capture.request`). The design is in
 [GAME_TRUTH_DESIGN.md](GAME_TRUTH_DESIGN.md).
 See [the v2.16.0 release notes](RELEASE_NOTES_v2.16.0.md).
 

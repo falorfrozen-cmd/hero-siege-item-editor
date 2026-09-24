@@ -129,8 +129,8 @@ class GameTruthEditorTests(unittest.TestCase):
         self.assertIn('elif path == "/api/truth/capture":', Path(editor.__file__).read_text(encoding="utf-8"))
 
 
-class GameTruthCheckTests(unittest.TestCase):
-    """Step 2: the editor asks the game to build the items it has not verified."""
+class SavesFixture(unittest.TestCase):
+    """A character wearing the belt the game verified, and a stash item it has not."""
 
     def setUp(self):
         self.folder = Path(tempfile.mkdtemp())
@@ -177,15 +177,20 @@ class GameTruthCheckTests(unittest.TestCase):
     def request_lines(self, request_id):
         return (self.truth / "requests" / f"{request_id}.req").read_text(encoding="utf-8").splitlines()
 
+
+class GameTruthCheckTests(SavesFixture):
+    """Step 2: the editor asks the game to build the items it has not verified."""
+
     def test_every_owned_item_is_seen(self):
         found = [(place, key) for place, key, _ in editor._owned_item_payloads()]
         self.assertEqual(found, [("character 0", BELT_KEY), ("Shared Stash", "0-0-5-3")])
 
     def test_coverage_counts_what_the_game_verified(self):
         coverage = editor._truth_coverage(force=True)
-        self.assertEqual(coverage["places"]["Characters"], {"items": 1, "verified": 1, "unmatchable": 0})
-        self.assertEqual(coverage["places"]["Shared Stash"], {"items": 1, "verified": 0, "unmatchable": 0})
+        self.assertEqual(coverage["places"]["Characters"], {"items": 1, "verified": 1, "drawn": 0, "unmatchable": 0})
+        self.assertEqual(coverage["places"]["Shared Stash"], {"items": 1, "verified": 0, "drawn": 0, "unmatchable": 0})
         self.assertEqual([key for key, _ in coverage["missing"]], ["0-0-5-3"])
+        self.assertEqual([key for key, _ in coverage["undrawn"]], [BELT_KEY], "verified, not drawn yet")
 
     def test_a_check_asks_only_for_unverified_items(self):
         self.assertIn("err", editor.op_truth_verify({"scope": "missing"}), "capture off: refused")
@@ -231,8 +236,11 @@ class GameTruthCheckTests(unittest.TestCase):
             handle.write(finished)
         editor._truth_store().ingest_journal_dir(self.truth / "journal")
         self.assertEqual(editor.game_truth_status()["evaluation"]["state"], "done")
-        self.assertIsNone(editor._truth_auto_check_once())
+        drawing = editor._truth_auto_check_once()
         self.assertIn("0-0-5-3", editor._TRUTH_GIVEN_UP)
+        self.assertEqual(gt.request_files(self.truth)["waiting"], [], "no second check")
+        self.assertEqual(gt.request_files(self.truth, "tipdraw")["waiting"], [drawing],
+                         "with nothing left to check, the verified items go to be drawn")
 
     def test_status_follows_a_check_from_queued_to_done(self):
         gt.request_capture(self.truth, editor_version="t")
@@ -247,6 +255,107 @@ class GameTruthCheckTests(unittest.TestCase):
             handle.write(running)
         editor._truth_store().ingest_journal_dir(self.truth / "journal")
         self.assertEqual(editor.game_truth_status()["evaluation"]["state"], "running")
+
+
+class GameTextDrawingTests(SavesFixture):
+    """Step 3: the game draws the tooltips of verified items the player never hovers."""
+
+    def setUp(self):
+        super().setUp()
+        patches = [
+            mock.patch.object(editor, "_TRUTH_LAST_DRAWING", {"id": None, "items": 0, "keys": frozenset()}),
+            mock.patch.object(editor, "_TRUTH_DRAW_GIVEN_UP", set()),
+            mock.patch.object(editor, "_TRUTH_GIVEN_UP", {"0-0-5-3"}),   # the stash item never builds
+        ]
+        for patch in patches:
+            patch.start()
+            self.addCleanup(patch.stop)
+        gt.request_capture(self.truth, editor_version="t")
+        self.live()
+
+    def drawing_lines(self, request_id, suffix=".req"):
+        return (self.truth / "tips" / f"{request_id}{suffix}").read_text(encoding="utf-8").splitlines()
+
+    def append_journal(self, *records):
+        with (self.truth / "journal" / "live.ndjson").open("a", encoding="utf-8") as handle:
+            handle.write("".join(json.dumps(record) + "\n" for record in records))
+        editor._truth_store().ingest_journal_dir(self.truth / "journal")
+        editor._TRUTH_COVERAGE.update(at=-1e9, value=None)
+
+    def test_verified_items_are_sent_to_be_drawn(self):
+        request_id = editor._truth_auto_check_once()
+        self.assertEqual([line.split("\t")[0] for line in self.drawing_lines(request_id)], [BELT_KEY])
+        self.assertEqual(json.loads(self.drawing_lines(request_id)[0].split("\t", 1)[1]), BELT_DATA)
+        status = editor.game_truth_status()
+        self.assertEqual((status["drawing"]["state"], status["drawing"]["request"]), ("waiting", request_id))
+        self.assertEqual(status["coverage"]["undrawn"], 1)
+        self.assertIsNone(editor._truth_auto_check_once(), "one drawing request at a time")
+
+    def test_a_drawn_item_is_not_asked_for_again(self):
+        self.append_journal({"v": 1, "kind": "tooltip", "build": BUILD, "t": 7, "ts": "212409236228", "hash": "abc",
+                             "req": "1-a", "args": [1, 2, 1, None],
+                             "rows": [{"fn": "draw_text", "s": -1, "c": 16777215, "ha": 1, "a": [0, 8, "Heavy Belt"]}],
+                             "stats": []})
+        coverage = editor._truth_coverage(force=True)
+        self.assertEqual(coverage["places"]["Characters"]["drawn"], 1)
+        self.assertIsNone(editor._truth_auto_check_once())
+        model = editor._game_tooltip_model(editor.resolve(BELT_KEY, dict(BELT_DATA)))
+        self.assertEqual(model["gameText"]["rows"][0]["parts"][0]["text"], "Heavy Belt")
+        self.assertEqual(model["calculation"]["textSource"], "game")
+
+    def test_a_drawing_cut_short_strikes_the_item_it_stopped_on(self):
+        first = editor._truth_auto_check_once()
+        (self.truth / "tips" / f"{first}.req").rename(self.truth / "tips" / f"{first}.stopped")
+        second = editor._truth_auto_check_once()
+        self.assertNotEqual(first, second)
+        self.assertFalse((self.truth / "tips" / f"{first}.stopped").exists(), "a stopped drawing is cleared on its own")
+        self.assertEqual(editor._truth_store().drawing_strikes(BUILD), {BELT_KEY: 1})
+        self.assertEqual([line.split("\t")[0] for line in self.drawing_lines(second)], [BELT_KEY],
+                         "one strike: asked for again")
+        (self.truth / "tips" / f"{second}.req").rename(self.truth / "tips" / f"{second}.stopped")
+        self.assertIsNone(editor._truth_auto_check_once(), "two strikes: not asked for again on this build")
+        self.assertEqual(editor._truth_store().drawing_strikes(BUILD), {BELT_KEY: 2})
+
+    def test_a_drawing_the_editor_cannot_tie_is_not_asked_for_again(self):
+        request_id = editor._truth_auto_check_once()
+        (self.truth / "tips" / f"{request_id}.req").unlink()   # the game claimed it and drew it
+        self.append_journal(
+            {"v": 1, "kind": "tipdraw", "req": request_id, "build": BUILD, "t": 6, "total": 1, "done": 0, "ok": 0,
+             "failed": 0, "rejected": 0, "finished": False},   # not right after the item's record: no tie
+            {"v": 1, "kind": "tooltip", "build": BUILD, "t": 7, "ts": "212409236228", "hash": "another",
+             "req": request_id, "args": [], "rows": [{"fn": "draw_text", "s": -1, "c": 0, "ha": 1, "a": [0, 8, "x"]}],
+             "stats": []},
+            {"v": 1, "kind": "tipdraw", "req": request_id, "build": BUILD, "t": 8, "total": 1, "done": 1, "ok": 1,
+             "failed": 0, "rejected": 0, "finished": True})
+        self.assertIsNone(editor._truth_auto_check_once(), "drawn but not tied to its record: once is enough")
+        self.assertIn(BELT_KEY, editor._TRUTH_DRAW_GIVEN_UP)
+        self.assertEqual(gt.request_files(self.truth, "tipdraw")["waiting"], [])
+
+    def test_a_drawing_is_tied_to_its_item_even_under_another_hash(self):
+        request_id = editor._truth_auto_check_once()
+        (self.truth / "tips" / f"{request_id}.req").unlink()
+        rebuilt = json.loads(belt_record(hash="rebuilt"))   # the same content, a new hash
+        self.append_journal(
+            rebuilt,
+            {"v": 1, "kind": "tooltip", "build": BUILD, "t": 7, "ts": "212409236228", "hash": "rebuilt",
+             "req": request_id, "args": [],
+             "rows": [{"fn": "draw_text", "s": -1, "c": 0, "ha": 1, "a": [0, 8, "Heavy Belt of Recovery"]}],
+             "stats": []})
+        self.assertEqual(editor._truth_coverage(force=True)["places"]["Characters"]["drawn"], 1)
+        model = editor._game_tooltip_model(editor.resolve(BELT_KEY, dict(BELT_DATA)))
+        self.assertEqual(model["gameText"]["rows"][0]["parts"][0]["text"], "Heavy Belt of Recovery")
+
+    def test_status_follows_a_drawing(self):
+        request_id = editor._truth_auto_check_once()
+        (self.truth / "tips" / f"{request_id}.req").rename(self.truth / "tips" / f"{request_id}.working")
+        self.append_journal({"v": 1, "kind": "tipdraw", "req": request_id, "build": BUILD, "t": 5, "total": 1,
+                             "done": 0, "ok": 0, "failed": 0, "rejected": 0, "finished": False})
+        drawing = editor.game_truth_status()["drawing"]
+        self.assertEqual((drawing["state"], drawing["progress"]["total"]), ("running", 1))
+        (self.truth / "tips" / f"{request_id}.working").unlink()
+        self.append_journal({"v": 1, "kind": "tipdraw", "req": request_id, "build": BUILD, "t": 6, "total": 1,
+                             "done": 1, "ok": 1, "failed": 0, "rejected": 0, "finished": True})
+        self.assertEqual(editor.game_truth_status()["drawing"]["state"], "done")
 
 
 class GameTruthDefaultsTests(unittest.TestCase):

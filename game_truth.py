@@ -36,6 +36,7 @@ import sqlite3
 import struct
 import threading
 import time
+import zlib
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
@@ -73,6 +74,8 @@ TIER_NAMES = {1: "C", 2: "B", 3: "A", 4: "S", 5: "SS"}
 
 _SPOOL_PATTERNS = ("*_claim.ndjson", "worker_*.ndjson")
 _BATCH = 2000
+# Bumped when the store keeps something new from journal lines it has read.
+_JOURNAL_READ_VERSION = "2"
 
 
 # ---- small helpers -------------------------------------------------------------
@@ -112,6 +115,17 @@ def _whole_text(value: Any) -> str | None:
     if _is_number(value) and float(value) >= 0 and float(value).is_integer():
         return str(int(value))
     return None
+
+
+def _pack(text: str) -> bytes:
+    return zlib.compress(text.encode("utf-8"), 6)
+
+
+def _unpack(value: Any) -> Any:
+    """JSON the store keeps packed, or as text from before it packed it."""
+    if isinstance(value, (bytes, memoryview)):
+        value = zlib.decompress(bytes(value)).decode("utf-8")
+    return json.loads(value)
 
 
 def _format_number(value: float | int) -> str:
@@ -312,6 +326,28 @@ class TruthStore:
                     mtime_ns INTEGER NOT NULL,
                     offset INTEGER NOT NULL
                 );
+                CREATE TABLE IF NOT EXISTS tooltips(
+                    ts TEXT NOT NULL,
+                    hash TEXT NOT NULL,
+                    build TEXT NOT NULL,
+                    recorded_at INTEGER NOT NULL,
+                    args_json TEXT NOT NULL,
+                    rows_json TEXT NOT NULL,
+                    stats_json TEXT NOT NULL,
+                    record_hash TEXT,
+                    PRIMARY KEY(ts, hash, build)
+                );
+                CREATE TABLE IF NOT EXISTS tooltip_tables(
+                    build TEXT PRIMARY KEY,
+                    recorded_at INTEGER NOT NULL,
+                    stats_json TEXT NOT NULL
+                );
+                CREATE TABLE IF NOT EXISTS hash_aliases(
+                    ts TEXT NOT NULL,
+                    hash TEXT NOT NULL,
+                    content_key TEXT NOT NULL,
+                    PRIMARY KEY(ts, hash)
+                );
                 CREATE TABLE IF NOT EXISTS evals(
                     req TEXT PRIMARY KEY,
                     build TEXT,
@@ -328,6 +364,26 @@ class TruthStore:
             connection.execute(
                 "INSERT OR IGNORE INTO meta(key, value) VALUES('schema', ?)", (str(SCHEMA_VERSION),)
             )
+            columns = {row[1] for row in connection.execute("PRAGMA table_info(tooltips)")}
+            if "record_hash" in columns:   # a development version's link column
+                try:
+                    connection.execute("ALTER TABLE tooltips DROP COLUMN record_hash")
+                except sqlite3.OperationalError:
+                    pass
+            if "record_key" not in columns:
+                connection.execute("ALTER TABLE tooltips ADD COLUMN record_key TEXT")
+            read = connection.execute("SELECT value FROM meta WHERE key='journals-read'").fetchone()
+            if read is None or read[0] != _JOURNAL_READ_VERSION:
+                # Journals read before drawings and hash aliases were kept are read
+                # again once; records and tooltips are kept only once.
+                connection.execute("DELETE FROM sources WHERE path LIKE ? OR path LIKE ?",
+                                   ("%\\journal\\%", "%/journal/%"))
+                connection.execute("INSERT OR REPLACE INTO meta(key, value) VALUES('journals-read', ?)",
+                                   (_JOURNAL_READ_VERSION,))
+        # Per journal, the item record on the line just read, if that line was one:
+        # (timestamp, content key, build). A tooltip the game drew for a request
+        # comes right after the record of the item it built (see _link).
+        self._last_item: dict[str, tuple[str, str, str]] = {}
 
     def _connection(self) -> sqlite3.Connection:
         connection = getattr(self._local, "connection", None)
@@ -350,7 +406,8 @@ class TruthStore:
     # ---- ingest -------------------------------------------------------------
     def _insert(self, connection: sqlite3.Connection, *, ts: str, item_type: Any, build: str,
                 source: str, recorded_at: int, hash_text: Any, definition: Mapping,
-                stats: Mapping, native: Mapping | None, info: Mapping | None) -> bool:
+                stats: Mapping, native: Mapping | None, info: Mapping | None) -> tuple[bool, str]:
+        """Stores a record unless its content is already kept; (added, content key)."""
         type_value = int(item_type) if _is_number(item_type) and float(item_type).is_integer() else None
         def_json = _canonical(definition)
         stats_json = _canonical(stats)
@@ -368,7 +425,18 @@ class TruthStore:
             (ts, type_value, build, source, int(recorded_at), str(hash_text) if isinstance(hash_text, str) else None,
              def_json, stats_json, native_json, info_json, content_key),
         )
-        return cursor.rowcount > 0
+        added = cursor.rowcount > 0
+        if not added and isinstance(hash_text, str) and hash_text:
+            # The game gives some items a new itemDataHash each time it builds them
+            # (potions, essence vaults, forged gear, a few uniques): the content is
+            # kept once, and every other hash it came with is an alias of it, so a
+            # tooltip drawn under any of them finds its record.
+            connection.execute(
+                """INSERT OR IGNORE INTO hash_aliases(ts, hash, content_key) SELECT ?, ?, ?
+                   WHERE NOT EXISTS (SELECT 1 FROM records WHERE content_key=? AND hash=?)""",
+                (ts, hash_text, content_key, content_key, hash_text),
+            )
+        return added, content_key
 
     def _ingest_file(self, path: Path, parse: Callable[[dict], dict | None]) -> IngestResult:
         result = IngestResult()
@@ -386,6 +454,7 @@ class TruthStore:
             offset = row["offset"] if row["offset"] <= stat.st_size else 0   # replaced by a shorter file
         result.files = 1
         pending = 0
+        session = re.sub(r"-\d+\.ndjson$", "", path.name)   # a journal's parts continue each other
         with self._write_lock, path.open("rb") as handle:
             handle.seek(offset)
             try:
@@ -398,17 +467,26 @@ class TruthStore:
                     try:
                         document = json.loads(raw)
                         progress = _parse_eval_progress(document)
-                        parsed = None if progress is not None else parse(document)
+                        tooltip = None if progress is not None else _parse_tooltip(document)
+                        parsed = None if progress is not None or tooltip is not None else parse(document)
                     except (ValueError, TypeError, KeyError):
-                        progress = parsed = None
+                        progress = tooltip = parsed = None
                     if progress is not None:
+                        self._last_item.pop(session, None)
                         self._record_progress(connection, progress)
                         continue
+                    if tooltip is not None:
+                        self._record_tooltip(connection, self._link(session, tooltip))
+                        self._last_item.pop(session, None)
+                        continue
                     if parsed is None:
+                        self._last_item.pop(session, None)
                         result.skipped += 1
                         continue
-                    if self._insert(connection, **parsed):
+                    added, content_key = self._insert(connection, **parsed)
+                    if added:
                         result.added += 1
+                    self._last_item[session] = (parsed["ts"], content_key, parsed["build"])
                     pending += 1
                     if pending >= _BATCH:
                         connection.execute(
@@ -442,6 +520,130 @@ class TruthStore:
                    updated_at=MAX(evals.updated_at, excluded.updated_at)""",
             progress,
         )
+
+    def _link(self, session: str, tooltip: dict[str, Any]) -> dict[str, Any]:
+        """A tooltip the game drew for an editor request, tied to the content of
+        the item it drew. The game builds the item (its record is the line right
+        before) and draws it at once. The itemDataHash cannot tie them: the game
+        gives some items (potions, essence vaults, forged gear, a few uniques) a
+        new hash each time it builds them, identical content or not, and the store
+        keeps the content once - under the hash it first saw. Only the line right
+        before counts: items can share a timestamp."""
+        if tooltip["kind"] != "tooltip" or not tooltip.get("request"):
+            return tooltip
+        last = self._last_item.get(session)
+        if last is not None and last[0] == tooltip["ts"] and last[2] == tooltip["build"]:
+            return {**tooltip, "record_key": last[1]}
+        return tooltip
+
+    @staticmethod
+    def _record_tooltip(connection: sqlite3.Connection, tooltip: dict[str, Any]) -> None:
+        if tooltip["kind"] == "tooltip-table":
+            connection.execute(
+                """INSERT INTO tooltip_tables(build, recorded_at, stats_json) VALUES (?, ?, ?)
+                   ON CONFLICT(build) DO UPDATE SET recorded_at=excluded.recorded_at, stats_json=excluded.stats_json
+                   WHERE excluded.recorded_at >= tooltip_tables.recorded_at""",
+                (tooltip["build"], tooltip["recorded_at"], tooltip["stats_json"]),
+            )
+            return
+        # Packed: a drawn tooltip is a few kilobytes of JSON, and the game draws one
+        # for every item the player owns.
+        connection.execute(
+            """INSERT INTO tooltips(ts, hash, build, recorded_at, args_json, rows_json, stats_json, record_key)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+               ON CONFLICT(ts, hash, build) DO UPDATE SET recorded_at=excluded.recorded_at,
+                   args_json=excluded.args_json, rows_json=excluded.rows_json, stats_json=excluded.stats_json,
+                   record_key=COALESCE(excluded.record_key, tooltips.record_key)
+               WHERE excluded.recorded_at >= tooltips.recorded_at""",
+            (tooltip["ts"], tooltip["hash"], tooltip["build"], tooltip["recorded_at"], _pack(tooltip["args_json"]),
+             _pack(tooltip["rows_json"]), _pack(tooltip["stats_json"]), tooltip.get("record_key")),
+        )
+
+    def tooltip(self, timestamp: str, hash_text: str | None, build: str | None,
+                record_key: str | None = None) -> dict[str, Any] | None:
+        """The rows the game drew for this item's tooltip, if it has drawn it: a
+        drawing tied to this record (``record_key``, its content key), or drawn
+        under its hash or any hash the same content came with - the newest."""
+        if not timestamp or not build or (hash_text is None and not record_key):
+            return None
+        row = self._connection().execute(
+            """SELECT * FROM tooltips WHERE ts=? AND build=? AND (
+                   hash=? OR record_key=?
+                   OR hash IN (SELECT hash FROM hash_aliases WHERE ts=? AND content_key=?))
+               ORDER BY record_key IS ? DESC, recorded_at DESC LIMIT 1""",
+            (timestamp, build, hash_text, record_key, timestamp, record_key, record_key),
+        ).fetchone()
+        return None if row is None else {
+            "recordedAt": row["recorded_at"], "args": _unpack(row["args_json"]),
+            "rows": _unpack(row["rows_json"]), "stats": _unpack(row["stats_json"]),
+        }
+
+    def tooltip_keys(self, build: str | None) -> set[tuple[str, str]]:
+        """What the game drew on this build: (itemTimeStamp, itemDataHash) of each
+        drawn item, and (itemTimeStamp, "#" + content key) of each record a
+        drawing is tied to or was drawn under an alias of."""
+        if not build:
+            return set()
+        connection = self._connection()
+        keys = set()
+        for row in connection.execute("SELECT ts, hash, record_key FROM tooltips WHERE build=?", (build,)):
+            keys.add((row[0], row[1]))
+            if row[2]:
+                keys.add((row[0], "#" + row[2]))
+        for row in connection.execute(
+                """SELECT a.ts, a.content_key FROM hash_aliases a
+                   JOIN tooltips t ON t.ts = a.ts AND t.hash = a.hash WHERE t.build=?""", (build,)):
+            keys.add((row[0], "#" + row[1]))
+        return keys
+
+    # A drawing request cut short leaves the item it was drawing under suspicion:
+    # the game may have closed on it. An item suspected twice is not asked for
+    # again on that build (hovering it in the game still records it).
+    def drawing_strikes(self, build: str | None) -> dict[str, int]:
+        if not build:
+            return {}
+        row = self._connection().execute("SELECT value FROM meta WHERE key=?", ("tipdraw-strikes:" + build,)).fetchone()
+        try:
+            strikes = json.loads(row["value"]) if row is not None else {}
+        except ValueError:
+            strikes = {}
+        return {str(key): int(count) for key, count in strikes.items()} if isinstance(strikes, dict) else {}
+
+    def strike_drawing(self, build: str | None, keys: Iterable[str]) -> dict[str, int]:
+        strikes = self.drawing_strikes(build)
+        if not build:
+            return strikes
+        for key in keys:
+            strikes[str(key)] = strikes.get(str(key), 0) + 1
+        with self._write_lock:
+            self._connection().execute("INSERT OR REPLACE INTO meta(key, value) VALUES (?, ?)",
+                                       ("tipdraw-strikes:" + build, json.dumps(strikes, sort_keys=True)))
+        return strikes
+
+    def tooltip_table(self, build: str | None) -> list | None:
+        """Every stat call of one tooltip on this build: the game's order, labels and formats."""
+        if not build:
+            return None
+        row = self._connection().execute(
+            "SELECT stats_json FROM tooltip_tables WHERE build=?", (build,)
+        ).fetchone()
+        return None if row is None else json.loads(row["stats_json"])
+
+    def table_entries(self, build: str | None) -> dict[int, dict[str, Any]]:
+        """``tooltip_table_entries`` of this build's table, parsed once per recording."""
+        if not build:
+            return {}
+        row = self._connection().execute(
+            "SELECT recorded_at FROM tooltip_tables WHERE build=?", (build,)
+        ).fetchone()
+        if row is None:
+            return {}
+        cache = self.__dict__.setdefault("_table_cache", {})
+        cached = cache.get(build)
+        if cached is None or cached[0] != row["recorded_at"]:
+            cached = (row["recorded_at"], tooltip_table_entries(self.tooltip_table(build)))
+            cache[build] = cached
+        return cached[1]
 
     def evaluation(self, request_id: str) -> dict[str, Any] | None:
         """What ForgePact last reported about one evaluation request."""
@@ -586,6 +788,7 @@ def _row_record(row: sqlite3.Row) -> dict[str, Any]:
         "source": row["source"],
         "recordedAt": row["recorded_at"],
         "hash": row["hash"],
+        "contentKey": row["content_key"],
         "def": json.loads(row["def_json"]),
         "stats": json.loads(row["stats_json"]),
         "native": json.loads(row["native_json"]) if row["native_json"] else None,
@@ -594,8 +797,9 @@ def _row_record(row: sqlite3.Row) -> dict[str, Any]:
 
 
 def _parse_eval_progress(record: Any) -> dict | None:
-    """A ForgePact progress line of an evaluation request, or None."""
-    if not isinstance(record, dict) or record.get("v") != JOURNAL_SCHEMA or record.get("kind") != "eval":
+    """A ForgePact progress line of an evaluation or drawing request, or None.
+    Request ids are unique across both kinds, so they share one table."""
+    if not isinstance(record, dict) or record.get("v") != JOURNAL_SCHEMA or record.get("kind") not in REQUEST_FOLDERS:
         return None
     request = record.get("req")
     if not isinstance(request, str) or not REQUEST_ID.fullmatch(request):
@@ -608,6 +812,33 @@ def _parse_eval_progress(record: Any) -> dict | None:
     return {"req": request, "build": str(record.get("build") or ""), **counts,
             "finished": 1 if record.get("finished") is True else 0,
             "updated_at": int(updated) if _is_number(updated) else 0}
+
+
+def _parse_tooltip(record: Any) -> dict | None:
+    """A ForgePact tooltip or tooltip-table line, or None."""
+    if not isinstance(record, dict) or record.get("v") != JOURNAL_SCHEMA:
+        return None
+    kind = record.get("kind")
+    if kind not in {"tooltip", "tooltip-table"}:
+        return None
+    stats = record.get("stats")
+    recorded = record.get("t")
+    common = {"kind": kind, "build": str(record.get("build") or ""),
+              "recorded_at": int(recorded) if _is_number(recorded) else 0}
+    if not isinstance(stats, list) or not common["build"]:
+        return None
+    if kind == "tooltip-table":
+        return {**common, "stats_json": json.dumps(stats, ensure_ascii=False, separators=(",", ":"))}
+    ts = _whole_text(record.get("ts"))
+    rows, args = record.get("rows"), record.get("args")
+    if ts is None or not isinstance(rows, list) or not isinstance(args, list):
+        return None
+    request = record.get("req")
+    return {**common, "ts": ts, "hash": str(record.get("hash") or ""),
+            "request": request if isinstance(request, str) and REQUEST_ID.fullmatch(request) else None,
+            "args_json": json.dumps(args, ensure_ascii=False, separators=(",", ":")),
+            "rows_json": json.dumps(rows, ensure_ascii=False, separators=(",", ":")),
+            "stats_json": json.dumps(stats, ensure_ascii=False, separators=(",", ":"))}
 
 
 def _parse_journal_record(record: dict) -> dict | None:
@@ -678,12 +909,18 @@ def _parse_spool_record(record: dict, current_build: str | None, build_since: fl
 # claims it (<id>.working), builds each item through the game's own save loader,
 # journals it with src "eval", and deletes the file when done; a check it could
 # not finish is left as <id>.stopped.
+# Drawing requests have the same lines in <root>/tips: while the player has an
+# item tooltip open, the game draws the requested items' tooltips off screen and
+# journals each like a tooltip the player saw, with "req":"<id>".
 REQUEST_ID = re.compile(r"[A-Za-z0-9_-]{1,64}")
 MAX_REQUEST_ITEMS = 50000
+REQUEST_FOLDERS = {"eval": "requests", "tipdraw": "tips"}
 
 
-def write_eval_request(root: str | os.PathLike, entries: Iterable[tuple[str, Mapping[str, Any]]]) -> tuple[str | None, int]:
-    """Queue items for the game to build; returns (request id, items written)."""
+def write_eval_request(root: str | os.PathLike, entries: Iterable[tuple[str, Mapping[str, Any]]],
+                       kind: str = "eval") -> tuple[str | None, int]:
+    """Queue items for the game to build (``kind`` "eval") or to draw ("tipdraw");
+    returns (request id, items written)."""
     lines = []
     seen = set()
     for key, data in entries:
@@ -701,7 +938,7 @@ def write_eval_request(root: str | os.PathLike, entries: Iterable[tuple[str, Map
             break
     if not lines:
         return None, 0
-    folder = Path(root) / "requests"
+    folder = Path(root) / REQUEST_FOLDERS[kind]
     folder.mkdir(parents=True, exist_ok=True)
     request_id = f"{int(time.time() * 1000)}-{os.urandom(3).hex()}"
     temp = folder / f"{request_id}.tmp"
@@ -710,9 +947,9 @@ def write_eval_request(root: str | os.PathLike, entries: Iterable[tuple[str, Map
     return request_id, len(lines)
 
 
-def request_files(root: str | os.PathLike) -> dict[str, list[str]]:
+def request_files(root: str | os.PathLike, kind: str = "eval") -> dict[str, list[str]]:
     """Request ids by state on disk: waiting (.req), running (.working), stopped."""
-    folder = Path(root) / "requests"
+    folder = Path(root) / REQUEST_FOLDERS[kind]
     states = {"waiting": [], "running": [], "stopped": []}
     suffixes = {".req": "waiting", ".working": "running", ".stopped": "stopped"}
     if folder.is_dir():
@@ -723,16 +960,28 @@ def request_files(root: str | os.PathLike) -> dict[str, list[str]]:
     return states
 
 
-def clear_stopped_requests(root: str | os.PathLike) -> int:
+def clear_stopped_requests(root: str | os.PathLike, kind: str = "eval") -> int:
     removed = 0
-    folder = Path(root) / "requests"
-    for request_id in request_files(root)["stopped"]:
+    folder = Path(root) / REQUEST_FOLDERS[kind]
+    for request_id in request_files(root, kind)["stopped"]:
         try:
             (folder / f"{request_id}.stopped").unlink()
             removed += 1
         except OSError:
             continue
     return removed
+
+
+def stopped_request_keys(root: str | os.PathLike, request_id: str, kind: str = "tipdraw") -> list[str]:
+    """The item keys of a stopped request, in the order the game took them."""
+    if not REQUEST_ID.fullmatch(str(request_id)):
+        return []
+    path = Path(root) / REQUEST_FOLDERS[kind] / f"{request_id}.stopped"
+    try:
+        text = path.read_text(encoding="utf-8")
+    except (OSError, UnicodeDecodeError):
+        return []
+    return [line.split("\t", 1)[0] for line in text.splitlines() if "\t" in line]
 
 
 # ---- capture request and ForgePact status --------------------------------------
@@ -786,6 +1035,270 @@ def capture_status(root: str | os.PathLike, *, now: float | None = None) -> dict
     return status
 
 
+# ---- the game's own tooltip text --------------------------------------------------
+# ForgePact records the text rows the game draws for an item's tooltip (the first
+# time in a session it draws that item) and, once per session, every stat call of
+# one tooltip: the table of the lines a tooltip can draw, in the game's order, each
+# with its label, format and colour.
+
+# "(Based on Level)" lines are multiplied by the viewing character's level. The
+# editor shows them at the level cap, where the captured tooltips of a level-100
+# character read +300 for 3 per level.
+TABLE_LEVEL = 100
+# The key hint under every tooltip ("ALT - Show Information") does nothing in the editor.
+_KEY_HINT = re.compile(r"[A-Za-z0-9]{1,12} - Show Information")
+# The roll range the game's ALT view adds after a stat line (" [45-75]").
+_RANGE_PIECE = re.compile(r" \[-?\d+(?:\.\d+)?-(?:-)?\d+(?:\.\d+)?\]")
+# DrawInventoryStatsNew formats: 2 percent and 3 flat stat lines; 5 and 6 the same for
+# a value passed in (the star level rows); 0 and 1 the header lines (Defense: 36).
+_VALUE_FORMATS = {2, 3, 5, 6}
+_STAT_FORMATS = {2, 3}
+# Header values the tooltip draws above its stat lines: damage, speed, defense, block.
+_HEADER_KEYS = (22, 23, 154, 157)
+# Lines that name the class of stat 21 after them: to All Skills, to <element> Skills.
+_CLASS_SKILL_KEYS = frozenset({201, 222, 223, 224, 225, 226, 227})
+# Where a *_colour draw builtin takes its first colour.
+_COLOUR_ARG = {"draw_text_colour": 3, "draw_text_ext_colour": 5,
+               "draw_text_transformed_colour": 6, "draw_text_ext_transformed_colour": 8}
+
+
+def gm_colour(value: Any) -> str | None:
+    """A GameMaker colour (0xBBGGRR) as #rrggbb."""
+    if not _is_number(value):
+        return None
+    number = int(value) & 0xFFFFFF
+    return "#%02x%02x%02x" % (number & 0xFF, (number >> 8) & 0xFF, (number >> 16) & 0xFF)
+
+
+def captured_tooltip_rows(tooltip: Mapping[str, Any]) -> list[dict[str, Any]]:
+    """The lines of a tooltip the game drew, top to bottom, as the player saw them.
+
+    Every draw call is one piece: its text, colour and position. Outline copies
+    (the same text drawn again within 3 px) keep only the last draw. Pieces on one
+    line join left to right; a stat line's value and label get the space the game
+    leaves between them. ``stat`` names the stat a line draws, ``gap`` marks the
+    space the game leaves above a new section, ``block`` a wrapped paragraph.
+
+    A stat call's line is the first one at or below the call's position that the
+    call drew with the game's left-aligned pieces: ForgePact's own centred rows
+    for a forged item are drawn inside the same call, above the game's row."""
+    stat_calls = []
+    for entry in tooltip.get("stats") or ():
+        args = entry.get("a") if isinstance(entry, Mapping) else None
+        if isinstance(args, list) and len(args) > 6 and _is_number(args[1]):
+            stat_calls.append((float(args[1]), entry.get("id"), args[5]))
+    pieces: list[dict[str, Any] | None] = []
+    for row in tooltip.get("rows") or ():
+        if not isinstance(row, Mapping):
+            continue
+        function = str(row.get("fn") or "")
+        args = row.get("a") if isinstance(row.get("a"), list) else []
+        if len(args) < 3 or not _is_number(args[0]) or not _is_number(args[1]):
+            continue
+        text = args[2] if isinstance(args[2], str) else next((v for v in args if isinstance(v, str)), None)
+        if not text:
+            continue
+        x, y = float(args[0]), float(args[1])
+        colour_at = _COLOUR_ARG.get(function)
+        colour = gm_colour(args[colour_at] if colour_at is not None and len(args) > colour_at else row.get("c"))
+        for index, other in enumerate(pieces):
+            if other is not None and other["text"] == text and abs(other["x"] - x) <= 3 and abs(other["y"] - y) <= 3:
+                pieces[index] = None
+        pieces.append({"text": text, "color": colour, "x": x, "y": y, "block": "_ext" in function,
+                       "call": row.get("s"), "centred": row.get("ha") == 1})
+    lines: list[dict[str, Any]] = []
+    for piece in sorted((p for p in pieces if p is not None), key=lambda p: (p["y"], p["x"])):
+        last = lines[-1] if lines else None
+        if last is not None and not last["block"] and not piece["block"] and abs(last["y"] - piece["y"]) <= 2:
+            last["pieces"].append(piece)
+        else:
+            lines.append({"y": piece["y"], "block": piece["block"], "pieces": [piece]})
+    calls_by_line: dict[int, tuple] = {}
+    for call in stat_calls:
+        candidates = [
+            index for index, line in enumerate(lines)
+            if call[0] - 2 <= line["y"] <= call[0] + 150 and index not in calls_by_line
+            and not all(piece["centred"] for piece in line["pieces"])
+            and any(piece["call"] == call[1] for piece in line["pieces"])
+        ]
+        if candidates:
+            calls_by_line[min(candidates, key=lambda index: lines[index]["y"])] = call
+    rows: list[dict[str, Any]] = []
+    previous = None
+    for index, line in enumerate(lines):
+        call = calls_by_line.get(index)
+        spaced = call is not None and call[2] in _VALUE_FORMATS
+        parts: list[dict[str, Any]] = []
+        for piece in line["pieces"]:
+            text = piece["text"]
+            if parts and spaced and not parts[-1]["text"].endswith(" ") and not text.startswith(" "):
+                text = " " + text
+            parts.append({"text": text, "color": piece["color"]})
+        if _KEY_HINT.fullmatch("".join(part["text"] for part in parts).strip()):
+            continue
+        stat = None
+        if call is not None and call[2] in _STAT_FORMATS and _is_number(call[1]) and float(call[1]) >= 0:
+            stat = int(call[1])
+        rows.append({
+            "parts": parts,
+            "stat": stat,
+            # Drawn in the game's ALT view: the line shows its own roll range.
+            "ranged": stat is not None and len(parts) > 1 and bool(_RANGE_PIECE.fullmatch(parts[-1]["text"])),
+            "gap": previous is not None and (previous["block"] or line["y"] - previous["y"] > 36),
+            "block": line["block"],
+        })
+        previous = line
+    return rows
+
+
+def tooltip_table_entries(table: Iterable[Any] | None) -> dict[int, dict[str, Any]]:
+    """Stat key -> how the game draws that stat line: its place, label, format, colour."""
+    out: dict[int, dict[str, Any]] = {}
+    for index, entry in enumerate(table or ()):
+        if not isinstance(entry, Mapping):
+            continue
+        args, key = entry.get("a"), entry.get("id")
+        if not isinstance(args, list) or len(args) < 11 or not _is_number(key) or float(key) < 0:
+            continue
+        if args[5] not in _STAT_FORMATS or args[6] not in (8, 9):
+            continue
+        out.setdefault(int(key), {
+            "index": index,
+            "label": args[4] if isinstance(args[4], str) else "",
+            "percent": args[5] == 2,
+            "valueFirst": args[6] == 8,
+            "perLevel": _flag(args[8]),
+            "negated": _flag(args[9]),
+            "color": gm_colour(args[10]),
+        })
+    return out
+
+
+def _flag(value: Any) -> bool:
+    return value is True or (_is_number(value) and float(value) != 0)
+
+
+_TALENT_NAME_CACHE: dict[tuple, dict[str, str]] = {}
+
+
+def talent_names(folder: str | os.PathLike | None) -> dict[str, str]:
+    """English talent names by slug from the game's own translation files
+    (``bin/translations*.csv``: ``talent_name_<slug>|<English>|...``); read again
+    only when a file changes."""
+    if not folder:
+        return {}
+    try:
+        files = sorted(Path(folder).glob("translations*.csv"))
+        key = (str(folder), tuple((path.name, path.stat().st_mtime_ns, path.stat().st_size) for path in files))
+    except OSError:
+        return {}
+    if key in _TALENT_NAME_CACHE:
+        return _TALENT_NAME_CACHE[key]
+    names: dict[str, str] = {}
+    for path in files:
+        try:
+            text = path.read_text(encoding="utf-8-sig")
+        except (OSError, UnicodeDecodeError):
+            continue
+        for line in text.splitlines():
+            if line.startswith("talent_name_"):
+                parts = line.split("|")
+                if len(parts) > 1 and parts[1].strip():
+                    names.setdefault(parts[0][len("talent_name_"):], parts[1].strip())
+    _TALENT_NAME_CACHE.clear()
+    _TALENT_NAME_CACHE[key] = names
+    return names
+
+
+def _game_number(value: float) -> str:
+    """Whole numbers plain, anything else with two decimals, as the game prints
+    them (+1.50 to Projectile Speed)."""
+    rounded = round(float(value), 2)
+    if rounded.is_integer():
+        return str(int(rounded))
+    return f"{rounded:.2f}"
+
+
+def table_line_text(entry: Mapping[str, Any], value: float, *, level: int = TABLE_LEVEL,
+                    label: str | None = None) -> dict[str, Any]:
+    """One stat line as the game's table draws it: a value-first line signs its value
+    (+449% Enhanced Damage, -25% to All Enemy Resistances), a label-first line does
+    not (Ailment damage increased by 35%); per-level lines are multiplied by the
+    level and negated lines drawn below zero."""
+    number = float(value) * (level if entry.get("perLevel") else 1)
+    if entry.get("negated"):
+        number = -number
+    text = _game_number(number) + ("%" if entry.get("percent") else "")
+    if entry.get("valueFirst") and number >= 0:
+        text = "+" + text
+    return {
+        "value": text,
+        "label": entry.get("label", "") if label is None else label,
+        "valueFirst": bool(entry.get("valueFirst")),
+        "color": entry.get("color"),
+        "index": entry.get("index"),
+        "perLevel": bool(entry.get("perLevel")),
+    }
+
+
+def _apply_game_table(lines: list[dict[str, Any]], internal: list[dict[str, Any]],
+                      entries: Mapping[int, Mapping[str, Any]], semantics: Any, level: int) -> list[dict[str, Any]]:
+    """The game's label, value text, colour and order on every line its table draws.
+    Checked against 7,628 tooltips the game drew (2026-09-24): all 41,920 lines
+    they share read the same.
+
+    * a line whose value is 0 is not drawn;
+    * a skill grant draws as one line, "+16 to Omnislash (Samurai)": its level stat
+      carries the label "to ", the skill stat before it names the skill and the
+      class stat after it the class; "+3 to All Skills (Illusionist)" and the
+      element lines, "+2 to Fire Skills (Exo)", take their class from stat 21.
+      Those skill and class lines do not stand alone."""
+    by_key = {line["statKey"]: line for line in lines}
+    folded = set()
+
+    def value_of(key: int, kinds: set[str]) -> str | None:
+        other = by_key.get(key)
+        kind = str((_semantic(semantics, key) or {}).get("valueKind") or "")
+        if other is None or kind not in kinds or not other.get("formattedValue"):
+            return None
+        folded.add(key)
+        return str(other["formattedValue"])
+
+    for line in lines:
+        key = line["statKey"]
+        entry = entries.get(key)
+        if entry is None or not _is_number(line.get("value")):
+            continue
+        if float(line["value"]) == 0:
+            folded.add(key)
+            continue
+        label = entry.get("label", "")
+        if label.endswith(" "):
+            skill = value_of(key - 1, {"skill_id", "talent_id"})
+            if skill:
+                label += skill
+                role = value_of(key + 1, {"class_id"})
+                if role:
+                    label += f" ({role})"
+        elif key in _CLASS_SKILL_KEYS:
+            role = value_of(21, {"class_id"})
+            if role:
+                label += f" ({role})"
+        line["game"] = table_line_text(entry, float(line["value"]), level=level, label=label or None)
+    internal.extend(line for line in lines if line["statKey"] in folded)
+    drawn = [line for line in lines if line["statKey"] not in folded]
+
+    def place(pair: tuple[int, dict[str, Any]]) -> tuple:
+        order, line = pair
+        if line["statKey"] in _HEADER_KEYS:
+            return (0, _HEADER_KEYS.index(line["statKey"]), 0)
+        if "game" in line:
+            return (1, line["game"]["index"], 0)
+        return (2, 0, order)
+
+    return [line for _, line in sorted(enumerate(drawn), key=place)]
+
+
 # ---- the verified tooltip -------------------------------------------------------
 
 def _semantic(semantics: Any, key: int) -> dict[str, Any] | None:
@@ -835,7 +1348,8 @@ def _class_name(semantics: Any, class_id: int) -> str | None:
     return names.get(class_id)
 
 
-def _line_value(meta: Mapping[str, Any] | None, value: float, semantics: Any) -> tuple[str, bool]:
+def _line_value(meta: Mapping[str, Any] | None, value: float, semantics: Any,
+                talent_names: Mapping[str, str] | None = None) -> tuple[str, bool]:
     kind = str((meta or {}).get("valueKind") or "")
     percent = kind == "percent"
     if kind == "boolean":
@@ -847,7 +1361,10 @@ def _line_value(meta: Mapping[str, Any] | None, value: float, semantics: Any) ->
             except Exception:  # noqa: BLE001
                 talent = None
             if talent and (talent.get("name") or talent.get("slug")):
-                return str(talent.get("name") or talent.get("slug")), False
+                # Relic skills carry only a slug; the game names them from its
+                # translation files (talent_name_relicMeatHook -> Meat Hook).
+                slug = str(talent.get("slug") or "")
+                return str(talent.get("name") or (talent_names or {}).get(slug) or slug), False
         elif kind == "class_id":
             name = _class_name(semantics, int(value))
             if name:
@@ -856,12 +1373,21 @@ def _line_value(meta: Mapping[str, Any] | None, value: float, semantics: Any) ->
 
 
 def build_verified_model(offline: Mapping[str, Any], match: TruthMatch, *,
-                         semantics: Any = None, custom_name: str | None = None) -> dict[str, Any]:
+                         semantics: Any = None, custom_name: str | None = None,
+                         tooltip: Mapping[str, Any] | None = None,
+                         table: Mapping[int, Mapping[str, Any]] | None = None,
+                         level: int = TABLE_LEVEL,
+                         talent_names: Mapping[str, str] | None = None) -> dict[str, Any]:
     """The tooltip model with every number taken from the game's own record.
 
     ``offline`` (exact_tooltip's model) contributes only what the record
     cannot know: the definition ranges of fixed stats, seeds and socket
-    payloads for the details view, and skill-selector identities."""
+    payloads for the details view, and skill-selector identities.
+
+    ``tooltip`` is the game's own drawing of this item (``TruthStore.tooltip``):
+    its rows become ``gameText``, the tooltip exactly as the game showed it.
+    Without one, ``table`` (``TruthStore.table_entries`` of the record's build)
+    gives each stat line the game's label, value text, colour and order."""
     record = match.record
     stats = record.get("stats") or {}
     info = record.get("info") or {}
@@ -893,7 +1419,7 @@ def build_verified_model(offline: Mapping[str, Any], match: TruthMatch, *,
             label = str(offline_line["label"])
         else:
             label = f"Stat #{key}"
-        formatted, percent = _line_value(meta, float(value), semantics)
+        formatted, percent = _line_value(meta, float(value), semantics, talent_names)
         if meta is None and offline_line is not None:
             percent = bool(offline_line.get("percent"))
             formatted = _format_value(float(value), percent)
@@ -948,6 +1474,9 @@ def build_verified_model(offline: Mapping[str, Any], match: TruthMatch, *,
         else:
             internal.append(line)
     lines.sort(key=lambda pair: pair[0])
+    rolled_lines = [line for _, line in lines]
+    if table:
+        rolled_lines = _apply_game_table(rolled_lines, internal, table, semantics, level)
     for key, offline_line in offline_lines.items():
         if str(key) not in stats:
             differences.append({"statKey": key, "label": offline_line.get("label"),
@@ -980,7 +1509,13 @@ def build_verified_model(offline: Mapping[str, Any], match: TruthMatch, *,
             "Recorded by the game on build " + (build_date(record.get("build")) or "unknown")
             + "; the running build may roll this item differently."
         )
-    rolled_lines = [line for _, line in lines]
+    game_text = None
+    if isinstance(tooltip, Mapping):
+        rows = captured_tooltip_rows(tooltip)
+        if rows:
+            game_text = {"rows": rows, "recordedAt": tooltip.get("recordedAt"),
+                         "build": record.get("build") or None}
+    text_source = "game" if game_text else "table" if any("game" in line for line in rolled_lines) else None
     return {
         "schemaVersion": offline.get("schemaVersion", 1),
         "profileId": offline.get("profileId"),
@@ -995,10 +1530,12 @@ def build_verified_model(offline: Mapping[str, Any], match: TruthMatch, *,
             "maxed": maxed, "total": total, "endpointDeficit": _norm(deficit),
             "percent": round(100.0 * maxed / total, 2) if total else None,
         },
+        "gameText": game_text,
         "calculation": {
             "coverage": "game_verified",
             "numbersExact": current,
-            "textExact": False,
+            "textExact": game_text is not None,
+            "textSource": text_source,
             "buildMatched": current,
             "unsupportedPaths": [] if current else ["game_record_other_build"],
             "warnings": warnings,
@@ -1102,9 +1639,10 @@ class TruthIngestor:
 
 
 __all__ = [
-    "AFFIX_SLOT_KEYS", "MODEL_BUILD_ID", "RARITY_NAMES", "TIER_NAMES",
+    "AFFIX_SLOT_KEYS", "MODEL_BUILD_ID", "RARITY_NAMES", "TABLE_LEVEL", "TIER_NAMES",
     "IngestResult", "TruthIngestor", "TruthMatch", "TruthStore",
     "build_date", "build_id_from_headers", "build_id_of_exe", "build_verified_model",
-    "capture_status", "definition_mismatch", "filter_info", "identity_fields",
-    "mark_estimate", "request_capture", "timestamp_of_key", "withdraw_capture",
+    "capture_status", "captured_tooltip_rows", "definition_mismatch", "filter_info", "gm_colour",
+    "identity_fields", "mark_estimate", "request_capture", "table_line_text", "timestamp_of_key",
+    "tooltip_table_entries", "withdraw_capture",
 ]

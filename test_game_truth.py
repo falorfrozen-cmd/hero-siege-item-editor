@@ -68,6 +68,12 @@ class FakeSemantics:
               "evidence": {"function": "gml_Script_GetItemTooltipString", "location": "block at 0x3EA9496"}},
         21: {"name": "All Skills: Class", "valueKind": "class_id",
              "evidence": {"function": "gml_Script_DrawInventoryItemV2", "location": "0x15C2FB6: INT 21"}},
+        202: {"name": "Skill Grant: Skill", "valueKind": "skill_id",
+              "evidence": {"function": "gml_Script_DrawInventoryItemV2", "location": "grant block: INT 202"}},
+        203: {"name": "Skill Grant: Levels", "valueKind": "skill_level",
+              "evidence": {"function": "gml_Script_DrawInventoryItemV2", "location": "grant block: INT 203"}},
+        204: {"name": "Skill Grant: Class", "valueKind": "class_id",
+              "evidence": {"function": "gml_Script_DrawInventoryItemV2", "location": "grant block: INT 204"}},
         1: {"name": "unknown", "valueKind": "unknown", "evidence": {"function": None}},
     }
 
@@ -75,7 +81,8 @@ class FakeSemantics:
         return self.STATS.get(int(key))
 
     def talent(self, talent_id):
-        return {"name": "Frost Nova", "slug": "frost_nova"} if talent_id == 182 else None
+        return {182: {"name": "Frost Nova", "slug": "frost_nova"},
+                500: {"name": "", "slug": "relicMeatHook"}}.get(talent_id)
 
     def pickers(self):
         return {"talents": [], "classes": [{"id": 3, "label": "Viking"}]}
@@ -406,6 +413,35 @@ class EvaluationRequestTests(unittest.TestCase):
         self.assertEqual(gt.clear_stopped_requests(self.folder), 1)
         self.assertEqual(gt.request_files(self.folder)["stopped"], [])
 
+    def test_drawing_requests_live_in_their_own_folder(self):
+        request_id, count = gt.write_eval_request(self.folder, [("0-0-6-3", {"a": 6})], kind="tipdraw")
+        self.assertEqual(count, 1)
+        self.assertTrue((self.folder / "tips" / f"{request_id}.req").is_file())
+        self.assertFalse((self.folder / "requests").exists())
+        self.assertEqual(gt.request_files(self.folder, "tipdraw")["waiting"], [request_id])
+        self.assertEqual(gt.request_files(self.folder)["waiting"], [])
+        (self.folder / "tips" / f"{request_id}.req").rename(self.folder / "tips" / f"{request_id}.stopped")
+        self.assertEqual(gt.stopped_request_keys(self.folder, request_id), ["0-0-6-3"])
+        self.assertEqual(gt.stopped_request_keys(self.folder, "../x"), [])
+        self.assertEqual(gt.clear_stopped_requests(self.folder, "tipdraw"), 1)
+        self.assertEqual(gt.request_files(self.folder, "tipdraw")["stopped"], [])
+
+    def test_drawing_progress_and_strikes_are_kept(self):
+        store = gt.TruthStore(self.folder / "truth.sqlite3")
+        journal = self.folder / "journal"
+        journal.mkdir()
+        (journal / "live.ndjson").write_text(json.dumps(
+            {"v": 1, "kind": "tipdraw", "req": "18-cd", "build": BUILD, "t": 4, "total": 9, "done": 6, "ok": 6,
+             "failed": 0, "rejected": 0, "finished": False}) + "\n", encoding="utf-8")
+        store.ingest_journal_dir(journal)
+        self.assertEqual((store.evaluation("18-cd")["done"], store.evaluation("18-cd")["total"]), (6, 9))
+        self.assertEqual(store.strike_drawing(BUILD, ["0-0-6-3"]), {"0-0-6-3": 1})
+        store.close()
+        again = gt.TruthStore(self.folder / "truth.sqlite3")
+        self.assertEqual(again.strike_drawing(BUILD, ["0-0-6-3", "0-0-7-3"]), {"0-0-6-3": 2, "0-0-7-3": 1})
+        self.assertEqual(again.drawing_strikes("pe-other"), {})
+        again.close()
+
     def test_progress_lines_are_kept_per_request_and_never_go_back(self):
         store = gt.TruthStore(self.folder / "truth.sqlite3")
         journal = self.folder / "journal"
@@ -425,6 +461,376 @@ class EvaluationRequestTests(unittest.TestCase):
         self.assertIsNone(store.evaluation("unknown"))
         self.assertEqual(store.counts()["sources"], {"eval": 1})
         store.close()
+
+
+class TooltipRecordTests(unittest.TestCase):
+    def test_tooltip_rows_and_the_stat_table_are_kept_per_build(self):
+        folder = Path(tempfile.mkdtemp())
+        try:
+            store = gt.TruthStore(folder / "truth.sqlite3")
+            journal = folder / "journal"
+            journal.mkdir()
+            row = {"fn": "o", "s": 28, "c": 16777215, "ha": 1, "a": [10, 20, "+773% Enhanced Damage"]}
+            tip = lambda t, text: json.dumps({"v": 1, "kind": "tooltip", "build": BUILD, "t": t, "ts": "212409236228",
+                                               "hash": "h", "args": [1, 2, 1, None],
+                                               "rows": [dict(row, a=[10, 20, text])],
+                                               "stats": [{"id": 28, "h": 30, "a": [10, 20, None, 28, "Enhanced Damage", 2, 8]}]}) + "\n"
+            table = json.dumps({"v": 1, "kind": "tooltip-table", "build": BUILD, "t": 3,
+                                "stats": [{"id": 28, "h": 0, "a": [0, 0, None, 28, "Enhanced Damage", 2, 8]}]}) + "\n"
+            (journal / "live.ndjson").write_text(tip(5, "+773% Enhanced Damage") + tip(4, "older") + table
+                                                 + journal_line(), encoding="utf-8")
+            result = store.ingest_journal_dir(journal)
+            self.assertEqual((result.added, result.skipped), (1, 0), "tooltip lines are not item records")
+            kept = store.tooltip("212409236228", "h", BUILD)
+            self.assertEqual(kept["rows"][0]["a"][2], "+773% Enhanced Damage", "the newest pass wins")
+            self.assertIsNone(store.tooltip("212409236228", "h", "pe-other"))
+            self.assertIsNone(store.tooltip("212409236228", "other hash", BUILD))
+            self.assertEqual(store.tooltip_table(BUILD)[0]["id"], 28)
+            self.assertIsNone(store.tooltip_table(None))
+            store.close()
+        finally:
+            shutil.rmtree(folder, ignore_errors=True)
+
+
+def bgr(rgb: str) -> int:
+    """#rrggbb as the game keeps a colour (0xBBGGRR)."""
+    value = int(rgb.lstrip("#"), 16)
+    return ((value & 0xFF) << 16) | (value & 0xFF00) | (value >> 16)
+
+
+def drawn(x, y, text, colour, *, ha=0, fn="draw_text", s=-1, extra=()):
+    return {"fn": fn, "s": s, "c": bgr(colour), "ha": ha, "va": 0, "a": [x, y, text, *extra]}
+
+
+def stat_call(y, stat, label, fmt, style):
+    return {"id": stat, "h": 30,
+            "a": [2048, y, None, stat if stat >= 0 else None, label, fmt, style, None, False, False, 13461874, False]}
+
+
+# One tooltip the way ForgePact records it: every draw call of the pass and every
+# stat call that drew a line (the shapes of a captured set item, made-up values).
+CAPTURED = {
+    "recordedAt": 1790000000000,
+    "rows": [
+        drawn(2048, 8, "Belt of Tests", "#0ce11c", ha=1),
+        drawn(2048, 48, "Satanic Set Belt", "#808080", ha=1),
+        drawn(1945, 68, "(", "#808080"), drawn(1952, 68, "Gem", "#808080"), drawn(1992, 68, ", ", "#808080"),
+        drawn(2002, 68, "Gem", "#808080"), drawn(2042, 68, ")", "#808080"),
+        drawn(1962, 118, "Defense: ", "#ffffff"), drawn(2074, 118, "11194", "#7269cd"),
+        drawn(1899, 178, "+264%", "#000000", s=29), drawn(1903, 178, "+264%", "#000000", s=29),
+        drawn(1901, 178, "+264%", "#7269cd", s=29), drawn(1976, 178, "Enhanced Defense", "#7269cd", s=29),
+        drawn(1851, 208, "Ailment damage increased by", "#7269cd", s=250), drawn(2201, 208, "35%", "#7269cd", s=250),
+        drawn(1959, 268, "Sockets (4)", "#7269cd"), drawn(2083, 268, " [2-4]", "#808080"),
+        drawn(1894, 328, "+30", "#404040", s=30), drawn(1937, 328, "to Magic Skill Damage", "#404040", s=30),
+        drawn(2048, 388, "Forged in tests.", "#0ce11c", ha=1, fn="draw_text_ext", extra=(-1, 560)),
+        drawn(1908, 470, "Tier ", "#808080"), drawn(1962, 470, "S", "#f5c832"),
+        drawn(1974, 470, ", Requires Level ", "#808080"), drawn(2163, 470, "38", "#ffffff"),
+        drawn(2048, 515, "ALT - Show Information", "#808080", ha=1),
+    ],
+    "stats": [stat_call(118, -1, "Defense: ", 1, 1), stat_call(178, 29, "Enhanced Defense", 2, 8),
+              stat_call(208, 250, "Ailment damage increased by", 2, 9), stat_call(328, 30, "to Magic Skill Damage", 6, 8)],
+}
+
+
+def table_call(stat, label, fmt, style, *, per_level=False, negated=False, colour=13461874):
+    return {"id": stat, "h": 0, "a": [0, 0, None, stat, label, fmt, style, None, per_level, negated, colour, False]}
+
+
+# The stat calls of one tooltip pass: the game's order, labels and formats.
+TABLE = [
+    {"id": -1, "h": 30, "a": [0, 0, None, None, "Attack Damage: ", 1, 9, None, False, False, 13461874, False]},
+    table_call(28, "Enhanced Damage", 2, 8),
+    table_call(203, "to ", 3, 8, colour=18687),
+    table_call(51, "to All Attributes", 3, 8),
+    table_call(152, "to All Enemy Resistances", 2, 8, negated=True),
+    table_call(250, "Ailment damage increased by", 2, 9),
+    table_call(34, "to Strength (Based on Level)", 3, 8, per_level=True),
+    table_call(28, "a later call of the same stat", 3, 8),
+]
+
+
+class GameTextTests(unittest.TestCase):
+    def texts(self, rows):
+        return ["".join(part["text"] for part in row["parts"]) for row in rows]
+
+    def test_a_forged_row_above_the_games_row_leaves_the_stat_to_the_games_row(self):
+        # ForgePact draws a forged item's own rows (centred, gold) inside the stat
+        # call, above the game's row, which the game then draws 30 px lower.
+        tooltip = {"rows": [
+            drawn(2048, 178, "Steals the affixes of slain rare monsters", "#f2c462", ha=1, s=172),
+            drawn(1800, 208, "Every point in resistances increases your damage by", "#7269cd", s=172),
+            drawn(2300, 208, "1%", "#7269cd", s=172),
+        ], "stats": [stat_call(178, 172, "Every point in resistances increases your damage by", 2, 9)]}
+        rows = gt.captured_tooltip_rows(tooltip)
+        self.assertEqual(self.texts(rows), ["Steals the affixes of slain rare monsters",
+                                            "Every point in resistances increases your damage by 1%"])
+        self.assertEqual([row["stat"] for row in rows], [None, 172])
+
+    def test_the_alt_view_marks_the_lines_that_show_their_own_range(self):
+        tooltip = {"rows": [
+            drawn(1901, 178, "+56%", "#7269cd", s=29), drawn(1976, 178, "Enhanced Defense", "#7269cd", s=29),
+            drawn(2200, 178, " [45-75]", "#808080", s=29),
+            drawn(1959, 238, "Sockets (4)", "#7269cd"), drawn(2083, 238, " [2-4]", "#808080"),
+        ], "stats": [stat_call(178, 29, "Enhanced Defense", 2, 8)]}
+        rows = gt.captured_tooltip_rows(tooltip)
+        self.assertEqual(self.texts(rows), ["+56% Enhanced Defense [45-75]", "Sockets (4) [2-4]"])
+        self.assertEqual([row["ranged"] for row in rows], [True, False], "only a stat line's range is the ALT view's")
+
+    def test_a_star_row_repeating_a_value_keeps_its_own_line(self):
+        tooltip = {"rows": [
+            drawn(1984, 658, "+8%", "#404040", s=8), drawn(2035, 658, "to Life", "#404040", s=8),
+            drawn(1827, 688, "+8%", "#404040", s=8), drawn(1878, 688, "Increased Total Movement Speed", "#404040", s=8),
+        ], "stats": [stat_call(658, 8, "to Life", 5, 8), stat_call(688, 8, "Increased Total Movement Speed", 5, 8)]}
+        self.assertEqual(self.texts(gt.captured_tooltip_rows(tooltip)),
+                         ["+8% to Life", "+8% Increased Total Movement Speed"])
+
+    def test_captured_rows_read_as_the_player_saw_them(self):
+        rows = gt.captured_tooltip_rows(CAPTURED)
+        self.assertEqual(self.texts(rows), [
+            "Belt of Tests", "Satanic Set Belt", "(Gem, Gem)", "Defense: 11194", "+264% Enhanced Defense",
+            "Ailment damage increased by 35%", "Sockets (4) [2-4]", "+30 to Magic Skill Damage",
+            "Forged in tests.", "Tier S, Requires Level 38",
+        ], "pieces join per line, a stat's value and label with a space, the key hint is left out")
+        self.assertEqual([row["gap"] for row in rows],
+                         [False, True, False, True, True, False, True, True, True, True])
+        self.assertEqual([row["stat"] for row in rows],
+                         [None, None, None, None, 29, 250, None, None, None, None],
+                         "only a stat line names its stat; the star row draws a value it was given")
+        self.assertEqual([part["color"] for part in rows[3]["parts"]], ["#ffffff", "#7269cd"])
+        self.assertEqual([part["color"] for part in rows[4]["parts"]], ["#7269cd", "#7269cd"],
+                         "an outline's dark copies give way to the coloured draw")
+        self.assertEqual(rows[0]["parts"][0]["color"], "#0ce11c")
+        self.assertTrue(rows[8]["block"])
+        self.assertEqual([part["color"] for part in rows[9]["parts"]], ["#808080", "#f5c832", "#808080", "#ffffff"])
+
+    def test_a_colour_builtin_brings_its_own_colour(self):
+        tooltip = {"rows": [{"fn": "draw_text_colour", "s": -1, "c": 0, "ha": 1,
+                             "a": [0, 8, "Name", bgr("#d61616"), bgr("#d61616"), 0, 0, 1]}], "stats": []}
+        self.assertEqual(gt.captured_tooltip_rows(tooltip)[0]["parts"][0]["color"], "#d61616")
+
+    def test_game_colours_are_bgr(self):
+        self.assertEqual(gt.gm_colour(13461874), "#7269cd")
+        self.assertEqual(gt.gm_colour(18687), "#ff4800")
+        self.assertIsNone(gt.gm_colour(None))
+
+    def test_the_table_says_how_each_stat_line_reads(self):
+        entries = gt.tooltip_table_entries(TABLE)
+        self.assertEqual(sorted(entries), [28, 34, 51, 152, 203, 250], "header lines are not stat lines")
+        self.assertEqual(entries[28]["label"], "Enhanced Damage", "the first call of a stat is its line")
+        text = lambda key, value: (lambda g: (g["value"], g["label"], g["valueFirst"]))(
+            gt.table_line_text(entries[key], value))
+        self.assertEqual(text(28, 449), ("+449%", "Enhanced Damage", True))
+        self.assertEqual(text(28, 2.5), ("+2.50%", "Enhanced Damage", True), "two decimals, as the game prints")
+        self.assertEqual(text(51, -3), ("-3", "to All Attributes", True))
+        self.assertEqual(text(152, 25), ("-25%", "to All Enemy Resistances", True), "a negated line")
+        self.assertEqual(text(250, 35), ("35%", "Ailment damage increased by", False), "label first: no sign")
+        self.assertEqual(text(34, 0.4), ("+40", "to Strength (Based on Level)", True), "per level, at level 100")
+        self.assertEqual(gt.table_line_text(entries[34], 0.4, level=50)["value"], "+20")
+        self.assertEqual(entries[203]["color"], "#ff4800")
+
+    def model(self, stats, **kwargs):
+        offline = VerifiedModelTests().offline()
+        offline["stats"].append({"statKey": 29, "label": "Enhanced Defense", "value": 250, "minimum": 200,
+                                 "maximum": 300, "percent": True})
+        return gt.build_verified_model(offline, VerifiedModelTests().match(stats), semantics=FakeSemantics(),
+                                       **kwargs)
+
+    def test_without_a_drawing_the_table_gives_every_line_its_game_text_and_place(self):
+        model = self.model({"154": 36.0, "34": 0.4, "250": 35.0, "51": 3.0, "203": 12.0, "202": 182.0,
+                            "28": 449.0}, table=gt.tooltip_table_entries(TABLE))
+        order = [line["statKey"] for line in model["stats"]]
+        self.assertEqual(order, [154, 28, 203, 51, 250, 34], "header first, then the table's order")
+        lines = {line["statKey"]: line for line in model["stats"]}
+        grant = lines[203]["game"]
+        self.assertEqual((grant["value"], grant["label"], grant["color"]), ("+12", "to Frost Nova", "#ff4800"),
+                         "a skill grant is one line named after its skill")
+        self.assertIn(202, {line["statKey"] for line in model["internalStats"]})
+        self.assertNotIn("game", lines[154])
+        self.assertEqual(model["calculation"]["textSource"], "table")
+        self.assertFalse(model["calculation"]["textExact"])
+        self.assertIsNone(model["gameText"])
+
+    def test_zero_lines_are_not_drawn_and_class_skills_name_their_class(self):
+        # Measured on 7,628 tooltips the game drew: "+3 to All Skills (Illusionist)",
+        # "+16 to Omnislash (Samurai)", and no line for a 0.
+        table = gt.tooltip_table_entries(TABLE + [table_call(201, "to All Skills", 3, 8),
+                                                  table_call(225, "to Fire Skills", 3, 8)])
+        model = self.model({"201": 3.0, "21": 3.0, "202": 182.0, "203": 12.0, "204": 3.0, "225": 2.0, "51": 0.0},
+                           table=table)
+        lines = {line["statKey"]: line for line in model["stats"]}
+        self.assertEqual(lines[201]["game"]["label"], "to All Skills (Viking)")
+        self.assertEqual(lines[225]["game"]["label"], "to Fire Skills (Viking)")
+        self.assertEqual(lines[203]["game"]["label"], "to Frost Nova (Viking)")
+        self.assertEqual(set(lines), {201, 203, 225}, "the skill, the classes and the 0 do not stand alone")
+        self.assertTrue({21, 202, 204, 51} <= {line["statKey"] for line in model["internalStats"]})
+
+    def test_relic_skills_take_their_names_from_the_games_translations(self):
+        folder = Path(tempfile.mkdtemp())
+        try:
+            (folder / "translationsRelic.csv").write_text(
+                "[Relics]|en|fi\ntalent_name_relicMeatHook|Meat Hook|Lihakoukku\ndesc_x|y|z\n", encoding="utf-8")
+            names = gt.talent_names(folder)
+            self.assertEqual(names, {"relicMeatHook": "Meat Hook"})
+            self.assertEqual(gt.talent_names(None), {})
+            table = gt.tooltip_table_entries(TABLE)
+            named = self.model({"202": 500.0, "203": 2.0}, table=table, talent_names=names)
+            self.assertEqual({line["statKey"]: line for line in named["stats"]}[203]["game"]["label"], "to Meat Hook")
+            bare = self.model({"202": 500.0, "203": 2.0}, table=table)
+            self.assertEqual({line["statKey"]: line for line in bare["stats"]}[203]["game"]["label"], "to relicMeatHook")
+        finally:
+            shutil.rmtree(folder, ignore_errors=True)
+
+    def test_the_games_own_drawing_is_the_tooltip(self):
+        model = self.model({"154": 36.0, "29": 264.0}, tooltip=CAPTURED, table=gt.tooltip_table_entries(TABLE))
+        self.assertEqual(self.texts(model["gameText"]["rows"])[4], "+264% Enhanced Defense")
+        self.assertEqual(model["gameText"]["recordedAt"], 1790000000000)
+        self.assertTrue(model["calculation"]["textExact"])
+        self.assertEqual(model["calculation"]["textSource"], "game")
+
+    def test_drawn_tooltips_are_packed_and_listed_per_build(self):
+        folder = Path(tempfile.mkdtemp())
+        try:
+            store = gt.TruthStore(folder / "truth.sqlite3")
+            journal = folder / "journal"
+            journal.mkdir()
+            record = {"v": 1, "kind": "tooltip", "build": BUILD, "t": 5, "ts": "212409236228", "hash": "h",
+                      "req": "1-a", "args": [1, 2, 1, None], "rows": CAPTURED["rows"], "stats": CAPTURED["stats"]}
+            (journal / "live.ndjson").write_text(json.dumps(record) + "\n", encoding="utf-8")
+            store.ingest_journal_dir(journal)
+            raw = store._connection().execute("SELECT rows_json FROM tooltips").fetchone()[0]
+            self.assertIsInstance(raw, bytes, "rows are kept packed")
+            self.assertLess(len(raw), len(json.dumps(CAPTURED["rows"])))
+            self.assertEqual(store.tooltip("212409236228", "h", BUILD)["rows"], CAPTURED["rows"])
+            store._connection().execute(
+                "INSERT INTO tooltips(ts, hash, build, recorded_at, args_json, rows_json, stats_json) "
+                "VALUES ('5', 'x', ?, 1, '[]', '[{\"fn\":\"draw_text\"}]', '[]')", (BUILD,))
+            self.assertEqual(store.tooltip("5", "x", BUILD)["rows"], [{"fn": "draw_text"}], "text from before packing")
+            self.assertEqual(store.tooltip_keys(BUILD), {("212409236228", "h"), ("5", "x")})
+            self.assertEqual(store.tooltip_keys("pe-other"), set())
+            store.close()
+        finally:
+            shutil.rmtree(folder, ignore_errors=True)
+
+    def test_a_drawing_is_tied_to_the_content_of_the_item_the_game_built_for_it(self):
+        # The game gives some items a new itemDataHash each time it builds them:
+        # the store keeps the content once, under the hash it saw first.
+        folder = Path(tempfile.mkdtemp())
+        try:
+            store = gt.TruthStore(folder / "truth.sqlite3")
+            journal = folder / "journal"
+            journal.mkdir()
+            drawing = lambda ts, hash_text, req="1-a": json.dumps(
+                {"v": 1, "kind": "tooltip", "build": BUILD, "t": 6, "ts": ts, "hash": hash_text, "req": req,
+                 "args": [], "rows": [{"fn": "draw_text", "s": -1, "c": 0, "ha": 1, "a": [0, 8, ts + hash_text]}],
+                 "stats": []}) + "\n"
+            progress = json.dumps({"v": 1, "kind": "tipdraw", "req": "1-a", "build": BUILD, "t": 7, "total": 3,
+                                   "done": 1, "ok": 1, "failed": 0, "rejected": 0, "finished": False}) + "\n"
+            item = lambda ts, hash_text: json.dumps({**json.loads(journal_line(ts, src="live")), "hash": hash_text}) + "\n"
+            (journal / "live-x-1.ndjson").write_text(
+                item("11", "first") + item("11", "second") + drawing("11", "second")    # tied, though kept as "first"
+                + item("22", "first") + progress + drawing("22", "second")             # a line between: not tied
+                + item("33", "first") + drawing("33", "second", req=None)              # the player's own hover
+                + item("44", "first"), encoding="utf-8")
+            (journal / "live-x-2.ndjson").write_text(drawing("44", "second"), encoding="utf-8")   # the next part
+            store.ingest_journal_dir(journal)
+            key = lambda ts: store.lookup(f"0-0-{ts}-8", {"a": 107725, "b": 2, "c": 0, "j": 0},
+                                          current_build=BUILD).record
+            first = key("11")
+            self.assertEqual(first["hash"], "first", "the content is kept once")
+            self.assertEqual(store.tooltip("11", first["hash"], BUILD, first["contentKey"])["rows"][0]["a"][2], "11second")
+            self.assertIsNone(store.tooltip("11", "first", BUILD), "the hash alone does not reach it")
+            self.assertIsNone(store.tooltip("22", "first", BUILD, key("22")["contentKey"]))
+            self.assertIsNone(store.tooltip("33", "first", BUILD, key("33")["contentKey"]))
+            self.assertEqual(store.tooltip("33", "second", BUILD)["rows"][0]["a"][2], "33second",
+                             "a hover is found by the hash it was drawn with")
+            self.assertEqual(store.tooltip("44", "first", BUILD, key("44")["contentKey"])["rows"][0]["a"][2], "44second",
+                             "a journal's parts continue each other")
+            keys = store.tooltip_keys(BUILD)
+            self.assertIn(("11", "#" + first["contentKey"]), keys)
+            self.assertNotIn(("22", "#" + key("22")["contentKey"]), keys)
+            store.close()
+        finally:
+            shutil.rmtree(folder, ignore_errors=True)
+
+    def test_any_hash_the_same_content_came_with_reaches_its_drawing(self):
+        # The player loads the item (a new hash, the same content: kept as an
+        # alias), then hovers it: that drawing belongs to the record kept earlier.
+        folder = Path(tempfile.mkdtemp())
+        try:
+            store = gt.TruthStore(folder / "truth.sqlite3")
+            journal = folder / "journal"
+            journal.mkdir()
+            item = lambda hash_text, **changes: json.dumps(
+                {**json.loads(journal_line("55", src="live", **changes)), "hash": hash_text}) + "\n"
+            hover = json.dumps({"v": 1, "kind": "tooltip", "build": BUILD, "t": 9, "ts": "55", "hash": "later",
+                                "args": [], "rows": [{"fn": "draw_text", "s": -1, "c": 0, "ha": 1, "a": [0, 8, "x"]}],
+                                "stats": []}) + "\n"
+            (journal / "live-a-1.ndjson").write_text(item("first"), encoding="utf-8")
+            another_item = {"a": 107726.0, "b": 2.0, "c": 0.0, "j": 0.0}   # the same timestamp, another item
+            (journal / "live-b-1.ndjson").write_text(
+                item("later") + item("other", definition=another_item) + hover, encoding="utf-8")
+            store.ingest_journal_dir(journal)
+            record = store.lookup("0-0-55-8", {"a": 107725, "b": 2, "c": 0, "j": 0}, current_build=BUILD).record
+            self.assertEqual(record["hash"], "first")
+            self.assertEqual(store.tooltip("55", "first", BUILD, record["contentKey"])["rows"][0]["a"][2], "x")
+            self.assertIn(("55", "#" + record["contentKey"]), store.tooltip_keys(BUILD))
+            aliases = store._connection().execute("SELECT hash FROM hash_aliases").fetchall()
+            self.assertEqual([row[0] for row in aliases], ["later"], "a new content is a record, not an alias")
+            store.close()
+        finally:
+            shutil.rmtree(folder, ignore_errors=True)
+
+    def test_journals_read_before_drawings_were_tied_are_read_again_once(self):
+        folder = Path(tempfile.mkdtemp())
+        try:
+            path = folder / "truth.sqlite3"
+            old = sqlite3.connect(str(path))
+            old.executescript(
+                """CREATE TABLE tooltips(ts TEXT NOT NULL, hash TEXT NOT NULL, build TEXT NOT NULL,
+                       recorded_at INTEGER NOT NULL, args_json TEXT NOT NULL, rows_json TEXT NOT NULL,
+                       stats_json TEXT NOT NULL, record_hash TEXT, PRIMARY KEY(ts, hash, build));
+                   CREATE TABLE sources(path TEXT PRIMARY KEY, size INTEGER NOT NULL, mtime_ns INTEGER NOT NULL,
+                       offset INTEGER NOT NULL);
+                   INSERT INTO sources VALUES('C:\\x\\itemtruth\\journal\\live-1.ndjson', 5, 5, 5);
+                   INSERT INTO sources VALUES('C:\\x\\afk\\spool\\a_claim.ndjson', 5, 5, 5);""")
+            old.commit()
+            old.close()
+            store = gt.TruthStore(path)
+            self.assertEqual([row[0] for row in store._connection().execute("SELECT path FROM sources")],
+                             ["C:\\x\\afk\\spool\\a_claim.ndjson"])
+            columns = {row[1] for row in store._connection().execute("PRAGMA table_info(tooltips)")}
+            self.assertIn("record_key", columns)
+            self.assertNotIn("record_hash", columns, "a development version's column is dropped")
+            store.close()
+            again = gt.TruthStore(path)
+            again._connection().execute("INSERT INTO sources VALUES('C:\\x\\itemtruth\\journal\\live-2.ndjson', 1, 1, 1)")
+            again.close()
+            third = gt.TruthStore(path)
+            self.assertEqual(len(third._connection().execute("SELECT * FROM sources").fetchall()), 2, "only once")
+            third.close()
+        finally:
+            shutil.rmtree(folder, ignore_errors=True)
+
+    def test_the_store_parses_a_table_once_per_recording(self):
+        folder = Path(tempfile.mkdtemp())
+        try:
+            store = gt.TruthStore(folder / "truth.sqlite3")
+            journal = folder / "journal"
+            journal.mkdir()
+            line = lambda t, label: json.dumps({"v": 1, "kind": "tooltip-table", "build": BUILD, "t": t,
+                                                "stats": [table_call(28, label, 2, 8)]}) + "\n"
+            (journal / "a.ndjson").write_text(line(3, "Enhanced Damage"), encoding="utf-8")
+            store.ingest_journal_dir(journal)
+            first = store.table_entries(BUILD)
+            self.assertEqual(first[28]["label"], "Enhanced Damage")
+            self.assertIs(store.table_entries(BUILD), first)
+            (journal / "b.ndjson").write_text(line(9, "Enhanced Damage (new)"), encoding="utf-8")
+            store.ingest_journal_dir(journal)
+            self.assertEqual(store.table_entries(BUILD)[28]["label"], "Enhanced Damage (new)")
+            self.assertEqual(store.table_entries("pe-other"), {})
+            store.close()
+        finally:
+            shutil.rmtree(folder, ignore_errors=True)
 
 
 class CaptureTests(unittest.TestCase):
@@ -481,6 +887,8 @@ class EmbeddedTooltipTests(unittest.TestCase):
         parts = []
         for pattern in (r"function esc\(s\)\{[^\n]+", r"const TOOLTIP_RARITIES=[^\n]+",
                         r"function tooltipRarityClass\([^\n]+", r"function tooltipLineKey\(line,index\)\{.*?\n\}",
+                        r"function gameColor\([^\n]+", r"function renderGameTextRows\(model\)\{.*?\n\}",
+                        r"function renderTooltipLines\(model,options\)\{.*?\n\}",
                         r"function renderGameTooltip\(model,options=\{\}\)\{.*?\n\}"):
             found = re.search(pattern, self.html, re.DOTALL)
             self.assertIsNotNone(found, pattern)
@@ -509,6 +917,40 @@ class EmbeddedTooltipTests(unittest.TestCase):
         self.assertIn("Estimate &middot; not yet seen in the game", html)
         self.assertIn("<b>ESTIMATE</b>", html)
         self.assertNotIn("Game verified", html)
+
+    def test_the_games_drawing_is_shown_row_by_row_in_its_colours(self):
+        model = GameTextTests().model({"154": 36.0, "29": 264.0}, tooltip=CAPTURED)
+        html = self.render(model)
+        self.assertIn('<div class="gtt-row gtt-name"><span style="color:#0ce11c">Belt of Tests</span></div>', html)
+        self.assertIn('<span style="color:#7269cd">+264%</span><span style="color:#7269cd"> Enhanced Defense</span>'
+                      '<small class="gtt-range">(200–300)</small>', html, "a rolled stat keeps its range hint")
+        self.assertIn('<div class="gtt-row gap block"><span style="color:#0ce11c">Forged in tests.</span></div>', html)
+        self.assertIn("Game verified &middot; game text", html)
+        self.assertNotIn("gtt-title", html, "the game's rows replace the editor's header")
+        self.assertNotIn("Show Information", html)
+
+    def test_a_line_drawn_with_its_own_range_gets_no_second_one(self):
+        model = GameTextTests().model({"29": 264.0}, tooltip={"rows": [
+            drawn(1901, 178, "+264%", "#7269cd", s=29), drawn(1976, 178, "Enhanced Defense", "#7269cd", s=29),
+            drawn(2200, 178, " [200-300]", "#808080", s=29)], "stats": [stat_call(178, 29, "Enhanced Defense", 2, 8)]})
+        html = self.render(model)
+        self.assertIn('<span style="color:#808080"> [200-300]</span></div>', html)
+        self.assertNotIn("gtt-range", html)
+
+    def test_the_table_gives_lines_the_games_text_before_the_game_draws_them(self):
+        model = GameTextTests().model({"28": 449.0, "250": 35.0}, table=gt.tooltip_table_entries(TABLE))
+        html = self.render(model)
+        self.assertIn('style="color:#7269cd">+449% Enhanced Damage<', html)
+        self.assertIn('style="color:#7269cd">Ailment damage increased by 35%<', html)
+        self.assertIn("Game verified &middot; game labels", html)
+        self.assertIn("gtt-title", html, "the header stays the editor's until the game draws the item")
+
+    def test_a_colour_from_a_record_is_never_markup(self):
+        model = GameTextTests().model({"29": 264.0}, tooltip={"rows": [
+            {"fn": "draw_text", "s": -1, "c": 0, "ha": 1, "a": [0, 8, "<b>x</b>"]}], "stats": []})
+        model["gameText"]["rows"][0]["parts"][0]["color"] = "red;background:url(x)"
+        html = self.render(model)
+        self.assertIn('<span style="color:inherit">&lt;b&gt;x&lt;/b&gt;</span>', html)
 
 
 if __name__ == "__main__":

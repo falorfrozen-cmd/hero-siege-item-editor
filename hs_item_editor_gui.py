@@ -1645,8 +1645,15 @@ def _current_game_build() -> tuple[str | None, float | None]:
             since = exe.stat().st_mtime
         except OSError:
             since = None
-    _GAME_BUILD_CACHE.update(at=now, value=(build, since))
+    _GAME_BUILD_CACHE.update(at=now, value=(build, since), exe=exe)
     return _GAME_BUILD_CACHE["value"]
+
+
+def _game_talent_names() -> dict:
+    """Talent names from the player's game's own translation files (cached)."""
+    _current_game_build()
+    exe = _GAME_BUILD_CACHE.get("exe")
+    return game_truth.talent_names(exe.parent if exe is not None else None)
 
 
 def _truth_match(item: dict):
@@ -1676,13 +1683,31 @@ def _with_game_truth(item: dict, model: dict, custom_name: str | None = None) ->
     match = _truth_match(item)
     if match is not None:
         try:
+            tooltip, table = _game_text_for(match)
             return game_truth.build_verified_model(
-                model, match, semantics=STAT_SEMANTICS, custom_name=custom_name
+                model, match, semantics=STAT_SEMANTICS, custom_name=custom_name,
+                tooltip=tooltip, table=table, talent_names=_game_talent_names(),
             )
         except Exception:
             pass
     build, _ = _current_game_build()
     return game_truth.mark_estimate(model, current_build=build)
+
+
+def _game_text_for(match) -> tuple[dict | None, dict]:
+    """The game's own drawing of this item's tooltip, if it has drawn it, and the
+    tooltip table (labels, formats, order) of the build that built the item, else
+    of the running build."""
+    store = _truth_store()
+    record = match.record
+    if store is None:
+        return None, {}
+    try:
+        tooltip = store.tooltip(record.get("ts"), record.get("hash"), record.get("build"), record.get("contentKey"))
+        table = store.table_entries(record.get("build")) or store.table_entries(match.current_build)
+    except (sqlite3.Error, ValueError, TypeError):
+        return None, {}
+    return tooltip, table
 
 
 def _owned_item_payloads():
@@ -1744,20 +1769,26 @@ _TRUTH_COVERAGE_LOCK = threading.Lock()
 
 
 def _truth_coverage(force: bool = False) -> dict:
-    """Per place: items, how many the game verified on the running build, and
-    the (key, data) of those it has not. Cached for a minute (about 1-2 s of
-    work for a large Vault)."""
+    """Per place: items, how many the game verified on the running build and how
+    many of those it has drawn a tooltip for; the (key, data) of the items it has
+    not verified, and of the verified ones it has not drawn. Cached for a minute
+    (about 1-2 s of work for a large Vault)."""
     with _TRUTH_COVERAGE_LOCK:
         now = time.monotonic()
         if not force and _TRUTH_COVERAGE["value"] is not None and now - _TRUTH_COVERAGE["at"] < 60.0:
             return _TRUTH_COVERAGE["value"]
         store = _truth_store()
         build, _ = _current_game_build()
+        try:
+            drawings = store.tooltip_keys(build) if store is not None else set()
+        except sqlite3.Error:
+            drawings = set()
         places: dict = {}
         missing: list = []
+        undrawn: list = []
         for place, key, data in _owned_item_payloads():
             group = "Characters" if place.startswith("character ") else place
-            row = places.setdefault(group, {"items": 0, "verified": 0, "unmatchable": 0})
+            row = places.setdefault(group, {"items": 0, "verified": 0, "drawn": 0, "unmatchable": 0})
             row["items"] += 1
             if game_truth.timestamp_of_key(key) is None:
                 row["unmatchable"] += 1
@@ -1771,9 +1802,14 @@ def _truth_coverage(force: bool = False) -> dict:
                     match = None
             if match is not None and match.build_status == "current":
                 row["verified"] += 1
+                ts = match.record.get("ts")
+                if (ts, match.record.get("hash")) in drawings or (ts, "#" + str(match.record.get("contentKey"))) in drawings:
+                    row["drawn"] += 1
+                else:
+                    undrawn.append((key, data))
             else:
                 missing.append((key, data))
-        value = {"places": places, "missing": missing, "build": build}
+        value = {"places": places, "missing": missing, "undrawn": undrawn, "build": build}
         _TRUTH_COVERAGE.update(at=time.monotonic(), value=value)
         return value
 
@@ -1848,7 +1884,8 @@ def op_truth_clear_stopped(body: dict) -> dict:
 
 
 def _truth_auto_check_once() -> str | None:
-    """Queue the unverified items for the game while it runs; returns the request id."""
+    """Queue the unverified items for the game while it runs; returns the request id.
+    Once every item is verified, queue the undrawn ones for the game to draw."""
     capture = game_truth.capture_status(ITEM_TRUTH_DIR)
     if not capture["requested"] or not capture["reporting"]:
         return None
@@ -1865,9 +1902,73 @@ def _truth_auto_check_once() -> str | None:
             _TRUTH_GIVEN_UP.update(key for key in last["keys"] if key in still)
     missing = [(key, data) for key, data in coverage["missing"] if key not in _TRUTH_GIVEN_UP]
     if not missing:
-        return None
+        return _truth_auto_draw_once(coverage, store)
     request_id, _ = _queue_truth_check(missing, "auto")
     return request_id
+
+
+# The drawing request this editor last queued, and items a finished drawing did
+# not cover (never asked for again automatically in this session).
+_TRUTH_LAST_DRAWING: dict = {"id": None, "items": 0, "keys": frozenset()}
+_TRUTH_DRAW_GIVEN_UP: set = set()
+
+
+def _truth_auto_draw_once(coverage: dict, store) -> str | None:
+    """Ask the game to draw the tooltips of verified items it has not drawn.
+
+    The game draws them only while the player has an item tooltip open, so a
+    request often outlives a game session and comes back stopped. The item it
+    stopped on gets a strike (the game may have closed on it); two strikes and it
+    is not asked for again on this build. The rest are asked for again. An item
+    a finished request drew but the editor still cannot tie to its record is not
+    asked for again in this session."""
+    build = coverage.get("build")
+    if store is None or not build:
+        return None
+    files = game_truth.request_files(ITEM_TRUTH_DIR, "tipdraw")
+    undrawn_keys = {key for key, _ in coverage["undrawn"]}
+    last = _TRUTH_LAST_DRAWING
+    if last.get("id"):
+        progress = store.evaluation(last["id"])
+        if progress and progress["finished"]:
+            _TRUTH_DRAW_GIVEN_UP.update(key for key in last.get("keys") or () if key in undrawn_keys)
+    if files["stopped"]:
+        suspects = []
+        for request_id in files["stopped"]:
+            keys = game_truth.stopped_request_keys(ITEM_TRUTH_DIR, request_id)
+            suspect = next((key for key in keys if key in undrawn_keys), None)
+            if suspect is not None:
+                suspects.append(suspect)
+        store.strike_drawing(build, suspects)
+        game_truth.clear_stopped_requests(ITEM_TRUTH_DIR, "tipdraw")
+    if files["waiting"] or files["running"]:
+        return None
+    strikes = store.drawing_strikes(build)
+    wanted = [(key, data) for key, data in coverage["undrawn"]
+              if strikes.get(key, 0) < 2 and key not in _TRUTH_DRAW_GIVEN_UP]
+    # Items with one strike go last, so an innocent one is not first again.
+    wanted.sort(key=lambda entry: strikes.get(entry[0], 0))
+    if not wanted:
+        return None
+    request_id, count = game_truth.write_eval_request(ITEM_TRUTH_DIR, wanted, kind="tipdraw")
+    if request_id:
+        _TRUTH_LAST_DRAWING.update(id=request_id, items=count, keys=frozenset(key for key, _ in wanted))
+    return request_id
+
+
+def _truth_drawing_state(store) -> dict | None:
+    files = game_truth.request_files(ITEM_TRUTH_DIR, "tipdraw")
+    request_id = (files["running"] or files["waiting"] or [None])[-1] or _TRUTH_LAST_DRAWING.get("id")
+    if not request_id:
+        return None
+    progress = store.evaluation(request_id) if store is not None else None
+    if request_id in files["running"]:
+        state = "running"
+    elif request_id in files["waiting"]:
+        state = "waiting"
+    else:
+        state = "done" if progress and progress["finished"] else None
+    return {"state": state, "request": request_id, "progress": progress}
 
 
 def _truth_auto_loop() -> None:
@@ -1891,7 +1992,8 @@ def game_truth_status() -> dict:
     if GAME_TRUTH_ACTIVE:
         try:
             value = _truth_coverage()
-            coverage = {"places": value["places"], "missing": len(value["missing"])}
+            coverage = {"places": value["places"], "missing": len(value["missing"]),
+                        "undrawn": len(value["undrawn"])}
         except Exception as exc:
             coverage = {"error": str(exc)}
     ingestor = _TRUTH_INGESTOR
@@ -1902,6 +2004,7 @@ def game_truth_status() -> dict:
         "store": counts,
         "coverage": coverage,
         "evaluation": _truth_evaluation_state(store) if GAME_TRUTH_ACTIVE else None,
+        "drawing": _truth_drawing_state(store) if GAME_TRUTH_ACTIVE else None,
         "ingest": None if ingestor is None else {
             "lastError": ingestor.last_error,
             "last": dict(vars(ingestor.last_result)),
@@ -9870,6 +9973,10 @@ button.act:hover{background:#6f421a}
 .gtt-source{margin-top:7px;padding:3px 6px;border-radius:4px;font-size:9px;font-weight:800;letter-spacing:.6px;text-align:center;text-transform:uppercase}
 .gtt-source.verified{background:rgba(64,190,120,.14);color:#78df98}.gtt-source.older{background:rgba(150,160,175,.14);color:#aeb8c6}.gtt-source.estimate{background:rgba(255,166,79,.13);color:#ffb46e}
 .gtt-internal{padding:2px 5px;color:#6f7d92;font-size:9px}
+.gtt-game{padding:1px 2px 0;color:#dce6f2;font-size:12px;line-height:1.45;text-align:center;text-shadow:0 1px 2px #000,0 0 3px #000}
+.gtt-row.gap{margin-top:8px}.gtt-row.block{font-size:11px;line-height:1.35}.gtt-row.gtt-name{font-size:15px;font-weight:850;line-height:1.25}
+.gtt-stat.gtt-gameline{display:block;text-align:center;font-size:11.5px;text-shadow:0 1px 2px #000}
+.gtt-source.game-text{background:rgba(64,190,120,.14);color:#78df98}.gtt-source.game-labels{background:rgba(120,150,210,.14);color:#a9c4ff}
 .truth-row{display:flex;gap:4px;align-items:stretch;margin-top:4px}
 .truth-pill{flex:1;min-width:0;cursor:pointer;text-align:left;font:inherit;background:transparent}
 .truth-mini{flex:none;padding:0 6px;border:1px solid #3a4658;border-radius:4px;background:transparent;color:#8d9bb0;font:inherit;font-size:9px;cursor:pointer}
@@ -10086,7 +10193,7 @@ async function boot(){
   rollStatus.style.color=allCapabilitiesReady?'#74ee98':(anyCapabilityReady?'#ffd080':'#ff9b83');
   document.getElementById('status').textContent=ov.gameRunning?'GAME RUNNING - VIEW ONLY, WRITING LOCKED':'GAME CLOSED - EDITING ENABLED';
   document.getElementById('status').className=ov.gameRunning?'warn':'';
-  (function truthLoop(){refreshTruthStatus().finally(()=>setTimeout(truthLoop,TRUTH_LAST_STATE==='running'||TRUTH_LAST_STATE==='waiting'?3000:15000))})();
+  (function truthLoop(){refreshTruthStatus().finally(()=>setTimeout(truthLoop,TRUTH_LAST_STATE==='running'||TRUTH_LAST_STATE==='waiting'||TRUTH_LAST_DRAWING==='running'?3000:15000))})();
   function renderChars(list){const cd=document.getElementById('chars');if(!cd)return;const selected=cd.querySelector('.charbtn.sel')?.dataset.slot;cd.innerHTML='';
     list.forEach(c=>{const b=document.createElement('button');b.className='charbtn'+(String(c.slot)===selected?' sel':'');
       b.dataset.slot=c.slot;
@@ -10515,13 +10622,13 @@ async function openSkillTargetEditor(target,key,selector){
   search.focus();
 }
 // ---- game truth status ----
-let TRUTH_LAST_STATE=null;
+let TRUTH_LAST_STATE=null,TRUTH_LAST_DRAWING=null,TRUTH_LAST_DRAWN=null;
 function truthCoverageTotals(s){
   const places=s.coverage&&s.coverage.places&&typeof s.coverage.places==='object'?s.coverage.places:{};
-  let items=0,verified=0;const parts=[];
-  ['Infinite Vault','Shared Stash','Characters'].forEach(name=>{const p=places[name];if(!p)return;items+=Number(p.items)||0;verified+=Number(p.verified)||0;
-    parts.push(`${name}: ${(Number(p.verified)||0).toLocaleString()} / ${(Number(p.items)||0).toLocaleString()}`)});
-  return {items,verified,parts,missing:Number(s.coverage&&s.coverage.missing)||0};
+  let items=0,verified=0,drawn=0;const parts=[];
+  ['Infinite Vault','Shared Stash','Characters'].forEach(name=>{const p=places[name];if(!p)return;items+=Number(p.items)||0;verified+=Number(p.verified)||0;drawn+=Number(p.drawn)||0;
+    parts.push(`${name}: ${(Number(p.verified)||0).toLocaleString()} / ${(Number(p.items)||0).toLocaleString()} verified, ${(Number(p.drawn)||0).toLocaleString()} with game text`)});
+  return {items,verified,drawn,parts,missing:Number(s.coverage&&s.coverage.missing)||0,undrawn:Number(s.coverage&&s.coverage.undrawn)||0};
 }
 async function refreshTruthStatus(){
   const pill=document.getElementById('truthstatus'),toggle=document.getElementById('truthcapture');if(!pill)return;
@@ -10530,7 +10637,7 @@ async function refreshTruthStatus(){
   pill.hidden=false;
   const capture=s.capture||{},fp=capture.forgepact||null,on=!!capture.requested,live=!!capture.reporting;
   const cov=truthCoverageTotals(s),ev=s.evaluation||null,progress=ev&&ev.progress?ev.progress:null;
-  const state=ev?ev.state:null;
+  const state=ev?ev.state:null,drawing=s.drawing||null,drawn=drawing&&drawing.progress?drawing.progress:null;
   let text,color='#74ee98',border='#3da55e',action=null;
   if(!on){text='GAME TRUTH · CAPTURE OFF';color='#ffd080';border='#a87329'}
   else if(state==='running'){const done=Number(progress&&progress.done)||0,total=Number(progress&&progress.total)||Number(ev.items)||0;
@@ -10538,13 +10645,18 @@ async function refreshTruthStatus(){
   else if(state==='waiting'){text=`&#10227; ${Number(ev.items||0).toLocaleString()} ITEMS QUEUED · START THE GAME`;color='#9fd0ff';border='#4f86b8'}
   else if(state==='stopped'){text='&#9888; THE LAST CHECK STOPPED · CLICK TO CLEAR';color='#ffb46e';border='#b8743b';action='clear'}
   else if(cov.missing>0){text=`&#10003; ${cov.verified.toLocaleString()} / ${cov.items.toLocaleString()} VERIFIED · CHECK ${cov.missing.toLocaleString()} WITH THE GAME`;action='verify'}
-  else text=`&#10003; ALL ${cov.items.toLocaleString()} ITEMS VERIFIED BY THE GAME`;
+  else if(cov.undrawn>0&&drawing&&drawing.state==='running'){
+    text=`&#10003; ALL ${cov.items.toLocaleString()} VERIFIED · GAME TEXT ${cov.drawn.toLocaleString()} / ${cov.verified.toLocaleString()} · KEEP AN ITEM TOOLTIP OPEN IN THE GAME`;color='#9fd0ff';border='#4f86b8'}
+  else if(cov.undrawn>0)text=`&#10003; ALL ${cov.items.toLocaleString()} VERIFIED · GAME TEXT ${cov.drawn.toLocaleString()} / ${cov.verified.toLocaleString()} · HOVER AN ITEM IN THE GAME`;
+  else text=`&#10003; ALL ${cov.items.toLocaleString()} ITEMS VERIFIED · GAME TEXT FOR EVERY ITEM`;
   pill.innerHTML=text;pill.style.color=color;pill.style.borderColor=border;
   pill.title=[
     'Tooltips show the values the game itself built.',
     ...cov.parts,
     s.currentBuildDate?`Game build: ${s.currentBuildDate}.`:'Game build: not found.',
     `An item the game has not built yet is shown as an estimate (${s.modelBuildDate} rules).`,
+    'Game text: the tooltip exactly as the game draws it. While an item tooltip is open in the game, the game also draws the tooltips of your other items in the background, a few per frame; until then an item shows the game\'s own line labels.',
+    drawn&&drawing.state==='running'?`Drawing now: ${(Number(drawn.done)||0).toLocaleString()} / ${(Number(drawn.total)||0).toLocaleString()}.`:'',
     on?(live?`ForgePact ${fp&&fp.forgepact?fp.forgepact+' ':''}is running: new items are recorded, and unverified ones are checked automatically.`
       :'Items are recorded and checked while the game runs (ForgePact 1.4.6 or newer).')
       :'Capture is off: nothing new is recorded or checked.',
@@ -10563,9 +10675,12 @@ async function refreshTruthStatus(){
       const r=await j('/api/truth/capture',{method:'POST',body:JSON.stringify({on:!on})});flash(r);refreshTruthStatus();
     };
   }
-  // A check just finished: the page's cached tooltips predate it.
-  if(TRUTH_LAST_STATE==='running'&&state==='done'){try{vaultTooltipCache.clear()}catch(error){}try{refresh()}catch(error){}}
-  TRUTH_LAST_STATE=state;
+  // A check or a drawing request just finished: the page's cached tooltips predate it.
+  const drawingState=drawing?drawing.state:null;
+  if((TRUTH_LAST_STATE==='running'&&state==='done')||(TRUTH_LAST_DRAWING==='running'&&drawingState!=='running')){
+    try{vaultTooltipCache.clear()}catch(error){}try{refresh()}catch(error){}
+  }else if(TRUTH_LAST_DRAWN!==null&&cov.drawn!==TRUTH_LAST_DRAWN){try{vaultTooltipCache.clear()}catch(error){}}
+  TRUTH_LAST_STATE=state;TRUTH_LAST_DRAWING=drawingState;TRUTH_LAST_DRAWN=cov.drawn;
 }
 // ---- item tooltip ----
 const TOOLTIP_RARITIES=new Set(['Satanic','Heroic','Angelic','Unholy','Runeword','Normal','Common','Superior','Rare','Legendary']);
@@ -10592,23 +10707,27 @@ function tooltipComparisonLayout(left,right){
   });
   return {keys,labels,differences:tooltipDifferenceKeys(left,right)};
 }
-function renderGameTooltip(model,options={}){
-  if(!model||typeof model!=='object')return '';
-  const item=model.item&&typeof model.item==='object'?model.item:{};
-  const calc=model.calculation&&typeof model.calculation==='object'?model.calculation:{};
-  const rarity=String(item.rarity||'?'),canonical=item.canonicalName||item.name||'Unknown item';
-  const custom=item.customName&&String(item.customName).trim()?String(item.customName).trim():'';
-  let h='<div class="game-tooltip">';
-  if(custom)h+=`<div class="gtt-alias">${esc(custom)}</div>`;
-  h+=`<div class="gtt-title r-${tooltipRarityClass(rarity)}">${esc(canonical)}</div>`;
-  const meta=[rarity,item.tier?`Tier ${item.tier}`:'',options.extra||''].filter(Boolean).map(esc).join(' &middot; ');
-  if(meta)h+=`<div class="gtt-type">${meta}</div>`;
-  if(item.requiredLevel)h+=`<div class="gtt-requirement">Requires Level ${esc(item.requiredLevel)}</div>`;
-  h+='<div class="gtt-rule"></div>';
-  const forged=model.customForge&&model.customForge.active?model.customForge:null;
-  if(forged)h+=`<div class="gtt-forged">CUSTOM FORGED · ${esc(forged.statCount)} runtime key${Number(forged.statCount)===1?'':'s'} · ${forged.keepNative?'native stats kept':'native stats replaced'}</div>`;
+// A colour the game drew with (#rrggbb from the game's own record), else the default.
+function gameColor(value){return /^#[0-9a-f]{6}$/i.test(String(value||''))?String(value):'inherit'}
+// The tooltip exactly as the game drew it: its rows, colours and section gaps.
+// Rows that draw a rolled stat get the editor's range hint after them.
+function renderGameTextRows(model){
+  const lines=new Map((Array.isArray(model.stats)?model.stats:[]).map(line=>[line&&line.statKey,line]));
+  let h='<div class="gtt-game">';
+  model.gameText.rows.forEach((row,index)=>{
+    if(!row||!Array.isArray(row.parts))return;
+    const parts=row.parts.map(part=>`<span style="color:${gameColor(part&&part.color)}">${esc(part&&part.text||'')}</span>`).join('');
+    const line=row.stat!=null&&!row.ranged?lines.get(row.stat):null;   // an ALT-view row shows the game's own range
+    const range=line&&line.rolled&&line.minimum!=null&&line.maximum!=null?`<small class="gtt-range">(${esc(line.minimum)}–${esc(line.maximum)})</small>`:'';
+    const classes=['gtt-row'];if(index===0)classes.push('gtt-name');if(row.gap)classes.push('gap');if(row.block)classes.push('block');
+    h+=`<div class="${classes.join(' ')}">${parts}${range}</div>`;
+  });
+  return h+'</div>';
+}
+// The stat lines one by one (the game has not drawn this tooltip, or two are compared).
+function renderTooltipLines(model,options){
   const nativeStats=Array.isArray(model.stats)?model.stats:[];
-  let stats=nativeStats;
+  let stats=nativeStats,h='';
   if(options.comparison&&Array.isArray(options.comparison.keys)){
     const own=new Map(nativeStats.map((line,index)=>[tooltipLineKey(line,index),line]));
     stats=options.comparison.keys.map(key=>own.get(key)||{
@@ -10617,34 +10736,63 @@ function renderGameTooltip(model,options={}){
     });
   }
   const differences=options.differences instanceof Set?options.differences:new Set();
-  if(stats.length){
-    stats.forEach((line,index)=>{
-      if(!line||typeof line!=='object')return;
-      const key=tooltipLineKey(line,index),value=line.formattedValue??line.sourceRange??'?';
-      const classes=['gtt-stat'];
-      if(line.confidence==='unresolved'||value==='?')classes.push('unresolved');
-      if(line.missing||line.confidence==='missing')classes.push('missing');
-      if(line.role==='affix')classes.push('gtt-affix');
-      if(differences.has(key))classes.push('gtt-diff');
-      const range=line.rolled&&line.minimum!=null&&line.maximum!=null?`<small class="gtt-range">(${esc(line.minimum)}–${esc(line.maximum)})</small>`:'';
-      h+=`<div class="${classes.join(' ')}"><b>${esc(value)}</b><span>${esc(line.label||'Unknown stat')}${range}</span></div>`;
-    });
-  }else h+='<div class="gtt-empty">No displayed stat lines were resolved.</div>';
+  if(!stats.length)return '<div class="gtt-empty">No displayed stat lines were resolved.</div>';
+  stats.forEach((line,index)=>{
+    if(!line||typeof line!=='object')return;
+    const key=tooltipLineKey(line,index),value=line.formattedValue??line.sourceRange??'?';
+    const classes=['gtt-stat'];
+    if(line.confidence==='unresolved'||value==='?')classes.push('unresolved');
+    if(line.missing||line.confidence==='missing')classes.push('missing');
+    if(line.role==='affix')classes.push('gtt-affix');
+    if(differences.has(key))classes.push('gtt-diff');
+    const range=line.rolled&&line.minimum!=null&&line.maximum!=null?`<small class="gtt-range">(${esc(line.minimum)}–${esc(line.maximum)})</small>`:'';
+    const game=line.game&&typeof line.game==='object'?line.game:null;
+    if(game){
+      // The game's own label, value text, colour and order for this line.
+      classes.push('gtt-gameline');
+      const text=game.valueFirst?`${game.value} ${game.label}`:`${game.label} ${game.value}`;
+      h+=`<div class="${classes.join(' ')}" style="color:${gameColor(game.color)}">${esc(text)}${range}</div>`;
+    }else h+=`<div class="${classes.join(' ')}"><b>${esc(value)}</b><span>${esc(line.label||'Unknown stat')}${range}</span></div>`;
+  });
+  return h;
+}
+function renderGameTooltip(model,options={}){
+  if(!model||typeof model!=='object')return '';
+  const item=model.item&&typeof model.item==='object'?model.item:{};
+  const calc=model.calculation&&typeof model.calculation==='object'?model.calculation:{};
+  const rarity=String(item.rarity||'?'),canonical=item.canonicalName||item.name||'Unknown item';
+  const custom=item.customName&&String(item.customName).trim()?String(item.customName).trim():'';
+  const gameText=!options.comparison&&model.gameText&&Array.isArray(model.gameText.rows)&&model.gameText.rows.length?model.gameText:null;
+  let h='<div class="game-tooltip">';
+  if(custom)h+=`<div class="gtt-alias">${esc(custom)}</div>`;
+  const forged=model.customForge&&model.customForge.active?model.customForge:null;
+  const forgedNote=forged?`<div class="gtt-forged">CUSTOM FORGED · ${esc(forged.statCount)} runtime key${Number(forged.statCount)===1?'':'s'} · ${forged.keepNative?'native stats kept':'native stats replaced'}</div>`:'';
+  if(gameText){
+    h+=forgedNote+renderGameTextRows(model);
+    if(options.extra)h+=`<div class="gtt-type">${esc(options.extra)}</div>`;
+  }else{
+    h+=`<div class="gtt-title r-${tooltipRarityClass(rarity)}">${esc(canonical)}</div>`;
+    const meta=[rarity,item.tier?`Tier ${item.tier}`:'',options.extra||''].filter(Boolean).map(esc).join(' &middot; ');
+    if(meta)h+=`<div class="gtt-type">${meta}</div>`;
+    if(item.requiredLevel)h+=`<div class="gtt-requirement">Requires Level ${esc(item.requiredLevel)}</div>`;
+    h+='<div class="gtt-rule"></div>'+forgedNote+renderTooltipLines(model,options);
+  }
   const internal=Array.isArray(model.internalStats)?model.internalStats:[];
   if(internal.length)h+=`<div class="gtt-internal advanced-only">Internal values (not drawn by the game): ${internal.map(line=>`${esc(line.label)} ${esc(line.formattedValue??line.value)}`).join(' &middot; ')}</div>`;
+  const detailClass=gameText?' advanced-only':'';
   const identities=Array.isArray(model.identities)?model.identities:[];
   identities.forEach(identity=>{
     if(!identity||typeof identity!=='object')return;
     const source=String(identity.source||''),label=source.includes('subskill')?'Subskill target':source.includes('damage_type')?'Damage type':source.includes('random_stat')?'Random stat identity':`Identity stat #${identity.statKey??'?'}`;
     const selected=identity.selectedName?String(identity.selectedName):(identity.selectedIdentity!=null?`#${identity.selectedIdentity}`:null);
     const details=[selected||'unresolved',identity.fixedValue!=null?`value ${identity.fixedValue}`:'',identity.attempts>1?`${identity.attempts} attempts`:''].filter(Boolean);
-    h+=`<div class="gtt-identity"><b>${esc(label)}</b> &middot; ${details.map(esc).join(' &middot; ')}</div>`;
+    h+=`<div class="gtt-identity${detailClass}"><b>${esc(label)}</b> &middot; ${details.map(esc).join(' &middot; ')}</div>`;
   });
   const sockets=Array.isArray(model.sockets)?model.sockets:[];
   sockets.forEach(socket=>{
     if(!socket||typeof socket!=='object')return;
     const details=socket.status==='decoded'?[`ID ${socket.baseId??'?'}`,socket.quantity!=null?`n=${socket.quantity}`:''].filter(Boolean):['unreadable payload'];
-    h+=`<div class="gtt-socket">Socket ${esc(socket.index??'?')} &middot; ${details.map(esc).join(' &middot; ')}</div>`;
+    h+=`<div class="gtt-socket${detailClass}">Socket ${esc(socket.index??'?')} &middot; ${details.map(esc).join(' &middot; ')}</div>`;
   });
   const exact=calc.numbersExact===true,quality=model.rollQuality&&typeof model.rollQuality==='object'?model.rollQuality:null;
   const seeds=model.seeds&&typeof model.seeds==='object'?Object.entries(model.seeds).map(([k,v])=>`${k}=${v}`).join(', '):'';
@@ -10654,8 +10802,15 @@ function renderGameTooltip(model,options={}){
   if(verified){
     const current=verification&&verification.status==='current';
     const when=verification&&Number(verification.recordedAt)>0?new Date(Number(verification.recordedAt)).toLocaleString():'';
-    const title=current?`Values the game itself built${when?' · '+when:''}`:(warnings[0]||'Recorded by the game on an older build');
-    h+=`<div class="gtt-source ${current?'verified':'older'}" title="${esc(title)}">${current?'&#10003; Game verified':'Game record &middot; older build'}</div>`;
+    const drawn=model.gameText&&Number(model.gameText.recordedAt)>0?new Date(Number(model.gameText.recordedAt)).toLocaleString():'';
+    if(current&&gameText){
+      h+=`<div class="gtt-source game-text" title="${esc(`The game drew this tooltip${drawn?' · '+drawn:''}; values the game itself built${when?' · '+when:''}`)}">&#10003; Game verified &middot; game text</div>`;
+    }else if(current&&calc.textSource==='table'){
+      h+=`<div class="gtt-source game-labels" title="${esc(`Values the game itself built${when?' · '+when:''}. Lines use the game's own labels, order and colours; the game has not drawn this item's tooltip yet, so the name, header and footer are the editor's.`)}">&#10003; Game verified &middot; game labels</div>`;
+    }else{
+      const title=current?`Values the game itself built${when?' · '+when:''}`:(warnings[0]||'Recorded by the game on an older build');
+      h+=`<div class="gtt-source ${current?'verified':'older'}" title="${esc(title)}">${current?'&#10003; Game verified':'Game record &middot; older build'}</div>`;
+    }
   }else if(estimate){
     h+=`<div class="gtt-source estimate" title="${esc(warnings[0]||'')}">Estimate &middot; not yet seen in the game</div>`;
   }
