@@ -388,8 +388,8 @@ class EvaluationRequestTests(unittest.TestCase):
             ("0-0-5-3", "not a dict"),
             ("0-0-6-3", {"a": 6, "b": 1, "c": 1, "j": 7, "s1": "eyJhIjoxfQ=="}),
         ]
-        request_id, count = gt.write_eval_request(self.folder, entries)
-        self.assertEqual(count, 2, "duplicates, placeholder keys and junk are left out")
+        request_id, written = gt.write_eval_request(self.folder, entries)
+        self.assertEqual(written, ["0-0-212409236228-8", "0-0-6-3"], "duplicates, placeholder keys and junk are left out")
         self.assertRegex(request_id, r"^\d{13}-[0-9a-f]{6}$")
         path = self.folder / "requests" / f"{request_id}.req"
         lines = path.read_text(encoding="utf-8").splitlines()
@@ -401,8 +401,18 @@ class EvaluationRequestTests(unittest.TestCase):
         self.assertEqual(gt.request_files(self.folder)["waiting"], [request_id])
 
     def test_nothing_to_ask_writes_nothing(self):
-        self.assertEqual(gt.write_eval_request(self.folder, []), (None, 0))
+        self.assertEqual(gt.write_eval_request(self.folder, []), (None, []))
         self.assertFalse((self.folder / "requests").exists())
+
+    def test_a_request_names_only_the_items_that_fit(self):
+        # The caller learns which items the game is asked about: the ones past the
+        # cap are not, and must not count as asked when the request finishes.
+        entries = [(f"0-0-{n}-3", {"a": n}) for n in (1, 2, 3)]
+        with mock.patch.object(gt, "MAX_REQUEST_ITEMS", 2):
+            request_id, written = gt.write_eval_request(self.folder, entries)
+        self.assertEqual(written, ["0-0-1-3", "0-0-2-3"])
+        lines = (self.folder / "requests" / f"{request_id}.req").read_text(encoding="utf-8").splitlines()
+        self.assertEqual([line.split("\t")[0] for line in lines], written)
 
     def test_request_states_follow_the_file_names(self):
         folder = self.folder / "requests"
@@ -414,8 +424,8 @@ class EvaluationRequestTests(unittest.TestCase):
         self.assertEqual(gt.request_files(self.folder)["stopped"], [])
 
     def test_drawing_requests_live_in_their_own_folder(self):
-        request_id, count = gt.write_eval_request(self.folder, [("0-0-6-3", {"a": 6})], kind="tipdraw")
-        self.assertEqual(count, 1)
+        request_id, written = gt.write_eval_request(self.folder, [("0-0-6-3", {"a": 6})], kind="tipdraw")
+        self.assertEqual(written, ["0-0-6-3"])
         self.assertTrue((self.folder / "tips" / f"{request_id}.req").is_file())
         self.assertFalse((self.folder / "requests").exists())
         self.assertEqual(gt.request_files(self.folder, "tipdraw")["waiting"], [request_id])

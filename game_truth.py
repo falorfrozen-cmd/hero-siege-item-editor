@@ -970,10 +970,13 @@ REQUEST_FOLDERS = {"eval": "requests", "tipdraw": "tips"}
 
 
 def write_eval_request(root: str | os.PathLike, entries: Iterable[tuple[str, Mapping[str, Any]]],
-                       kind: str = "eval") -> tuple[str | None, int]:
+                       kind: str = "eval") -> tuple[str | None, list[str]]:
     """Queue items for the game to build (``kind`` "eval") or to draw ("tipdraw");
-    returns (request id, items written)."""
+    returns (request id, keys of the items written, in order). Junk, duplicates
+    and items past ``MAX_REQUEST_ITEMS`` are not written: the game is not asked
+    about them."""
     lines = []
+    keys = []
     seen = set()
     for key, data in entries:
         if timestamp_of_key(key) is None or not re.fullmatch(r"\d{1,20}-\d{1,20}-\d{1,20}-\d{1,4}", str(key)):
@@ -986,17 +989,18 @@ def write_eval_request(root: str | os.PathLike, entries: Iterable[tuple[str, Map
             continue
         seen.add(marker)
         lines.append(f"{key}\t{text}\n")
+        keys.append(str(key))
         if len(lines) >= MAX_REQUEST_ITEMS:
             break
     if not lines:
-        return None, 0
+        return None, []
     folder = Path(root) / REQUEST_FOLDERS[kind]
     folder.mkdir(parents=True, exist_ok=True)
     request_id = f"{int(time.time() * 1000)}-{os.urandom(3).hex()}"
     temp = folder / f"{request_id}.tmp"
     temp.write_text("".join(lines), encoding="utf-8", newline="\n")
     os.replace(temp, folder / f"{request_id}.req")
-    return request_id, len(lines)
+    return request_id, keys
 
 
 def request_files(root: str | os.PathLike, kind: str = "eval") -> dict[str, list[str]]:

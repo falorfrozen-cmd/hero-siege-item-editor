@@ -1844,10 +1844,11 @@ def _truth_evaluation_state(store) -> dict | None:
 
 
 def _queue_truth_check(entries: list, scope: str) -> tuple[str | None, int]:
-    request_id, count = game_truth.write_eval_request(ITEM_TRUTH_DIR, entries)
+    request_id, written = game_truth.write_eval_request(ITEM_TRUTH_DIR, entries)
     if request_id:
-        _TRUTH_LAST_REQUEST.update(id=request_id, keys=frozenset(key for key, _ in entries), scope=scope, items=count)
-    return request_id, count
+        # Only the items written: the ones past the size cap were never asked about.
+        _TRUTH_LAST_REQUEST.update(id=request_id, keys=frozenset(written), scope=scope, items=len(written))
+    return request_id, len(written)
 
 
 def op_truth_verify(body: dict) -> dict:
@@ -1994,9 +1995,9 @@ def _truth_auto_draw_once(coverage: dict, store) -> str | None:
         [(key, data) for key, data in coverage["undrawn"] if key not in _TRUTH_DRAW_GIVEN_UP], "tipdraw")
     if not wanted:
         return None
-    request_id, count = game_truth.write_eval_request(ITEM_TRUTH_DIR, wanted, kind="tipdraw")
+    request_id, written = game_truth.write_eval_request(ITEM_TRUTH_DIR, wanted, kind="tipdraw")
     if request_id:
-        _TRUTH_LAST_DRAWING.update(id=request_id, items=count, keys=frozenset(key for key, _ in wanted))
+        _TRUTH_LAST_DRAWING.update(id=request_id, items=len(written), keys=frozenset(written))
     return request_id
 
 

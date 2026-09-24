@@ -178,6 +178,13 @@ class SavesFixture(unittest.TestCase):
     def request_lines(self, request_id):
         return (self.truth / "requests" / f"{request_id}.req").read_text(encoding="utf-8").splitlines()
 
+    def second_stash_item(self):
+        """A second item the game has not verified, "0-0-6-3", after the first."""
+        stash = {"stash_tab_1": {"0-0-5-3": {"pos": [0, 0], "data": {"a": 6, "b": 1, "c": 1, "j": 7}},
+                                 "0-0-6-3": {"pos": [1, 0], "data": {"a": 8, "b": 1, "c": 1, "j": 7}}},
+                 "stash_tab_data": {}}
+        (self.saves / "stash.hss").write_text(editor.encode_hss(json.dumps(stash)), encoding="ascii")
+
     def append_journal(self, *records):
         with (self.truth / "journal" / "live.ndjson").open("a", encoding="utf-8") as handle:
             handle.write("".join((record if isinstance(record, str) else json.dumps(record) + "\n")
@@ -321,6 +328,21 @@ class GameTruthCheckTests(SavesFixture):
         self.assertEqual(gt.request_files(self.truth, "tipdraw")["waiting"], [drawing],
                          "with nothing left to check, the verified items go to be drawn")
 
+    def test_items_past_the_size_cap_are_asked_about_next(self):
+        # A Vault too big for one request: a finished check gives up only on the
+        # items it asked about, and the rest go in the next request.
+        self.second_stash_item()
+        gt.request_capture(self.truth, editor_version="t")
+        self.live()
+        with mock.patch.object(gt, "MAX_REQUEST_ITEMS", 1):
+            first = editor._truth_auto_check_once()
+            self.assertEqual([line.split("\t")[0] for line in self.request_lines(first)], ["0-0-5-3"])
+            (self.truth / "requests" / f"{first}.req").unlink()   # the game took it and could not build it
+            self.append_journal({**self.progress(first, done=1, finished=True), "ok": 0, "failed": 1})
+            second = editor._truth_auto_check_once()
+        self.assertEqual(editor._TRUTH_GIVEN_UP, {"0-0-5-3"})
+        self.assertEqual([line.split("\t")[0] for line in self.request_lines(second)], ["0-0-6-3"])
+
     def test_status_follows_a_check_from_queued_to_done(self):
         gt.request_capture(self.truth, editor_version="t")
         request_id = editor.op_truth_verify({"scope": "missing"})["request"]
@@ -412,6 +434,19 @@ class GameTextDrawingTests(SavesFixture):
         self.assertIsNone(editor._truth_auto_check_once(), "drawn but not tied to its record: once is enough")
         self.assertIn(BELT_KEY, editor._TRUTH_DRAW_GIVEN_UP)
         self.assertEqual(gt.request_files(self.truth, "tipdraw")["waiting"], [])
+
+    def test_items_past_the_size_cap_are_drawn_next(self):
+        # The stash item is verified too; a drawing request has room for one item.
+        self.append_journal(belt_record(**{"ts": "5", "type": 3, "hash": "stash",
+                                           "def": {"a": 6.0, "b": 1.0, "c": 1.0, "j": 7.0}}))
+        with mock.patch.object(gt, "MAX_REQUEST_ITEMS", 1):
+            first = editor._truth_auto_check_once()
+            self.assertEqual([line.split("\t")[0] for line in self.drawing_lines(first)], [BELT_KEY])
+            (self.truth / "tips" / f"{first}.req").unlink()   # the game took it; nothing drawn could be tied
+            self.append_journal(self.progress(first, "tipdraw", done=1, finished=True))
+            second = editor._truth_auto_check_once()
+        self.assertEqual(editor._TRUTH_DRAW_GIVEN_UP, {BELT_KEY})
+        self.assertEqual([line.split("\t")[0] for line in self.drawing_lines(second)], ["0-0-5-3"])
 
     def test_a_drawing_is_tied_to_its_item_even_under_another_hash(self):
         request_id = editor._truth_auto_check_once()
