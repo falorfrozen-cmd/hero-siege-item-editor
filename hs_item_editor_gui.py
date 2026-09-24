@@ -9877,12 +9877,12 @@ input,select{background:#140c0e;color:var(--tx);border:1px solid var(--line);bor
 .res.sel{background:#33211c;border-color:var(--gold)}
 .r-Satanic{color:#ff5050}.r-Heroic{color:#54e87a}.r-Angelic{color:#ffe080}.r-Unholy{color:#c77dff}
 .r-Normal,.r-Common{color:#cfcfcf}.r-Superior{color:#7db5ff}.r-Rare{color:#ffd84d}.r-Legendary{color:#ff9c40}.r-Mythic{color:#c56cf0}
-.r-Mythic{color:#5bd6d6}.r-Runeword{color:#b0a8ff}
+.r-Runeword{color:#b0a8ff}
 .b-Satanic{background:#3a1414;border-color:#ff5050}.b-Heroic{background:#11331c;border-color:#54e87a}
 .b-Angelic{background:#3a3416;border-color:#ffe080}.b-Unholy{background:#2c1840;border-color:#c77dff}
 .b-Normal,.b-Common{background:#26211f;border-color:#777}.b-Superior{background:#16263a;border-color:#7db5ff}
 .b-Rare{background:#383011;border-color:#ffd84d}.b-Legendary{background:#3a2410;border-color:#ff9c40}.b-Mythic{background:#2a1336;border-color:#b115eb}
-.b-Mythic{background:#0f3030;border-color:#5bd6d6}.b-Runeword{background:#1d1a38;border-color:#b0a8ff}.b-_{background:#222;border-color:#555}
+.b-Runeword{background:#1d1a38;border-color:#b0a8ff}.b-_{background:#222;border-color:#555}
 button.act{background:#5a3413;color:#ffd9a0;border:1px solid #8a5a26;border-radius:4px;padding:8px;margin-top:8px;cursor:pointer;font-size:13px}
 button.act:hover{background:#6f421a}
 #msg{font-size:12px;margin-top:6px;min-height:30px}

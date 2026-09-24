@@ -945,6 +945,15 @@ class EmbeddedTooltipTests(unittest.TestCase):
         self.assertIn("Game verified &middot; game labels", html)
         self.assertIn("gtt-title", html, "the header stays the editor's until the game draws the item")
 
+    def test_mythic_has_the_games_purple_and_no_second_rule(self):
+        # The game's rarity 5 is "Mythic", drawn in #b115eb; a later rule for the
+        # same class would silently win over it.
+        self.assertEqual(self.html.count(".r-Mythic{"), 1)
+        self.assertEqual(self.html.count(".b-Mythic{"), 1)
+        self.assertIn(".r-Mythic{color:#c56cf0}", self.html)
+        self.assertIn(".b-Mythic{background:#2a1336;border-color:#b115eb}", self.html)
+        self.assertEqual(gt.RARITY_NAMES[5], "Mythic")
+
     def test_a_colour_from_a_record_is_never_markup(self):
         model = GameTextTests().model({"29": 264.0}, tooltip={"rows": [
             {"fn": "draw_text", "s": -1, "c": 0, "ha": 1, "a": [0, 8, "<b>x</b>"]}], "stats": []})
