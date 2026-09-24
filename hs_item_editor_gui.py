@@ -176,9 +176,20 @@ try:
 except ModuleNotFoundError:
     from HSItemEditor.custom_forge_runtime import runtime_status as _custom_forge_runtime_status
 
+try:
+    import game_truth
+except ModuleNotFoundError:
+    from HSItemEditor import game_truth  # type: ignore[no-redef]
+
 ROOT = Path.home() / "AppData" / "Local" / "Hero_Siege"
 SAVES = ROOT / "hs2saves"
 VAULT_DB_FILE = ROOT / "hs_infinite_vault.sqlite3"
+# Game truth (game_truth.py): the items the game itself built - ForgePact's
+# Item Truth journal and AFK FARM's delivery spool - shown instead of the
+# editor's own replay wherever the game has built the item. Off at import so
+# tests and scripts never read the player's store; main() turns it on.
+ITEM_TRUTH_DIR = ROOT / "itemtruth"
+GAME_TRUTH_ACTIVE = False
 
 
 def _resource_base() -> Path:
@@ -195,7 +206,7 @@ def _resource_base() -> Path:
 BASE = _resource_base()
 CATALOG_FILE = BASE / "hs_full_catalog.json"
 PORT = 8765
-APP_VERSION = "2.15.10-s10"
+APP_VERSION = "2.16.0-s10"
 APPLICATION_ID = "hero-siege-item-editor"
 CATALOG_PROFILE = "Season 10"
 MAX_POST_BYTES = 2 * 1024 * 1024
@@ -1577,7 +1588,540 @@ def _tooltip_runtime_build_status(
     return _editor_runtime_build_status(build_status)
 
 
+_TRUTH_STORE = None
+_TRUTH_INGESTOR = None
+_TRUTH_LOCK = threading.Lock()
+_GAME_BUILD_CACHE: dict = {"at": -1e9, "value": (None, None)}
+STEAM_GAME_EXE = (
+    Path(os.environ.get("ProgramFiles(x86)", r"C:\Program Files (x86)"))
+    / "Steam" / "steamapps" / "common" / "HeroSiege" / "bin" / "Hero_Siege.exe"
+)
+
+
+def _truth_store():
+    """The game-truth store, or None while game truth is off."""
+    global _TRUTH_STORE
+    if not GAME_TRUTH_ACTIVE:
+        return None
+    with _TRUTH_LOCK:
+        wanted = Path(ITEM_TRUTH_DIR) / "truth.sqlite3"
+        if _TRUTH_STORE is None or Path(_TRUTH_STORE.path) != wanted:
+            try:
+                _TRUTH_STORE = game_truth.TruthStore(wanted)
+            except (OSError, sqlite3.Error):
+                _TRUTH_STORE = None
+        return _TRUTH_STORE
+
+
+def _game_exe_path() -> Path | None:
+    """The Hero_Siege.exe the player runs: the running one, else ForgePact's
+    configured game, else the Steam default."""
+    try:
+        from custom_forge_runtime import forgepact_game_exe, running_game_exe
+    except ModuleNotFoundError:
+        from HSItemEditor.custom_forge_runtime import forgepact_game_exe, running_game_exe
+    candidates = []
+    for lookup in (running_game_exe, lambda: forgepact_game_exe(ROOT), lambda: STEAM_GAME_EXE):
+        try:
+            candidates.append(lookup())
+        except Exception:
+            continue
+    for exe in candidates:
+        if exe and Path(exe).is_file():
+            return Path(exe)
+    return None
+
+
+def _current_game_build() -> tuple[str | None, float | None]:
+    """(build id, exe mtime) of the player's game; cached for 15 s."""
+    now = time.monotonic()
+    if now - _GAME_BUILD_CACHE["at"] < 15.0:
+        return _GAME_BUILD_CACHE["value"]
+    exe = _game_exe_path()
+    build = since = None
+    if exe is not None:
+        build = game_truth.build_id_of_exe(exe)
+        try:
+            since = exe.stat().st_mtime
+        except OSError:
+            since = None
+    _GAME_BUILD_CACHE.update(at=now, value=(build, since), exe=exe)
+    return _GAME_BUILD_CACHE["value"]
+
+
+def _game_talent_names() -> dict:
+    """Talent names from the player's game's own translation files (cached)."""
+    _current_game_build()
+    exe = _GAME_BUILD_CACHE.get("exe")
+    return game_truth.talent_names(exe.parent if exe is not None else None)
+
+
+def _truth_match(item: dict):
+    """The game's own record of this saved item, if the game has built it."""
+    store = _truth_store()
+    if store is None or not isinstance(item, dict):
+        return None
+    build, _ = _current_game_build()
+    try:
+        return store.lookup(
+            item.get("key"),
+            item.get("raw") if isinstance(item.get("raw"), dict) else None,
+            current_build=build,
+            # A native stack's count never changes its lines, and the Vault
+            # merges and splits stacks after the game recorded them.
+            ignore=("o",) if item.get("stackable") else (),
+        )
+    except (sqlite3.Error, ValueError, TypeError):
+        return None
+
+
+def _with_game_truth(item: dict, model: dict, custom_name: str | None = None) -> dict:
+    """The game's numbers where it built this item; otherwise the replay,
+    labelled an estimate unless the game runs the build the replay is for."""
+    if not GAME_TRUTH_ACTIVE or not isinstance(model, dict):
+        return model
+    match = _truth_match(item)
+    if match is not None:
+        try:
+            tooltip, table = _game_text_for(match)
+            return game_truth.build_verified_model(
+                model, match, semantics=STAT_SEMANTICS, custom_name=custom_name,
+                tooltip=tooltip, table=table, talent_names=_game_talent_names(),
+            )
+        except Exception:
+            pass
+    build, _ = _current_game_build()
+    return game_truth.mark_estimate(model, current_build=build)
+
+
+def _game_text_for(match) -> tuple[dict | None, dict]:
+    """The game's own drawing of this item's tooltip, if it has drawn it, and the
+    tooltip table (labels, formats, order) of the build that built the item, else
+    of the running build."""
+    store = _truth_store()
+    record = match.record
+    if store is None:
+        return None, {}
+    try:
+        tooltip = store.tooltip(record.get("ts"), record.get("hash"), record.get("build"), record.get("contentKey"))
+        table = store.table_entries(record.get("build")) or store.table_entries(match.current_build)
+    except (sqlite3.Error, ValueError, TypeError):
+        return None, {}
+    return tooltip, table
+
+
+def _owned_item_payloads():
+    """(place, key, save data) of every item the player owns: each character's
+    equipment, belt, personal stash and bags, the Shared Stash, the Vault.
+    Reads the files only; no tooltip is built."""
+    def entries_of(section):
+        if isinstance(section, dict):
+            for key, value in section.items():
+                if isinstance(value, dict) and isinstance(value.get("data"), dict):
+                    yield str(key), value["data"]
+
+    for path in sorted(SAVES.glob("herosiege*.hss")):
+        found = re.fullmatch(r"herosiege(\d+)\.hss", path.name)
+        if not found or path.stat().st_size < 1000:
+            continue
+        slot = found.group(1)
+        try:
+            text = decode_hss(path)
+            match = re.search(r'inventory="([A-Za-z0-9+/=]+)"', text)
+            inventory = json.loads(base64.b64decode(match.group(1))) if match else {}
+        except Exception:
+            inventory = {}
+        for section in (inventory.values() if isinstance(inventory, dict) else ()):
+            for key, data in entries_of(section):
+                yield f"character {slot}", key, data
+        bags = SAVES / f"inventory_order_{slot}.hss"
+        try:
+            document = json.loads(decode_hss(bags)) if bags.exists() and bags.stat().st_size > 50 else {}
+        except Exception:
+            document = {}
+        for section in (document.values() if isinstance(document, dict) else ()):
+            for key, data in entries_of(section):
+                yield f"character {slot}", key, data
+    try:
+        stash = json.loads(decode_hss(SAVES / "stash.hss"))
+    except Exception:
+        stash = {}
+    for tab, section in (stash.items() if isinstance(stash, dict) else ()):
+        if tab != "stash_tab_data":
+            for key, data in entries_of(section):
+                yield "Shared Stash", key, data
+    if Path(VAULT_DB_FILE).exists():
+        try:
+            records = vault_store().list_all_available_items()
+        except Exception:
+            records = []
+        for record in records:
+            try:
+                data = record.decoded_item().get("data")
+            except Exception:
+                continue
+            if isinstance(data, dict) and record.source_item_key:
+                yield "Infinite Vault", record.source_item_key, data
+
+
+_TRUTH_COVERAGE: dict = {"at": -1e9, "value": None}
+_TRUTH_COVERAGE_LOCK = threading.Lock()
+
+
+def _truth_coverage(force: bool = False) -> dict:
+    """Per place: items, how many the game verified on the running build and how
+    many of those it has drawn a tooltip for; the (key, data) of the items it has
+    not verified, and of the verified ones it has not drawn. Cached for a minute
+    (about 1-2 s of work for a large Vault)."""
+    with _TRUTH_COVERAGE_LOCK:
+        now = time.monotonic()
+        if not force and _TRUTH_COVERAGE["value"] is not None and now - _TRUTH_COVERAGE["at"] < 60.0:
+            return _TRUTH_COVERAGE["value"]
+        store = _truth_store()
+        build, _ = _current_game_build()
+        try:
+            drawings = store.tooltip_keys(build) if store is not None else set()
+        except sqlite3.Error:
+            drawings = set()
+        places: dict = {}
+        missing: list = []
+        undrawn: list = []
+        for place, key, data in _owned_item_payloads():
+            group = "Characters" if place.startswith("character ") else place
+            row = places.setdefault(group, {"items": 0, "verified": 0, "drawn": 0, "unmatchable": 0})
+            row["items"] += 1
+            if game_truth.timestamp_of_key(key) is None:
+                row["unmatchable"] += 1
+                continue
+            match = None
+            if store is not None:
+                try:
+                    match = store.lookup(key, data, current_build=build,
+                                         ignore=("o",) if native_stackable_info(key, data) else ())
+                except (sqlite3.Error, ValueError, TypeError):
+                    match = None
+            if match is not None and match.build_status == "current":
+                row["verified"] += 1
+                ts = match.record.get("ts")
+                if (ts, match.record.get("hash")) in drawings or (ts, "#" + str(match.record.get("contentKey"))) in drawings:
+                    row["drawn"] += 1
+                else:
+                    undrawn.append((key, data))
+            else:
+                missing.append((key, data))
+        value = {"places": places, "missing": missing, "undrawn": undrawn, "build": build}
+        _TRUTH_COVERAGE.update(at=time.monotonic(), value=value)
+        return value
+
+
+# The last check this editor asked for, and items a finished check could not
+# verify (never asked about again automatically in this session).
+_TRUTH_LAST_REQUEST: dict = {"id": None, "keys": frozenset(), "scope": None, "items": 0}
+_TRUTH_GIVEN_UP: set = set()
+# One writer of requests at a time: a click on the pill (a server thread) and the
+# automatic check (its own thread) each look for a queued request, then write one.
+_TRUTH_QUEUE_LOCK = threading.RLock()
+
+
+def _truth_evaluation_state(store) -> dict | None:
+    request_id = _TRUTH_LAST_REQUEST.get("id")
+    files = game_truth.request_files(ITEM_TRUTH_DIR)
+    progress = store.evaluation(request_id) if store is not None and request_id else None
+    if request_id and request_id in files["stopped"]:
+        state = "stopped"
+    elif progress and progress["finished"]:
+        state = "done"
+    elif request_id and request_id in files["running"]:
+        state = "running"
+    elif request_id and request_id in files["waiting"]:
+        state = "waiting"
+    else:
+        # No request of ours, or it is gone unfinished (cleared, or its last
+        # progress line not read yet): only a stopped check is worth showing.
+        return {"state": "stopped", "request": files["stopped"][-1]} if files["stopped"] else None
+    return {"state": state, "request": request_id, "items": _TRUTH_LAST_REQUEST.get("items"),
+            "scope": _TRUTH_LAST_REQUEST.get("scope"), "progress": progress}
+
+
+def _queue_truth_check(entries: list, scope: str) -> tuple[str | None, int]:
+    request_id, written = game_truth.write_eval_request(ITEM_TRUTH_DIR, entries)
+    if request_id:
+        # Only the items written: the ones past the size cap were never asked about.
+        _TRUTH_LAST_REQUEST.update(id=request_id, keys=frozenset(written), scope=scope, items=len(written))
+    return request_id, len(written)
+
+
+def op_truth_verify(body: dict) -> dict:
+    """Ask the game to build and record items: the ones it has not verified, or all."""
+    if not GAME_TRUTH_ACTIVE:
+        return {"err": "Game truth is not running in this editor."}
+    scope = body.get("scope", "missing") if isinstance(body, dict) else "missing"
+    if scope not in {"missing", "all"}:
+        return {"err": "scope must be missing or all"}
+    capture = game_truth.capture_status(ITEM_TRUTH_DIR)
+    if not capture["requested"]:
+        return {"err": "Game capture is off. Turn it on first; the game only checks items while it is on."}
+    with _TRUTH_QUEUE_LOCK:
+        files = game_truth.request_files(ITEM_TRUTH_DIR)
+        if files["waiting"] or files["running"]:
+            return {"err": "A check is already queued or running."}
+        if scope == "all":
+            entries = [(key, data) for _, key, data in _owned_item_payloads()]
+        else:
+            entries = list(_truth_coverage(force=True)["missing"])
+        wanted = _without_struck_out(entries, "eval")
+        skipped = len(entries) - len(wanted)
+        try:
+            request_id, count = _queue_truth_check(wanted, scope)
+        except OSError as exc:
+            return {"err": f"The check could not be queued: {exc}"}
+    if not request_id:
+        if skipped:
+            return {"ok": f"Nothing to check: {skipped:,} item(s) stopped the game twice and are skipped on this build.",
+                    "status": game_truth_status()}
+        return {"ok": "Every item is already verified by the game.", "status": game_truth_status()}
+    when = "now" if capture["reporting"] else "as soon as Hero Siege runs with ForgePact 1.4.5 or newer"
+    return {"ok": f"The game will check {count:,} items {when}.", "request": request_id, "items": count,
+            "status": game_truth_status()}
+
+
+def op_truth_clear_stopped(body: dict) -> dict:
+    """Forget an unfinished check (the game stopped during it) so checks can run
+    again. The item the check stopped on gets a strike first: an item that stops
+    the game a second time is not asked about again on this build."""
+    if not GAME_TRUTH_ACTIVE:
+        return {"err": "Game truth is not running in this editor."}
+    with _TRUTH_QUEUE_LOCK:
+        stopped = set(game_truth.request_files(ITEM_TRUTH_DIR)["stopped"])
+        store = _truth_store()
+        build, _ = _current_game_build()
+        if store is not None and build:
+            missing = {key for key, _ in _truth_coverage(force=True)["missing"]}
+            _strike_stopped_requests("eval", store, build, missing)
+        removed = game_truth.clear_stopped_requests(ITEM_TRUTH_DIR)
+        if _TRUTH_LAST_REQUEST.get("id") in stopped:
+            # Nothing is left to follow: the status line must not wait on it.
+            _TRUTH_LAST_REQUEST.update(id=None, keys=frozenset(), scope=None, items=0)
+    return {"ok": f"Cleared {removed} unfinished check(s).", "status": game_truth_status()}
+
+
+def _strike_stopped_requests(kind: str, store, build: str, pending: set) -> list:
+    """Give a strike to the item each stopped request of ``kind`` was on when the
+    game closed or failed: the first of its items, in the order the game took them,
+    that the game has still not done (``pending``). Only when the request was what
+    the game was doing as its session ended: a drawing paused while the player
+    went on playing and then quit is not a suspect."""
+    suspects = []
+    for request_id in game_truth.request_files(ITEM_TRUTH_DIR, kind)["stopped"]:
+        if not store.request_ended_session(request_id):
+            continue
+        keys = game_truth.stopped_request_keys(ITEM_TRUTH_DIR, request_id, kind)
+        suspect = next((key for key in keys if key in pending), None)
+        if suspect is not None:
+            suspects.append(suspect)
+    if suspects:
+        store.strike_request(build, suspects, kind)
+    return suspects
+
+
+def _without_struck_out(entries: list, kind: str) -> list:
+    """Entries minus items with two strikes on the running build; items with one
+    strike go last, so an innocent one is not the first again."""
+    store = _truth_store()
+    build, _ = _current_game_build()
+    strikes = store.request_strikes(build, kind) if store is not None and build else {}
+    kept = [(key, data) for key, data in entries if strikes.get(key, 0) < 2]
+    kept.sort(key=lambda entry: strikes.get(entry[0], 0))
+    return kept
+
+
+def _truth_auto_check_once() -> str | None:
+    """Queue the unverified items for the game while it runs; returns the request id.
+    Once every item is verified, queue the undrawn ones for the game to draw."""
+    capture = game_truth.capture_status(ITEM_TRUTH_DIR)
+    if not capture["requested"] or not capture["reporting"]:
+        return None
+    with _TRUTH_QUEUE_LOCK:
+        files = game_truth.request_files(ITEM_TRUTH_DIR)
+        if files["waiting"] or files["running"] or files["stopped"]:
+            return None   # a stopped check waits for the player: it may be what stopped the game
+        coverage = _truth_coverage(force=True)
+        last = _TRUTH_LAST_REQUEST
+        store = _truth_store()
+        if last.get("id") and store is not None:
+            progress = store.evaluation(last["id"])
+            if progress and progress["finished"]:
+                still = {key for key, _ in coverage["missing"]}
+                _TRUTH_GIVEN_UP.update(key for key in last["keys"] if key in still)
+        missing = _without_struck_out(
+            [(key, data) for key, data in coverage["missing"] if key not in _TRUTH_GIVEN_UP], "eval")
+        if not missing:
+            return _truth_auto_draw_once(coverage, store)
+        request_id, _ = _queue_truth_check(missing, "auto")
+        return request_id
+
+
+# The drawing request this editor last queued, and items a finished drawing did
+# not cover (never asked for again automatically in this session).
+_TRUTH_LAST_DRAWING: dict = {"id": None, "items": 0, "keys": frozenset()}
+_TRUTH_DRAW_GIVEN_UP: set = set()
+
+
+def _truth_auto_draw_once(coverage: dict, store) -> str | None:
+    """Ask the game to draw the tooltips of verified items it has not drawn.
+
+    The game draws them only while the player has an item tooltip open, so a
+    request often outlives a game session and comes back stopped. The item it
+    stopped on gets a strike (the game may have closed on it); two strikes and it
+    is not asked for again on this build. The rest are asked for again. An item
+    a finished request drew but the editor still cannot tie to its record is not
+    asked for again in this session."""
+    build = coverage.get("build")
+    if store is None or not build:
+        return None
+    files = game_truth.request_files(ITEM_TRUTH_DIR, "tipdraw")
+    undrawn_keys = {key for key, _ in coverage["undrawn"]}
+    last = _TRUTH_LAST_DRAWING
+    if last.get("id"):
+        progress = store.evaluation(last["id"])
+        if progress and progress["finished"]:
+            _TRUTH_DRAW_GIVEN_UP.update(key for key in last.get("keys") or () if key in undrawn_keys)
+    if files["stopped"]:
+        _strike_stopped_requests("tipdraw", store, build, undrawn_keys)
+        game_truth.clear_stopped_requests(ITEM_TRUTH_DIR, "tipdraw")
+    if files["waiting"] or files["running"]:
+        return None
+    wanted = _without_struck_out(
+        [(key, data) for key, data in coverage["undrawn"] if key not in _TRUTH_DRAW_GIVEN_UP], "tipdraw")
+    if not wanted:
+        return None
+    request_id, written = game_truth.write_eval_request(ITEM_TRUTH_DIR, wanted, kind="tipdraw")
+    if request_id:
+        _TRUTH_LAST_DRAWING.update(id=request_id, items=len(written), keys=frozenset(written))
+    return request_id
+
+
+def _truth_drawing_state(store) -> dict | None:
+    files = game_truth.request_files(ITEM_TRUTH_DIR, "tipdraw")
+    request_id = (files["running"] or files["waiting"] or [None])[-1] or _TRUTH_LAST_DRAWING.get("id")
+    if not request_id:
+        return None
+    progress = store.evaluation(request_id) if store is not None else None
+    if request_id in files["running"]:
+        state = "running"
+    elif request_id in files["waiting"]:
+        state = "waiting"
+    else:
+        state = "done" if progress and progress["finished"] else None
+    return {"state": state, "request": request_id, "progress": progress}
+
+
+def _truth_auto_loop() -> None:
+    while GAME_TRUTH_ACTIVE:
+        time.sleep(30)
+        try:
+            _truth_auto_check_once()
+        except Exception:
+            continue
+
+
+def game_truth_status() -> dict:
+    """What the Game truth line in the UI shows."""
+    build = _current_game_build()[0] if GAME_TRUTH_ACTIVE else None
+    store = _truth_store()
+    try:
+        counts = store.counts() if store is not None else None
+    except sqlite3.Error as exc:
+        counts = {"error": str(exc)}
+    coverage = None
+    if GAME_TRUTH_ACTIVE:
+        try:
+            value = _truth_coverage()
+            coverage = {"places": value["places"], "missing": len(value["missing"]),
+                        "undrawn": len(value["undrawn"])}
+        except Exception as exc:
+            coverage = {"error": str(exc)}
+    ingestor = _TRUTH_INGESTOR
+    return {
+        "active": GAME_TRUTH_ACTIVE,
+        "capture": game_truth.capture_status(ITEM_TRUTH_DIR),
+        "captureOff": (Path(ITEM_TRUTH_DIR) / "capture.off").is_file(),
+        "store": counts,
+        "coverage": coverage,
+        "evaluation": _truth_evaluation_state(store) if GAME_TRUTH_ACTIVE else None,
+        "drawing": _truth_drawing_state(store) if GAME_TRUTH_ACTIVE else None,
+        "ingest": None if ingestor is None else {
+            "lastError": ingestor.last_error,
+            "last": dict(vars(ingestor.last_result)),
+        },
+        "currentBuild": build,
+        "currentBuildDate": game_truth.build_date(build),
+        "modelBuild": game_truth.MODEL_BUILD_ID,
+        "modelBuildDate": game_truth.build_date(game_truth.MODEL_BUILD_ID),
+    }
+
+
+def op_truth_capture(body: dict) -> dict:
+    """Turn ForgePact's Item Truth capture on or off; the choice survives restarts."""
+    if not GAME_TRUTH_ACTIVE:
+        return {"err": "Game truth is not running in this editor."}
+    on = body.get("on") if isinstance(body, dict) else None
+    if not isinstance(on, bool):
+        return {"err": "on must be true or false"}
+    marker = Path(ITEM_TRUTH_DIR) / "capture.off"
+    try:
+        if on:
+            marker.unlink(missing_ok=True)
+            done = game_truth.request_capture(ITEM_TRUTH_DIR, editor_version=APP_VERSION)
+        else:
+            marker.parent.mkdir(parents=True, exist_ok=True)
+            marker.write_text("capture turned off in the Item Editor\n", encoding="utf-8")
+            done = game_truth.withdraw_capture(ITEM_TRUTH_DIR)
+    except OSError as exc:
+        return {"err": f"The capture setting could not be saved: {exc}"}
+    if not done:
+        return {"err": "The capture request file could not be changed."}
+    return {
+        "ok": "Game capture is on: ForgePact records each item the game builds."
+        if on else "Game capture is off: tooltips keep what was already recorded.",
+        "status": game_truth_status(),
+    }
+
+
+def _start_game_truth() -> None:
+    """Turn game truth on for this editor process (main() only)."""
+    global GAME_TRUTH_ACTIVE, _TRUTH_INGESTOR
+    GAME_TRUTH_ACTIVE = True
+    try:
+        if not (Path(ITEM_TRUTH_DIR) / "capture.off").is_file():
+            game_truth.request_capture(ITEM_TRUTH_DIR, editor_version=APP_VERSION)
+        store = _truth_store()
+        if store is None:
+            return
+        _TRUTH_INGESTOR = game_truth.TruthIngestor(
+            store,
+            journal_dir=Path(ITEM_TRUTH_DIR) / "journal",
+            spool_dir=Path(VAULT_DB_FILE).parent / "afk" / "spool",
+            build_info=_current_game_build,
+        )
+        _TRUTH_INGESTOR.start()
+        threading.Thread(target=_truth_auto_loop, name="game-truth-auto-check", daemon=True).start()
+    except Exception:
+        # Never keep the editor from starting; tooltips fall back to estimates.
+        pass
+
+
 def _game_tooltip_model(
+    item: dict,
+    *,
+    custom_name: str | None = None,
+    build_status: dict | None = None,
+) -> dict:
+    model = _offline_tooltip_model(item, custom_name=custom_name, build_status=build_status)
+    return _with_game_truth(item, model, custom_name)
+
+
+def _offline_tooltip_model(
     item: dict,
     *,
     custom_name: str | None = None,
@@ -1641,6 +2185,10 @@ def _game_tooltip_model(
 def _attach_game_tooltip(item: dict, build_status: dict | None = None) -> dict:
     model = _game_tooltip_model(item, build_status=build_status)
     item["gameTooltip"] = model
+    if isinstance(model, dict) and (model.get("calculation") or {}).get("coverage") == "game_verified":
+        rarity = (model.get("item") or {}).get("rarity")
+        if rarity in game_truth.RARITY_NAMES.values():
+            item["gameRarity"] = rarity   # the tile's colour: the rarity the game rolled
     # Keep the socket editor aligned with the exact tooltip's final stat-20
     # value, including a saved zz.sockets override when present.
     stats = model.get("stats") if isinstance(model, dict) else None
@@ -1699,6 +2247,12 @@ def _vault_item_payload(
             else None
         ),
         "gameTooltip": game_tooltip,
+        "gameRarity": item.get("gameRarity") or (
+            game_tooltip.get("item", {}).get("rarity")
+            if game_tooltip.get("calculation", {}).get("coverage") == "game_verified"
+            and game_tooltip.get("item", {}).get("rarity") in game_truth.RARITY_NAMES.values()
+            else None
+        ),
         "customForge": item.get("customForge"),
         "fingerprint": game_tooltip.get("fingerprint"),
         "sourceLabel": _vault_source_display(record.source),
@@ -1757,12 +2311,28 @@ def _vault_item_derived(record) -> dict:
         "maxStack": item.get("maxStack"),
         "group": _vault_item_group(item),
         "forgeSelector": selector_id,
+        "_data": data,
     }
     with _VAULT_DERIVED_LOCK:
         if len(_VAULT_DERIVED_CACHE) >= _VAULT_DERIVED_LIMIT:
             _VAULT_DERIVED_CACHE.clear()
         _VAULT_DERIVED_CACHE[key] = derived
     return derived
+
+
+def _truth_tile(key: str | None, data: dict | None, stackable: bool) -> dict:
+    """The rarity the game rolled, for a grid tile's colour ({} when the game has
+    not built the item). One store lookup; no tooltip is built."""
+    if not GAME_TRUTH_ACTIVE or not isinstance(data, dict):
+        return {}
+    match = _truth_match({"key": key, "raw": data, "stackable": stackable})
+    if match is None:
+        return {}
+    code = (match.record.get("info") or {}).get("27")
+    if isinstance(code, bool) or not isinstance(code, (int, float)):
+        return {}
+    rarity = game_truth.RARITY_NAMES.get(int(code))
+    return {"gameRarity": rarity} if rarity else {}
 
 
 def _vault_item_lite_payload(record, configured_items: dict | None = None) -> dict:
@@ -1807,6 +2377,7 @@ def _vault_item_lite_payload(record, configured_items: dict | None = None) -> di
         "createdAt": record.created_at,
         "updatedAt": record.updated_at,
         "lite": True,
+        **_truth_tile(record.source_item_key, derived.get("_data"), bool(derived.get("stackable"))),
     }
 
 
@@ -6468,9 +7039,11 @@ def _forge_base_stats(item: dict, allowed: set, key: str | None = None) -> tuple
     """(baseStats, baseLabels, source) of one owned item.
 
     source "runtime": the stat struct the game itself built (exact, includes every rolled
-    affix); "model": the editor's tooltip model (base rows only) when the item has not been
-    loaded in the game with ForgePact yet.  Only keys the Custom Forge may write are kept, so
-    every base row shown in the Item Forge can also be overridden."""
+    affix) - from the game-truth store (its values before any Custom Forge dressing), else
+    ForgePact's older bp_ipc\\itemstats.json; "model": the editor's tooltip model (base rows
+    only) when the item has not been loaded in the game with ForgePact yet.  Only keys the
+    Custom Forge may write are kept, so every base row shown in the Item Forge can also be
+    overridden."""
     stats: dict = {}
     labels: dict = {}
     timestamp = None
@@ -6478,7 +7051,13 @@ def _forge_base_stats(item: dict, allowed: set, key: str | None = None) -> tuple
         parts = key.split("-")
         if len(parts) >= 3 and parts[2].isdigit():
             timestamp = parts[2]
-    runtime = _runtime_item_stats(timestamp) if timestamp else None
+    runtime = None
+    if isinstance(key, str):
+        match = _truth_match({**item, "key": key})
+        if match is not None:
+            runtime = match.record.get("native") or match.record.get("stats")
+    if not runtime:
+        runtime = _runtime_item_stats(timestamp) if timestamp else None
     if runtime:
         for raw_key, value in runtime.items():
             if isinstance(value, bool) or not isinstance(value, (int, float)) or not math.isfinite(float(value)):
@@ -9146,6 +9725,8 @@ class H(BaseHTTPRequestHandler):
                 self._json({"err": f"Infinite Vault tooltip query failed: {exc}"}, 500)
         elif u.path == "/api/vault/history":
             self._json(vault_history())
+        elif u.path == "/api/truth/status":
+            self._json(game_truth_status())
         elif u.path == "/api/vault/ingest/status":
             self._json(vault_ingest_status(parse_qs(u.query, keep_blank_values=True)))
         elif u.path == "/api/sets":
@@ -9247,6 +9828,12 @@ class H(BaseHTTPRequestHandler):
             self._json(op_vault_ingest(body))
         elif path == "/api/vault/purge":
             self._json(op_vault_purge(body))
+        elif path == "/api/truth/capture":
+            self._json(op_truth_capture(body))
+        elif path == "/api/truth/verify":
+            self._json(op_truth_verify(body))
+        elif path == "/api/truth/clear-stopped":
+            self._json(op_truth_clear_stopped(body))
         elif path == "/api/vault/afk-split":
             self._json(op_vault_afk_split(body))
         elif path == "/api/vault/dismantle":
@@ -9334,13 +9921,13 @@ input,select{background:#140c0e;color:var(--tx);border:1px solid var(--line);bor
 .res:hover{border-color:var(--gold)}
 .res.sel{background:#33211c;border-color:var(--gold)}
 .r-Satanic{color:#ff5050}.r-Heroic{color:#54e87a}.r-Angelic{color:#ffe080}.r-Unholy{color:#c77dff}
-.r-Normal{color:#cfcfcf}.r-Superior{color:#7db5ff}.r-Rare{color:#ffd84d}.r-Legendary{color:#ff9c40}
-.r-Mythic{color:#5bd6d6}.r-Runeword{color:#b0a8ff}
+.r-Normal,.r-Common{color:#cfcfcf}.r-Superior{color:#7db5ff}.r-Rare{color:#ffd84d}.r-Legendary{color:#ff9c40}.r-Mythic{color:#c56cf0}
+.r-Runeword{color:#b0a8ff}
 .b-Satanic{background:#3a1414;border-color:#ff5050}.b-Heroic{background:#11331c;border-color:#54e87a}
 .b-Angelic{background:#3a3416;border-color:#ffe080}.b-Unholy{background:#2c1840;border-color:#c77dff}
-.b-Normal{background:#26211f;border-color:#777}.b-Superior{background:#16263a;border-color:#7db5ff}
-.b-Rare{background:#383011;border-color:#ffd84d}.b-Legendary{background:#3a2410;border-color:#ff9c40}
-.b-Mythic{background:#0f3030;border-color:#5bd6d6}.b-Runeword{background:#1d1a38;border-color:#b0a8ff}.b-_{background:#222;border-color:#555}
+.b-Normal,.b-Common{background:#26211f;border-color:#777}.b-Superior{background:#16263a;border-color:#7db5ff}
+.b-Rare{background:#383011;border-color:#ffd84d}.b-Legendary{background:#3a2410;border-color:#ff9c40}.b-Mythic{background:#2a1336;border-color:#b115eb}
+.b-Runeword{background:#1d1a38;border-color:#b0a8ff}.b-_{background:#222;border-color:#555}
 button.act{background:#5a3413;color:#ffd9a0;border:1px solid #8a5a26;border-radius:4px;padding:8px;margin-top:8px;cursor:pointer;font-size:13px}
 button.act:hover{background:#6f421a}
 #msg{font-size:12px;margin-top:6px;min-height:30px}
@@ -9427,6 +10014,17 @@ button.act:hover{background:#6f421a}
 .gtt-identity,.gtt-socket{padding:2px 5px;color:#c7a4ff;font-size:10px}.gtt-identity b{color:#e0d0ff}.gtt-empty{padding:7px;color:#7f8da0;text-align:center;font-size:10px}
 .gtt-editor-meta{margin-top:8px;padding-top:7px;border-top:1px solid #344156;color:#8291a5;font-size:9px;line-height:1.5}
 .gtt-editor-meta b{color:#b8c7d8}.gtt-exact{color:#69e0ad!important}.gtt-partial{color:#ffb36f!important}.gtt-fingerprint{font-family:Consolas,monospace;letter-spacing:.6px}
+.gtt-stat.gtt-affix{color:#8fb8ff}.gtt-stat.gtt-affix b{color:#bcd6ff}.gtt-range{margin-left:5px;color:#6f7d92;font-size:10px;white-space:nowrap}
+.gtt-source{margin-top:7px;padding:3px 6px;border-radius:4px;font-size:9px;font-weight:800;letter-spacing:.6px;text-align:center;text-transform:uppercase}
+.gtt-source.verified{background:rgba(64,190,120,.14);color:#78df98}.gtt-source.older{background:rgba(150,160,175,.14);color:#aeb8c6}.gtt-source.estimate{background:rgba(255,166,79,.13);color:#ffb46e}
+.gtt-internal{padding:2px 5px;color:#6f7d92;font-size:9px}
+.gtt-game{padding:1px 2px 0;color:#dce6f2;font-size:12px;line-height:1.45;text-align:center;text-shadow:0 1px 2px #000,0 0 3px #000}
+.gtt-row.gap{margin-top:8px}.gtt-row.block{font-size:11px;line-height:1.35}.gtt-row.gtt-name{font-size:15px;font-weight:850;line-height:1.25}
+.gtt-stat.gtt-gameline{display:block;text-align:center;font-size:11.5px;text-shadow:0 1px 2px #000}
+.gtt-source.game-text{background:rgba(64,190,120,.14);color:#78df98}.gtt-source.game-labels{background:rgba(120,150,210,.14);color:#a9c4ff}
+.truth-row{display:flex;gap:4px;align-items:stretch;margin-top:4px}
+.truth-pill{flex:1;min-width:0;cursor:pointer;text-align:left;font:inherit;background:transparent}
+.truth-mini{flex:none;padding:0 6px;border:1px solid #3a4658;border-radius:4px;background:transparent;color:#8d9bb0;font:inherit;font-size:9px;cursor:pointer}
 .vault-compare-modal{position:fixed;z-index:110;inset:0;display:grid;place-items:center;padding:24px;background:rgba(3,7,12,.84);backdrop-filter:blur(7px)}
 .vault-compare-dialog{width:min(920px,calc(100vw - 48px));max-height:calc(100vh - 48px);overflow:auto;padding:17px;border:1px solid #3a4d67;border-radius:14px;background:#0d141f;box-shadow:0 28px 75px rgba(0,0,0,.72)}
 .vault-compare-head{display:flex;align-items:center;justify-content:space-between;gap:14px;margin-bottom:13px}.vault-compare-head h3{margin:0;font-size:16px}.vault-compare-grid{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:14px}
@@ -9562,6 +10160,7 @@ input,select{background:#0b111a;color:#dfe7f0;border-color:#2d3b50;border-radius
   <div id="addzone" style="border-top:1px solid var(--line);padding-top:8px">
     <div id="selinfo" class="muted">No item selected</div>
     <div class="perfect-pill" id="rollstatus">ROLL PROFILE DATABASE CHECKING...</div>
+    <div class="truth-row"><button type="button" class="perfect-pill truth-pill" id="truthstatus" title="Game truth: tooltips show the values the game itself built">GAME TRUTH CHECKING...</button><button type="button" class="truth-mini" id="truthcapture" hidden>CAPTURE</button></div>
     <div class="flex" id="targetrow" style="margin-top:6px"></div>
     <button class="act" id="addbtn" disabled>Add</button>
     <div id="msg"></div>
@@ -9639,6 +10238,7 @@ async function boot(){
   rollStatus.style.color=allCapabilitiesReady?'#74ee98':(anyCapabilityReady?'#ffd080':'#ff9b83');
   document.getElementById('status').textContent=ov.gameRunning?'GAME RUNNING - VIEW ONLY, WRITING LOCKED':'GAME CLOSED - EDITING ENABLED';
   document.getElementById('status').className=ov.gameRunning?'warn':'';
+  (function truthLoop(){refreshTruthStatus().finally(()=>setTimeout(truthLoop,TRUTH_LAST_STATE==='running'||TRUTH_LAST_STATE==='waiting'||TRUTH_LAST_DRAWING==='running'?3000:15000))})();
   function renderChars(list){const cd=document.getElementById('chars');if(!cd)return;const selected=cd.querySelector('.charbtn.sel')?.dataset.slot;cd.innerHTML='';
     list.forEach(c=>{const b=document.createElement('button');b.className='charbtn'+(String(c.slot)===selected?' sel':'');
       b.dataset.slot=c.slot;
@@ -9705,7 +10305,7 @@ function gridHTML(tab,items,delTarget){
   for(let y=0;y<r;y++)for(let x=0;x<c;x++)h+=`<div class="cell" style="left:${x*CELL}px;top:${y*CELL}px;width:${CELL}px;height:${CELL}px"></div>`;
   items.forEach((it,i)=>{
     const p=it.pos||[0,0];
-    const rr=it.rar&&it.rar!=='?'?it.rar:'_';
+    const rr=it.gameRarity||(it.rar&&it.rar!=='?'?it.rar:'_');
     const previewId=registerPreviewModel(it.gameTooltip);
     const inner=it.spr?`<img src="/icons/${attr(it.spr)}.png?v=2" loading="lazy">`:esc(short(it.name));
     h+=`<div class="item b-${attr(rr)}" draggable="true" title="" data-i="${i}" data-preview-id="${attr(previewId)}" data-del='${attr(JSON.stringify(delTarget))}' data-key="${attr(it.key)}" data-w="${it.w||1}" data-h="${it.h||1}" data-cid="${it.cid??''}" data-rwcid="${it.rwcid??''}" data-virtual-pos="${it.virtualPos?'1':'0'}" data-stackable="${it.stackable?'1':'0'}" data-stack="${it.stack??1}" data-socket-limit="${it.socketLimit??0}" data-socket-count="${it.socketCount??''}" data-roll="${attr(JSON.stringify(it.rollProfile||null))}" data-skill="${attr(JSON.stringify(it.skillSelector||null))}" data-raw='${attr(JSON.stringify(it.raw||{}))}'
@@ -9756,7 +10356,7 @@ function vaultGridInnerHTML(page,pageIndex,persistent){
   let grid='';
   for(let y=0;y<VAULT_GRID_ROWS;y++)for(let x=0;x<VAULT_GRID_COLS;x++)grid+=`<div class="cell" style="left:${x*CELL}px;top:${y*CELL}px;width:${CELL}px;height:${CELL}px"></div>`;
   for(const packed of page.items){
-    const row=packed.row,rr=row.rar&&row.rar!=='?'?row.rar:'_',selected=vaultCompareItems.has(String(row.id));
+    const row=packed.row,rr=row.gameRarity||(row.rar&&row.rar!=='?'?row.rar:'_'),selected=vaultCompareItems.has(String(row.id));
     const previewId=registerPreviewModel(row.gameTooltip),inner=row.spr?`<img src="/icons/${attr(row.spr)}.png?v=2" loading="lazy">`:esc(short(row.name));
     const label=[row.customName||row.name,row.collectionName,row.clsName].filter(Boolean).join(' · ');
     grid+=`<div class="item vault-grid-item b-${attr(rr)}${selected?' compare-selected':''}" tabindex="0" role="button" aria-label="${attr(label)}. Right-click for Vault actions." ${persistent?'draggable="true"':''} data-item-preview data-preview-id="${attr(previewId)}" data-vault-id="${attr(row.id)}" data-cid="${row.cid??''}" data-rwcid="${row.rwcid??''}" data-vault-page="${pageIndex}" data-x="${packed.pos[0]}" data-y="${packed.pos[1]}" data-w="${packed.w}" data-h="${packed.h}" data-updated-at="${attr(row.updatedAt||'')}" style="left:${packed.pos[0]*CELL}px;top:${packed.pos[1]*CELL}px;width:${packed.w*CELL-2}px;height:${packed.h*CELL-2}px">${inner}${row.customName?'<span class="vault-grid-mark" aria-hidden="true">N</span>':''}${row.customForge&&row.customForge.active?'<span class="custom-forge-mark" aria-hidden="true">F</span>':''}${row.stack?`<span class="stk">x${row.stack}</span>`:''}</div>`;
@@ -10066,8 +10666,69 @@ async function openSkillTargetEditor(target,key,selector){
   document.body.appendChild(modal);
   search.focus();
 }
+// ---- game truth status ----
+let TRUTH_LAST_STATE=null,TRUTH_LAST_DRAWING=null,TRUTH_LAST_DRAWN=null;
+function truthCoverageTotals(s){
+  const places=s.coverage&&s.coverage.places&&typeof s.coverage.places==='object'?s.coverage.places:{};
+  let items=0,verified=0,drawn=0;const parts=[];
+  ['Infinite Vault','Shared Stash','Characters'].forEach(name=>{const p=places[name];if(!p)return;items+=Number(p.items)||0;verified+=Number(p.verified)||0;drawn+=Number(p.drawn)||0;
+    parts.push(`${name}: ${(Number(p.verified)||0).toLocaleString()} / ${(Number(p.items)||0).toLocaleString()} verified, ${(Number(p.drawn)||0).toLocaleString()} with game text`)});
+  return {items,verified,drawn,parts,missing:Number(s.coverage&&s.coverage.missing)||0,undrawn:Number(s.coverage&&s.coverage.undrawn)||0};
+}
+async function refreshTruthStatus(){
+  const pill=document.getElementById('truthstatus'),toggle=document.getElementById('truthcapture');if(!pill)return;
+  let s=null;try{s=await j('/api/truth/status')}catch(error){return}
+  if(!s||typeof s!=='object'||!s.active){pill.hidden=true;if(toggle)toggle.hidden=true;return}
+  pill.hidden=false;
+  const capture=s.capture||{},fp=capture.forgepact||null,on=!!capture.requested,live=!!capture.reporting;
+  const cov=truthCoverageTotals(s),ev=s.evaluation||null,progress=ev&&ev.progress?ev.progress:null;
+  const state=ev?ev.state:null,drawing=s.drawing||null,drawn=drawing&&drawing.progress?drawing.progress:null;
+  let text,color='#74ee98',border='#3da55e',action=null;
+  if(!on){text='GAME TRUTH · CAPTURE OFF';color='#ffd080';border='#a87329'}
+  else if(state==='running'){const done=Number(progress&&progress.done)||0,total=Number(progress&&progress.total)||Number(ev.items)||0;
+    text=`&#10227; GAME IS CHECKING ${done.toLocaleString()} / ${total.toLocaleString()} ITEMS`;color='#9fd0ff';border='#4f86b8'}
+  else if(state==='waiting'){text=`&#10227; ${Number(ev.items||0).toLocaleString()} ITEMS QUEUED · START THE GAME`;color='#9fd0ff';border='#4f86b8'}
+  else if(state==='stopped'){text='&#9888; THE LAST CHECK STOPPED · CLICK TO CLEAR';color='#ffb46e';border='#b8743b';action='clear'}
+  else if(cov.missing>0){text=`&#10003; ${cov.verified.toLocaleString()} / ${cov.items.toLocaleString()} VERIFIED · CHECK ${cov.missing.toLocaleString()} WITH THE GAME`;action='verify'}
+  else if(cov.undrawn>0&&drawing&&drawing.state==='running'){
+    text=`&#10003; ALL ${cov.items.toLocaleString()} VERIFIED · GAME TEXT ${cov.drawn.toLocaleString()} / ${cov.verified.toLocaleString()} · KEEP AN ITEM TOOLTIP OPEN IN THE GAME`;color='#9fd0ff';border='#4f86b8'}
+  else if(cov.undrawn>0)text=`&#10003; ALL ${cov.items.toLocaleString()} VERIFIED · GAME TEXT ${cov.drawn.toLocaleString()} / ${cov.verified.toLocaleString()} · HOVER AN ITEM IN THE GAME`;
+  else text=`&#10003; ALL ${cov.items.toLocaleString()} ITEMS VERIFIED · GAME TEXT FOR EVERY ITEM`;
+  pill.innerHTML=text;pill.style.color=color;pill.style.borderColor=border;
+  pill.title=[
+    'Tooltips show the values the game itself built.',
+    ...cov.parts,
+    s.currentBuildDate?`Game build: ${s.currentBuildDate}.`:'Game build: not found.',
+    `An item the game has not built yet is shown as an estimate (${s.modelBuildDate} rules).`,
+    'Game text: the tooltip exactly as the game draws it. While an item tooltip is open in the game, the game also draws the tooltips of your other items in the background, a few per frame; until then an item shows the game\'s own line labels.',
+    drawn&&drawing.state==='running'?`Drawing now: ${(Number(drawn.done)||0).toLocaleString()} / ${(Number(drawn.total)||0).toLocaleString()}.`:'',
+    on?(live?`ForgePact ${fp&&fp.forgepact?fp.forgepact+' ':''}is running: new items are recorded, and unverified ones are checked automatically.`
+      :'Items are recorded and checked while the game runs (ForgePact 1.4.5 or newer).')
+      :'Capture is off: nothing new is recorded or checked.',
+    action==='verify'?'Click to have the game check the unverified items now.':'',
+    action==='clear'?'The game closed or failed during a check. Clearing lets checks run again; an item that stops the game again is skipped next time.':'',
+  ].filter(Boolean).join('\n');
+  pill.onclick=async()=>{
+    if(action==='verify'){const r=await j('/api/truth/verify',{method:'POST',body:JSON.stringify({scope:'missing'})});flash(r);refreshTruthStatus()}
+    else if(action==='clear'){const r=await j('/api/truth/clear-stopped',{method:'POST',body:'{}'});flash(r);refreshTruthStatus()}
+  };
+  if(toggle){
+    toggle.hidden=false;toggle.textContent=on?'CAPTURE ON':'CAPTURE OFF';
+    toggle.title=on?'Recording is on. Click to turn it off (what was recorded stays).':'Recording is off. Click to turn it on.';
+    toggle.onclick=async()=>{
+      if(on&&!confirm('Turn game capture off? Tooltips keep what was already recorded; items the game builds from now on are not recorded or checked.'))return;
+      const r=await j('/api/truth/capture',{method:'POST',body:JSON.stringify({on:!on})});flash(r);refreshTruthStatus();
+    };
+  }
+  // A check or a drawing request just finished: the page's cached tooltips predate it.
+  const drawingState=drawing?drawing.state:null;
+  if((TRUTH_LAST_STATE==='running'&&state==='done')||(TRUTH_LAST_DRAWING==='running'&&drawingState!=='running')){
+    try{vaultTooltipCache.clear()}catch(error){}try{refresh()}catch(error){}
+  }else if(TRUTH_LAST_DRAWN!==null&&cov.drawn!==TRUTH_LAST_DRAWN){try{vaultTooltipCache.clear()}catch(error){}}
+  TRUTH_LAST_STATE=state;TRUTH_LAST_DRAWING=drawingState;TRUTH_LAST_DRAWN=cov.drawn;
+}
 // ---- item tooltip ----
-const TOOLTIP_RARITIES=new Set(['Satanic','Heroic','Angelic','Unholy','Runeword','Normal']);
+const TOOLTIP_RARITIES=new Set(['Satanic','Heroic','Angelic','Unholy','Runeword','Normal','Common','Superior','Rare','Legendary','Mythic']);
 function tooltipRarityClass(value){return TOOLTIP_RARITIES.has(value)?value:'_'}
 function tooltipLineKey(line,index){
   if(line&&line._comparisonKey)return String(line._comparisonKey);
@@ -10091,23 +10752,27 @@ function tooltipComparisonLayout(left,right){
   });
   return {keys,labels,differences:tooltipDifferenceKeys(left,right)};
 }
-function renderGameTooltip(model,options={}){
-  if(!model||typeof model!=='object')return '';
-  const item=model.item&&typeof model.item==='object'?model.item:{};
-  const calc=model.calculation&&typeof model.calculation==='object'?model.calculation:{};
-  const rarity=String(item.rarity||'?'),canonical=item.canonicalName||item.name||'Unknown item';
-  const custom=item.customName&&String(item.customName).trim()?String(item.customName).trim():'';
-  let h='<div class="game-tooltip">';
-  if(custom)h+=`<div class="gtt-alias">${esc(custom)}</div>`;
-  h+=`<div class="gtt-title r-${tooltipRarityClass(rarity)}">${esc(canonical)}</div>`;
-  const meta=[rarity,item.tier?`Tier ${item.tier}`:'',options.extra||''].filter(Boolean).map(esc).join(' &middot; ');
-  if(meta)h+=`<div class="gtt-type">${meta}</div>`;
-  if(item.requiredLevel)h+=`<div class="gtt-requirement">Requires Level ${esc(item.requiredLevel)}</div>`;
-  h+='<div class="gtt-rule"></div>';
-  const forged=model.customForge&&model.customForge.active?model.customForge:null;
-  if(forged)h+=`<div class="gtt-forged">CUSTOM FORGED · ${esc(forged.statCount)} runtime key${Number(forged.statCount)===1?'':'s'} · ${forged.keepNative?'native stats kept':'native stats replaced'}</div>`;
+// A colour the game drew with (#rrggbb from the game's own record), else the default.
+function gameColor(value){return /^#[0-9a-f]{6}$/i.test(String(value||''))?String(value):'inherit'}
+// The tooltip exactly as the game drew it: its rows, colours and section gaps.
+// Rows that draw a rolled stat get the editor's range hint after them.
+function renderGameTextRows(model){
+  const lines=new Map((Array.isArray(model.stats)?model.stats:[]).map(line=>[line&&line.statKey,line]));
+  let h='<div class="gtt-game">';
+  model.gameText.rows.forEach((row,index)=>{
+    if(!row||!Array.isArray(row.parts))return;
+    const parts=row.parts.map(part=>`<span style="color:${gameColor(part&&part.color)}">${esc(part&&part.text||'')}</span>`).join('');
+    const line=row.stat!=null&&!row.ranged?lines.get(row.stat):null;   // an ALT-view row shows the game's own range
+    const range=line&&line.rolled&&line.minimum!=null&&line.maximum!=null?`<small class="gtt-range">(${esc(line.minimum)}–${esc(line.maximum)})</small>`:'';
+    const classes=['gtt-row'];if(index===0)classes.push('gtt-name');if(row.gap)classes.push('gap');if(row.block)classes.push('block');
+    h+=`<div class="${classes.join(' ')}">${parts}${range}</div>`;
+  });
+  return h+'</div>';
+}
+// The stat lines one by one (the game has not drawn this tooltip, or two are compared).
+function renderTooltipLines(model,options){
   const nativeStats=Array.isArray(model.stats)?model.stats:[];
-  let stats=nativeStats;
+  let stats=nativeStats,h='';
   if(options.comparison&&Array.isArray(options.comparison.keys)){
     const own=new Map(nativeStats.map((line,index)=>[tooltipLineKey(line,index),line]));
     stats=options.comparison.keys.map(key=>own.get(key)||{
@@ -10116,39 +10781,96 @@ function renderGameTooltip(model,options={}){
     });
   }
   const differences=options.differences instanceof Set?options.differences:new Set();
-  if(stats.length){
-    stats.forEach((line,index)=>{
-      if(!line||typeof line!=='object')return;
-      const key=tooltipLineKey(line,index),value=line.formattedValue??line.sourceRange??'?';
-      const classes=['gtt-stat'];
-      if(line.confidence==='unresolved'||value==='?')classes.push('unresolved');
-      if(line.missing||line.confidence==='missing')classes.push('missing');
-      if(differences.has(key))classes.push('gtt-diff');
-      h+=`<div class="${classes.join(' ')}"><b>${esc(value)}</b><span>${esc(line.label||'Unknown stat')}</span></div>`;
-    });
-  }else h+='<div class="gtt-empty">No displayed stat lines were resolved.</div>';
+  if(!stats.length)return '<div class="gtt-empty">No displayed stat lines were resolved.</div>';
+  stats.forEach((line,index)=>{
+    if(!line||typeof line!=='object')return;
+    const key=tooltipLineKey(line,index),value=line.formattedValue??line.sourceRange??'?';
+    const classes=['gtt-stat'];
+    if(line.confidence==='unresolved'||value==='?')classes.push('unresolved');
+    if(line.missing||line.confidence==='missing')classes.push('missing');
+    if(line.role==='affix')classes.push('gtt-affix');
+    if(differences.has(key))classes.push('gtt-diff');
+    const range=line.rolled&&line.minimum!=null&&line.maximum!=null?`<small class="gtt-range">(${esc(line.minimum)}–${esc(line.maximum)})</small>`:'';
+    const game=line.game&&typeof line.game==='object'?line.game:null;
+    if(game){
+      // The game's own label, value text, colour and order for this line.
+      classes.push('gtt-gameline');
+      const text=game.valueFirst?`${game.value} ${game.label}`:`${game.label} ${game.value}`;
+      h+=`<div class="${classes.join(' ')}" style="color:${gameColor(game.color)}">${esc(text)}${range}</div>`;
+    }else h+=`<div class="${classes.join(' ')}"><b>${esc(value)}</b><span>${esc(line.label||'Unknown stat')}${range}</span></div>`;
+  });
+  return h;
+}
+function renderGameTooltip(model,options={}){
+  if(!model||typeof model!=='object')return '';
+  const item=model.item&&typeof model.item==='object'?model.item:{};
+  const calc=model.calculation&&typeof model.calculation==='object'?model.calculation:{};
+  const rarity=String(item.rarity||'?'),canonical=item.canonicalName||item.name||'Unknown item';
+  const custom=item.customName&&String(item.customName).trim()?String(item.customName).trim():'';
+  const gameText=!options.comparison&&model.gameText&&Array.isArray(model.gameText.rows)&&model.gameText.rows.length?model.gameText:null;
+  let h='<div class="game-tooltip">';
+  if(custom)h+=`<div class="gtt-alias">${esc(custom)}</div>`;
+  const forged=model.customForge&&model.customForge.active?model.customForge:null;
+  const forgedNote=forged?`<div class="gtt-forged">CUSTOM FORGED · ${esc(forged.statCount)} runtime key${Number(forged.statCount)===1?'':'s'} · ${forged.keepNative?'native stats kept':'native stats replaced'}</div>`:'';
+  if(gameText){
+    h+=forgedNote+renderGameTextRows(model);
+    if(options.extra)h+=`<div class="gtt-type">${esc(options.extra)}</div>`;
+  }else{
+    h+=`<div class="gtt-title r-${tooltipRarityClass(rarity)}">${esc(canonical)}</div>`;
+    const meta=[rarity,item.tier?`Tier ${item.tier}`:'',options.extra||''].filter(Boolean).map(esc).join(' &middot; ');
+    if(meta)h+=`<div class="gtt-type">${meta}</div>`;
+    if(item.requiredLevel)h+=`<div class="gtt-requirement">Requires Level ${esc(item.requiredLevel)}</div>`;
+    h+='<div class="gtt-rule"></div>'+forgedNote+renderTooltipLines(model,options);
+  }
+  const internal=Array.isArray(model.internalStats)?model.internalStats:[];
+  if(internal.length)h+=`<div class="gtt-internal advanced-only">Internal values (not drawn by the game): ${internal.map(line=>`${esc(line.label)} ${esc(line.formattedValue??line.value)}`).join(' &middot; ')}</div>`;
+  const detailClass=gameText?' advanced-only':'';
   const identities=Array.isArray(model.identities)?model.identities:[];
   identities.forEach(identity=>{
     if(!identity||typeof identity!=='object')return;
     const source=String(identity.source||''),label=source.includes('subskill')?'Subskill target':source.includes('damage_type')?'Damage type':source.includes('random_stat')?'Random stat identity':`Identity stat #${identity.statKey??'?'}`;
     const selected=identity.selectedName?String(identity.selectedName):(identity.selectedIdentity!=null?`#${identity.selectedIdentity}`:null);
     const details=[selected||'unresolved',identity.fixedValue!=null?`value ${identity.fixedValue}`:'',identity.attempts>1?`${identity.attempts} attempts`:''].filter(Boolean);
-    h+=`<div class="gtt-identity"><b>${esc(label)}</b> &middot; ${details.map(esc).join(' &middot; ')}</div>`;
+    h+=`<div class="gtt-identity${detailClass}"><b>${esc(label)}</b> &middot; ${details.map(esc).join(' &middot; ')}</div>`;
   });
   const sockets=Array.isArray(model.sockets)?model.sockets:[];
   sockets.forEach(socket=>{
     if(!socket||typeof socket!=='object')return;
     const details=socket.status==='decoded'?[`ID ${socket.baseId??'?'}`,socket.quantity!=null?`n=${socket.quantity}`:''].filter(Boolean):['unreadable payload'];
-    h+=`<div class="gtt-socket">Socket ${esc(socket.index??'?')} &middot; ${details.map(esc).join(' &middot; ')}</div>`;
+    h+=`<div class="gtt-socket${detailClass}">Socket ${esc(socket.index??'?')} &middot; ${details.map(esc).join(' &middot; ')}</div>`;
   });
   const exact=calc.numbersExact===true,quality=model.rollQuality&&typeof model.rollQuality==='object'?model.rollQuality:null;
   const seeds=model.seeds&&typeof model.seeds==='object'?Object.entries(model.seeds).map(([k,v])=>`${k}=${v}`).join(', '):'';
-  h+=`<div class="gtt-editor-meta advanced-only ${exact?'gtt-exact':'gtt-partial'}"><b>${exact?'EXACT NUMBERS':'SAFE PREVIEW'}</b>`;
+  const warnings=Array.isArray(calc.warnings)?calc.warnings.filter(Boolean):[];
+  const verification=model.verification&&typeof model.verification==='object'?model.verification:null;
+  const verified=calc.coverage==='game_verified',estimate=!verified&&verification&&verification.status==='estimate';
+  if(verified){
+    const current=verification&&verification.status==='current';
+    const when=verification&&Number(verification.recordedAt)>0?new Date(Number(verification.recordedAt)).toLocaleString():'';
+    const drawn=model.gameText&&Number(model.gameText.recordedAt)>0?new Date(Number(model.gameText.recordedAt)).toLocaleString():'';
+    if(current&&gameText){
+      h+=`<div class="gtt-source game-text" title="${esc(`The game drew this tooltip${drawn?' · '+drawn:''}; values the game itself built${when?' · '+when:''}`)}">&#10003; Game verified &middot; game text</div>`;
+    }else if(current&&calc.textSource==='table'){
+      h+=`<div class="gtt-source game-labels" title="${esc(`Values the game itself built${when?' · '+when:''}. Lines use the game's own labels, order and colours; the game has not drawn this item's tooltip yet, so the name, header and footer are the editor's.`)}">&#10003; Game verified &middot; game labels</div>`;
+    }else{
+      const title=current?`Values the game itself built${when?' · '+when:''}`:(warnings[0]||'Recorded by the game on an older build');
+      h+=`<div class="gtt-source ${current?'verified':'older'}" title="${esc(title)}">${current?'&#10003; Game verified':'Game record &middot; older build'}</div>`;
+    }
+  }else if(estimate){
+    h+=`<div class="gtt-source estimate" title="${esc(warnings[0]||'')}">Estimate &middot; not yet seen in the game</div>`;
+  }
+  const badge=verified?'GAME VERIFIED':estimate?'ESTIMATE':exact?'EXACT NUMBERS':'SAFE PREVIEW';
+  h+=`<div class="gtt-editor-meta advanced-only ${exact?'gtt-exact':'gtt-partial'}"><b>${badge}</b>`;
   if(quality&&Number(quality.total)>0)h+=` &middot; Max endpoints ${esc(quality.maxed)}/${esc(quality.total)}`;
   if(model.fingerprint)h+=` &middot; <span class="gtt-fingerprint">#${esc(model.fingerprint)}</span>`;
+  if(verified&&verification){
+    const origin={live:'recorded live',spool:'AFK FARM delivery',eval:'checked by the game'}[verification.source]||verification.source;
+    h+=`<br>${esc(origin)}${verification.buildDate?` &middot; build ${esc(verification.buildDate)}`:''}`;
+    const differences=Array.isArray(verification.estimateDifferences)?verification.estimateDifferences:[];
+    if(differences.length)h+=`<br>The editor's own replay differed on ${differences.length} line${differences.length===1?'':'s'}: ${differences.slice(0,4).map(d=>`${esc(d.label)} ${esc(d.estimate??'—')} &rarr; ${esc(d.game??'—')}`).join(', ')}`;
+  }
   if(seeds)h+=`<br>${esc(seeds)}`;
-  const warnings=Array.isArray(calc.warnings)?calc.warnings.filter(Boolean):[];
-  if(warnings.length)h+=`<br>${esc(warnings[0])}`;
+  if(warnings.length&&!verified)h+=`<br>${esc(warnings[0])}`;
   h+='</div></div>';
   return h;
 }
@@ -11964,6 +12686,7 @@ def main():
     if not servers or not server_threads:
         _show_startup_error("The local editor server could not be started.")
         return
+    _start_game_truth()
     try:
         native_window = _open_window(port)
         if not native_window:

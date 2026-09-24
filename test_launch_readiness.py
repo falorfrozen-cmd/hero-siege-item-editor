@@ -384,6 +384,7 @@ class LaunchReadinessTests(unittest.TestCase):
             "dice_skill_selector",
             "torch_class_selector",
             "game_build_identity",
+            "game_truth",
             "webview",
         ):
             self.assertIn(required, spec_text)

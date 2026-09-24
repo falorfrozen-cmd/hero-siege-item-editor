@@ -48,6 +48,7 @@ hiddenimports = [
     "custom_item_forge",
     "custom_forge_runtime",
     "stat_semantics",
+    "game_truth",
 ]
 webview_bundle = collect_all("webview")
 datas += webview_bundle[0]

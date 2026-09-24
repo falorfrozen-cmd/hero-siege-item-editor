@@ -8,6 +8,56 @@ A local/offline save editor for **Hero Siege** (Pixel Prone Games). Manage items
 
 Single file, no install, no Python needed. Just run it.
 
+## v2.16.0-s10 — tooltips show what the game built
+
+A save keeps only an item's seeds; the game works out every line — the rolled
+rarity, the magic prefix and suffix, up to five random affixes, socket shares —
+each time it builds the item, and game updates change that work. The editor used
+to redo it in Python with the 2026-08-28 build's rules: on the 2026-09-16 build
+only 199 of 755 owned items came out line for line, and no random affix was shown
+at all. Now the game is the referee:
+
+- **Game-verified tooltips.** ForgePact (1.4.5 or newer) records each item the
+  game finishes building, while the game runs; AFK FARM's delivery records already
+  hold every delivered item. The editor reads both into its own store and shows
+  the game's own values: the full name (`Slicing Short War Bow`), the rolled rarity
+  (Common, Superior, Rare, Mythic, …), the tier, the level requirement, every
+  affix with its range, and the real socket count. A green **✓ Game verified** line
+  says so; the details view lists where the editor's old estimate differed.
+- **The game checks everything you own.** While the game runs (even at the main
+  menu), the editor sends every item it has not verified yet — other characters,
+  the Vault, the Shared Stash — to ForgePact, and the game builds each one in memory
+  through its own save loader, records it and throws it away: nothing is dropped,
+  placed or saved. Measured: 342 items in about 2 seconds, after which all 7,628
+  owned items were verified (699 on characters, 127 in the Shared Stash, 6,802 in
+  the Vault).
+- **The game's own tooltip text.** While an item tooltip is open in the game,
+  ForgePact has the game also draw the tooltips of your other items off screen, a
+  few per frame, and records the text it drew. The editor shows each tooltip exactly
+  as the game draws it: the name and type line, socket contents, Attack Damage or
+  Defense, proc lines (`22% Chance when Casting [Fist of the Heavens] Level 70`),
+  every stat line with the game's wording, sign, order and colour, auras, sockets,
+  set pieces, star level, lore and the Tier / Requires Level footer, with the
+  editor's roll ranges beside the stats. Measured: the game drew 7,607 items in
+  about 2 minutes, and every owned item now shows the game's text. An item it has
+  not drawn yet shows its stat lines with the game's own labels, formats and colours
+  (on the 7,628 drawn tooltips, all 41,920 shared lines read the same).
+- **Honest estimates.** Until then, an item keeps the editor's own calculation,
+  labelled **Estimate** instead of EXACT NUMBERS unless the game runs the build
+  those rules were made for.
+- **Tiles in colour.** Bags, stash and Vault tiles take the rarity the game rolled.
+- **Item Forge** base stats come from the same records (the values before any
+  Custom Forge dressing).
+- The **GAME TRUTH** line under the item info shows how much is verified, the
+  progress of a check, and a manual check; **CAPTURE ON/OFF** next to it turns the
+  recording off or on (the choice is kept).
+
+Nothing is written into saves or the game: ForgePact only reads finished items and
+the text the game draws, and only while the editor asks for it
+(`%LOCALAPPDATA%\Hero_Siege\itemtruth\capture.request`). The design is in
+[GAME_TRUTH_DESIGN.md](GAME_TRUTH_DESIGN.md).
+See [the v2.16.0 release notes](RELEASE_NOTES_v2.16.0.md).
+
 ## Local build: v2.15.10-s10 — dismantle a whole AFK category
 
 - **DISMANTLE BY RARITY…** in the category **…** menu of an AFK expedition category

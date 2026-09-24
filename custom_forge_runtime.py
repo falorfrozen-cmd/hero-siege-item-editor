@@ -73,26 +73,37 @@ def running_game_exe() -> Path | None:
 
 
 def _running_game_exe_uncached() -> Path | None:
-    """Return the full path of a running Hero_Siege.exe, or None."""
+    """Return the full path of a running Hero_Siege.exe, or None.
+
+    PowerShell writes redirected output in the console's OEM code page, which
+    Python then read in the ANSI one: a game under "...\\Yeni klasör\\..." came
+    back as "Yeni klas”r" and matched nothing (2026-09-24). The command now
+    switches its output to UTF-8, the pipe is read as UTF-8, and a path that
+    does not exist is not returned."""
 
     command = (
+        "[Console]::OutputEncoding = [System.Text.Encoding]::UTF8; "
         "Get-CimInstance Win32_Process -Filter \"Name='Hero_Siege.exe'\" "
         "| Select-Object -First 1 -ExpandProperty ExecutablePath"
     )
     try:
         result = subprocess.run(
             ["powershell", "-NoProfile", "-NonInteractive", "-Command", command],
-            capture_output=True, text=True, timeout=8, creationflags=CREATE_NO_WINDOW,
+            capture_output=True, encoding="utf-8", errors="replace", timeout=8,
+            creationflags=CREATE_NO_WINDOW,
         )
     except Exception:
         return None
     if result.returncode != 0:
         return None
-    line = result.stdout.strip().splitlines()
+    line = (result.stdout or "").lstrip("﻿").strip().splitlines()
     if not line:
         return None
     candidate = line[0].strip()
-    return Path(candidate) if candidate else None
+    if not candidate:
+        return None
+    path = Path(candidate)
+    return path if path.is_file() else None
 
 
 def plugin_supports_forge(dll: Path) -> bool:
