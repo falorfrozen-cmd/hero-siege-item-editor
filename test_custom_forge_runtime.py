@@ -250,5 +250,30 @@ class EditorIntegrationTests(unittest.TestCase):
         self.assertIn('id="ifruntime"', editor.HTML)
 
 
+class RunningGameExeTests(unittest.TestCase):
+    """The running game's path comes back through a PowerShell pipe."""
+
+    def test_a_path_with_turkish_letters_survives_the_pipe(self):
+        import subprocess
+        import custom_forge_runtime as runtime
+        with tempfile.TemporaryDirectory() as folder:
+            exe = Path(folder) / "Yeni klasör" / "Hero_Siege.exe"
+            exe.parent.mkdir()
+            exe.write_bytes(b"MZ")
+            done = subprocess.CompletedProcess([], 0, stdout="\ufeff" + str(exe) + "\r\n", stderr="")
+            with patch.object(runtime.subprocess, "run", return_value=done) as run:
+                self.assertEqual(runtime._running_game_exe_uncached(), exe)
+            args, kwargs = run.call_args
+            self.assertEqual(kwargs.get("encoding"), "utf-8")
+            self.assertIn("[Console]::OutputEncoding = [System.Text.Encoding]::UTF8", args[0][-1])
+
+    def test_a_garbled_or_missing_path_is_not_returned(self):
+        import subprocess
+        import custom_forge_runtime as runtime
+        done = subprocess.CompletedProcess([], 0, stdout="C:\\Yeni klas\u201dr\\Hero_Siege.exe\r\n", stderr="")
+        with patch.object(runtime.subprocess, "run", return_value=done):
+            self.assertIsNone(runtime._running_game_exe_uncached())
+
+
 if __name__ == "__main__":
     unittest.main()
