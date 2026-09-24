@@ -225,6 +225,29 @@ class GameTruthCheckTests(SavesFixture):
         self.assertIsNotNone(request_id)
         self.assertEqual([line.split("\t")[0] for line in self.request_lines(request_id)], ["0-0-5-3"])
 
+    def test_clearing_a_stopped_check_strikes_the_item_it_stopped_on(self):
+        # The pill promises: clearing lets checks run again, and an item that stops
+        # the game again is skipped next time.
+        gt.request_capture(self.truth, editor_version="t")
+        self.live()
+        stop = lambda request_id: (self.truth / "requests" / f"{request_id}.req").rename(
+            self.truth / "requests" / f"{request_id}.stopped")
+        first = editor._truth_auto_check_once()
+        stop(first)
+        self.assertIsNone(editor._truth_auto_check_once(), "a stopped check waits for the player")
+        editor.op_truth_clear_stopped({})
+        self.assertEqual(editor._truth_store().request_strikes(BUILD, "eval"), {"0-0-5-3": 1})
+        second = editor._truth_auto_check_once()
+        self.assertEqual([line.split("\t")[0] for line in self.request_lines(second)], ["0-0-5-3"],
+                         "one strike: asked about again")
+        stop(second)
+        editor.op_truth_clear_stopped({})
+        self.assertEqual(editor._truth_store().request_strikes(BUILD, "eval"), {"0-0-5-3": 2})
+        editor._truth_auto_check_once()
+        self.assertEqual(gt.request_files(self.truth)["waiting"], [], "two strikes: not asked about again")
+        manual = editor.op_truth_verify({"scope": "missing"})
+        self.assertIn("stopped the game twice", manual["ok"])
+
     def test_an_item_the_game_could_not_build_is_not_asked_about_again(self):
         gt.request_capture(self.truth, editor_version="t")
         self.live()
@@ -309,12 +332,12 @@ class GameTextDrawingTests(SavesFixture):
         second = editor._truth_auto_check_once()
         self.assertNotEqual(first, second)
         self.assertFalse((self.truth / "tips" / f"{first}.stopped").exists(), "a stopped drawing is cleared on its own")
-        self.assertEqual(editor._truth_store().drawing_strikes(BUILD), {BELT_KEY: 1})
+        self.assertEqual(editor._truth_store().request_strikes(BUILD, "tipdraw"), {BELT_KEY: 1})
         self.assertEqual([line.split("\t")[0] for line in self.drawing_lines(second)], [BELT_KEY],
                          "one strike: asked for again")
         (self.truth / "tips" / f"{second}.req").rename(self.truth / "tips" / f"{second}.stopped")
         self.assertIsNone(editor._truth_auto_check_once(), "two strikes: not asked for again on this build")
-        self.assertEqual(editor._truth_store().drawing_strikes(BUILD), {BELT_KEY: 2})
+        self.assertEqual(editor._truth_store().request_strikes(BUILD, "tipdraw"), {BELT_KEY: 2})
 
     def test_a_drawing_the_editor_cannot_tie_is_not_asked_for_again(self):
         request_id = editor._truth_auto_check_once()

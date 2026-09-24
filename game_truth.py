@@ -596,28 +596,29 @@ class TruthStore:
             keys.add((row[0], "#" + row[1]))
         return keys
 
-    # A drawing request cut short leaves the item it was drawing under suspicion:
-    # the game may have closed on it. An item suspected twice is not asked for
-    # again on that build (hovering it in the game still records it).
-    def drawing_strikes(self, build: str | None) -> dict[str, int]:
-        if not build:
+    # A request cut short (``kind`` "eval" for a check, "tipdraw" for drawings)
+    # leaves the item it was on under suspicion: the game may have closed on it.
+    # An item suspected twice is not asked about again on that build (loading or
+    # hovering it in the game still records it).
+    def request_strikes(self, build: str | None, kind: str) -> dict[str, int]:
+        if not build or kind not in REQUEST_FOLDERS:
             return {}
-        row = self._connection().execute("SELECT value FROM meta WHERE key=?", ("tipdraw-strikes:" + build,)).fetchone()
+        row = self._connection().execute("SELECT value FROM meta WHERE key=?", (f"{kind}-strikes:{build}",)).fetchone()
         try:
             strikes = json.loads(row["value"]) if row is not None else {}
         except ValueError:
             strikes = {}
         return {str(key): int(count) for key, count in strikes.items()} if isinstance(strikes, dict) else {}
 
-    def strike_drawing(self, build: str | None, keys: Iterable[str]) -> dict[str, int]:
-        strikes = self.drawing_strikes(build)
-        if not build:
+    def strike_request(self, build: str | None, keys: Iterable[str], kind: str) -> dict[str, int]:
+        strikes = self.request_strikes(build, kind)
+        if not build or kind not in REQUEST_FOLDERS:
             return strikes
         for key in keys:
             strikes[str(key)] = strikes.get(str(key), 0) + 1
         with self._write_lock:
             self._connection().execute("INSERT OR REPLACE INTO meta(key, value) VALUES (?, ?)",
-                                       ("tipdraw-strikes:" + build, json.dumps(strikes, sort_keys=True)))
+                                       (f"{kind}-strikes:{build}", json.dumps(strikes, sort_keys=True)))
         return strikes
 
     def tooltip_table(self, build: str | None) -> list | None:

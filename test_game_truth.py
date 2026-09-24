@@ -435,11 +435,14 @@ class EvaluationRequestTests(unittest.TestCase):
              "failed": 0, "rejected": 0, "finished": False}) + "\n", encoding="utf-8")
         store.ingest_journal_dir(journal)
         self.assertEqual((store.evaluation("18-cd")["done"], store.evaluation("18-cd")["total"]), (6, 9))
-        self.assertEqual(store.strike_drawing(BUILD, ["0-0-6-3"]), {"0-0-6-3": 1})
+        self.assertEqual(store.strike_request(BUILD, ["0-0-6-3"], "tipdraw"), {"0-0-6-3": 1})
         store.close()
         again = gt.TruthStore(self.folder / "truth.sqlite3")
-        self.assertEqual(again.strike_drawing(BUILD, ["0-0-6-3", "0-0-7-3"]), {"0-0-6-3": 2, "0-0-7-3": 1})
-        self.assertEqual(again.drawing_strikes("pe-other"), {})
+        self.assertEqual(again.strike_request(BUILD, ["0-0-6-3", "0-0-7-3"], "tipdraw"), {"0-0-6-3": 2, "0-0-7-3": 1})
+        self.assertEqual(again.request_strikes(BUILD, "eval"), {}, "checks and drawings keep their own strikes")
+        self.assertEqual(again.strike_request(BUILD, ["0-0-6-3"], "eval"), {"0-0-6-3": 1})
+        self.assertEqual(again.request_strikes("pe-other", "tipdraw"), {})
+        self.assertEqual(again.request_strikes(BUILD, "unknown"), {})
         again.close()
 
     def test_progress_lines_are_kept_per_request_and_never_go_back(self):

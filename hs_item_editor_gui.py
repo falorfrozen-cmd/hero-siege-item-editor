@@ -1864,11 +1864,16 @@ def op_truth_verify(body: dict) -> dict:
         entries = [(key, data) for _, key, data in _owned_item_payloads()]
     else:
         entries = list(_truth_coverage(force=True)["missing"])
+    wanted = _without_struck_out(entries, "eval")
+    skipped = len(entries) - len(wanted)
     try:
-        request_id, count = _queue_truth_check(entries, scope)
+        request_id, count = _queue_truth_check(wanted, scope)
     except OSError as exc:
         return {"err": f"The check could not be queued: {exc}"}
     if not request_id:
+        if skipped:
+            return {"ok": f"Nothing to check: {skipped:,} item(s) stopped the game twice and are skipped on this build.",
+                    "status": game_truth_status()}
         return {"ok": "Every item is already verified by the game.", "status": game_truth_status()}
     when = "now" if capture["reporting"] else "as soon as Hero Siege runs with ForgePact 1.4.5 or newer"
     return {"ok": f"The game will check {count:,} items {when}.", "request": request_id, "items": count,
@@ -1876,11 +1881,44 @@ def op_truth_verify(body: dict) -> dict:
 
 
 def op_truth_clear_stopped(body: dict) -> dict:
-    """Forget an unfinished check (the game stopped during it) so checks can run again."""
+    """Forget an unfinished check (the game stopped during it) so checks can run
+    again. The item the check stopped on gets a strike first: an item that stops
+    the game a second time is not asked about again on this build."""
     if not GAME_TRUTH_ACTIVE:
         return {"err": "Game truth is not running in this editor."}
+    store = _truth_store()
+    build, _ = _current_game_build()
+    if store is not None and build:
+        missing = {key for key, _ in _truth_coverage(force=True)["missing"]}
+        _strike_stopped_requests("eval", store, build, missing)
     removed = game_truth.clear_stopped_requests(ITEM_TRUTH_DIR)
     return {"ok": f"Cleared {removed} unfinished check(s).", "status": game_truth_status()}
+
+
+def _strike_stopped_requests(kind: str, store, build: str, pending: set) -> list:
+    """Give a strike to the item each stopped request of ``kind`` was on when the
+    game closed or failed: the first of its items, in the order the game took them,
+    that the game has still not done (``pending``)."""
+    suspects = []
+    for request_id in game_truth.request_files(ITEM_TRUTH_DIR, kind)["stopped"]:
+        keys = game_truth.stopped_request_keys(ITEM_TRUTH_DIR, request_id, kind)
+        suspect = next((key for key in keys if key in pending), None)
+        if suspect is not None:
+            suspects.append(suspect)
+    if suspects:
+        store.strike_request(build, suspects, kind)
+    return suspects
+
+
+def _without_struck_out(entries: list, kind: str) -> list:
+    """Entries minus items with two strikes on the running build; items with one
+    strike go last, so an innocent one is not the first again."""
+    store = _truth_store()
+    build, _ = _current_game_build()
+    strikes = store.request_strikes(build, kind) if store is not None and build else {}
+    kept = [(key, data) for key, data in entries if strikes.get(key, 0) < 2]
+    kept.sort(key=lambda entry: strikes.get(entry[0], 0))
+    return kept
 
 
 def _truth_auto_check_once() -> str | None:
@@ -1900,7 +1938,8 @@ def _truth_auto_check_once() -> str | None:
         if progress and progress["finished"]:
             still = {key for key, _ in coverage["missing"]}
             _TRUTH_GIVEN_UP.update(key for key in last["keys"] if key in still)
-    missing = [(key, data) for key, data in coverage["missing"] if key not in _TRUTH_GIVEN_UP]
+    missing = _without_struck_out(
+        [(key, data) for key, data in coverage["missing"] if key not in _TRUTH_GIVEN_UP], "eval")
     if not missing:
         return _truth_auto_draw_once(coverage, store)
     request_id, _ = _queue_truth_check(missing, "auto")
@@ -1933,21 +1972,12 @@ def _truth_auto_draw_once(coverage: dict, store) -> str | None:
         if progress and progress["finished"]:
             _TRUTH_DRAW_GIVEN_UP.update(key for key in last.get("keys") or () if key in undrawn_keys)
     if files["stopped"]:
-        suspects = []
-        for request_id in files["stopped"]:
-            keys = game_truth.stopped_request_keys(ITEM_TRUTH_DIR, request_id)
-            suspect = next((key for key in keys if key in undrawn_keys), None)
-            if suspect is not None:
-                suspects.append(suspect)
-        store.strike_drawing(build, suspects)
+        _strike_stopped_requests("tipdraw", store, build, undrawn_keys)
         game_truth.clear_stopped_requests(ITEM_TRUTH_DIR, "tipdraw")
     if files["waiting"] or files["running"]:
         return None
-    strikes = store.drawing_strikes(build)
-    wanted = [(key, data) for key, data in coverage["undrawn"]
-              if strikes.get(key, 0) < 2 and key not in _TRUTH_DRAW_GIVEN_UP]
-    # Items with one strike go last, so an innocent one is not first again.
-    wanted.sort(key=lambda entry: strikes.get(entry[0], 0))
+    wanted = _without_struck_out(
+        [(key, data) for key, data in coverage["undrawn"] if key not in _TRUTH_DRAW_GIVEN_UP], "tipdraw")
     if not wanted:
         return None
     request_id, count = game_truth.write_eval_request(ITEM_TRUTH_DIR, wanted, kind="tipdraw")

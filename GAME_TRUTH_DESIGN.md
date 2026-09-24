@@ -126,9 +126,11 @@ rest: every item the player owns, whether or not the game has loaded it.
   the editor reads records and progress in order. The file is deleted when done.
 - **Never a crash loop.** A request the game was working on when it closed or
   failed is renamed `.stopped` at the next start and never resumed on its own;
-  the editor shows it and waits for the player to clear it. Items of a finished
-  check that still could not be verified are not asked about again in that
-  editor session.
+  the editor shows it and waits for the player to clear it. Clearing gives the
+  item the check stopped on (the first of its items the game has still not
+  built) a strike and puts it last; an item that stops the game twice is not
+  asked about again on that build. Items of a finished check that still could
+  not be verified are not asked about again in that editor session.
 - **Automatic.** Every 30 s, while ForgePact reports that the game runs (its
   `status.json` has a 30 s heartbeat), the editor queues whatever it owns that is
   not verified on the running build: after a game update, everything again. The
