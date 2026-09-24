@@ -128,9 +128,12 @@ rest: every item the player owns, whether or not the game has loaded it.
   failed is renamed `.stopped` at the next start and never resumed on its own;
   the editor shows it and waits for the player to clear it. Clearing gives the
   item the check stopped on (the first of its items the game has still not
-  built) a strike and puts it last; an item that stops the game twice is not
-  asked about again on that build. Items of a finished check that still could
-  not be verified are not asked about again in that editor session.
+  built) a strike and puts it last, if the check was what the game was doing as
+  the session ended - its journal closes on the check's own lines, or one line
+  after them; a check the player went on playing after blames no item. An item
+  that stops the game twice is not asked about again on that build. Items of a
+  finished check that still could not be verified are not asked about again in
+  that editor session.
 - **Automatic.** Every 30 s, while ForgePact reports that the game runs (its
   `status.json` has a 30 s heartbeat), the editor queues whatever it owns that is
   not verified on the running build: after a game update, everything again. The
@@ -175,10 +178,12 @@ tooltip is not rebuilt from rules, it is recorded as the game draws it.
   font, alignment) is put back. Each drawing is journaled like one the player saw,
   with `"req":"<id>"`; progress lines are `"kind":"tipdraw"`.
 - A request cut short (the game closed or failed) is set aside as `.stopped` at the
-  next start. The editor clears it on its own; the item it stopped on gets a strike,
-  and an item with two strikes is not asked for again on that build (hovering it
-  still records it). An item a finished request drew that the editor still cannot
-  tie to its record is not asked for again in that session.
+  next start. The editor clears it on its own. When the drawing was what the game
+  was doing as the session ended, the item it stopped on gets a strike, and an item
+  with two strikes is not asked for again on that build (hovering it still records
+  it); a drawing paused while the player played on and then quit blames no item.
+  An item a finished request drew that the editor still cannot tie to its record is
+  not asked for again in that session.
 - **Measured 2026-09-24:** 7,607 tooltips in about 2 minutes of an open tooltip
   (6 per frame, 0 failures), after which all 7,628 owned items showed the game's
   own text.

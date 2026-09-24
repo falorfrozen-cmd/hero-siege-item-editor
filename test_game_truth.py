@@ -426,6 +426,36 @@ class EvaluationRequestTests(unittest.TestCase):
         self.assertEqual(gt.clear_stopped_requests(self.folder, "tipdraw"), 1)
         self.assertEqual(gt.request_files(self.folder, "tipdraw")["stopped"], [])
 
+    def test_a_session_ending_on_a_request_names_it_and_play_after_it_does_not(self):
+        store = gt.TruthStore(self.folder / "truth.sqlite3")
+        journal = self.folder / "journal"
+        journal.mkdir()
+        progress = lambda req, kind="eval": json.dumps({"v": 1, "kind": kind, "req": req, "build": BUILD, "t": 1,
+                                                        "total": 2, "done": 0, "ok": 0, "failed": 0, "rejected": 0,
+                                                        "finished": False}) + "\n"
+        drawing = lambda req: json.dumps({"v": 1, "kind": "tooltip", "build": BUILD, "t": 2, "ts": "9", "hash": "h",
+                                          "req": req, "args": [], "rows": [], "stats": []}) + "\n"
+        table = json.dumps({"v": 1, "kind": "tooltip-table", "build": BUILD, "t": 3, "stats": []}) + "\n"
+        # A check that crashed on its second item: its progress, then the first item built.
+        (journal / "live-a-1.ndjson").write_text(progress("1-a") + journal_line("5", src="eval"), encoding="utf-8")
+        # A drawing paused, then two items of ordinary play before the quit.
+        (journal / "live-b-1.ndjson").write_text(progress("2-b", "tipdraw") + drawing("2-b") + journal_line("6")
+                                                 + journal_line("7"), encoding="utf-8")
+        # A drawing that ended the session: its stat table counts nothing.
+        (journal / "live-c-1.ndjson").write_text(progress("3-c", "tipdraw") + journal_line("8") + drawing("3-c")
+                                                 + table, encoding="utf-8")
+        store.ingest_journal_dir(journal)
+        self.assertTrue(store.request_ended_session("1-a"))
+        self.assertFalse(store.request_ended_session("2-b"))
+        self.assertTrue(store.request_ended_session("3-c"))
+        self.assertFalse(store.request_ended_session("4-d"))
+        # An eval record carries its request: it starts the count again.
+        (journal / "live-b-2.ndjson").write_text(json.dumps({**json.loads(journal_line("9", src="eval")), "req": "2-b"})
+                                                 + "\n", encoding="utf-8")
+        store.ingest_journal_dir(journal)
+        self.assertTrue(store.request_ended_session("2-b"), "a journal's parts continue each other")
+        store.close()
+
     def test_drawing_progress_and_strikes_are_kept(self):
         store = gt.TruthStore(self.folder / "truth.sqlite3")
         journal = self.folder / "journal"

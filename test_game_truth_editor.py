@@ -8,6 +8,7 @@ import json
 import os
 import shutil
 import tempfile
+import threading
 import time
 import unittest
 from pathlib import Path
@@ -177,6 +178,27 @@ class SavesFixture(unittest.TestCase):
     def request_lines(self, request_id):
         return (self.truth / "requests" / f"{request_id}.req").read_text(encoding="utf-8").splitlines()
 
+    def append_journal(self, *records):
+        with (self.truth / "journal" / "live.ndjson").open("a", encoding="utf-8") as handle:
+            handle.write("".join((record if isinstance(record, str) else json.dumps(record) + "\n")
+                                 for record in records))
+        editor._truth_store().ingest_journal_dir(self.truth / "journal")
+        editor._TRUTH_COVERAGE.update(at=-1e9, value=None)
+
+    @staticmethod
+    def progress(request_id, kind="eval", done=0, finished=False):
+        return {"v": 1, "kind": kind, "req": request_id, "build": BUILD, "t": 5, "total": 1, "done": done,
+                "ok": done, "failed": 0, "rejected": 0, "finished": finished}
+
+    def stop(self, request_id, folder="requests", ended_on_it=True):
+        """The game took the request; the session then ended on it (a crash or a
+        quit while it ran), or after the player went on playing."""
+        records = [self.progress(request_id, "eval" if folder == "requests" else "tipdraw")]
+        if not ended_on_it:
+            records += [belt_record(ts="1", hash="play-1"), belt_record(ts="2", hash="play-2")]
+        self.append_journal(*records)
+        (self.truth / folder / f"{request_id}.req").rename(self.truth / folder / f"{request_id}.stopped")
+
 
 class GameTruthCheckTests(SavesFixture):
     """Step 2: the editor asks the game to build the items it has not verified."""
@@ -230,23 +252,57 @@ class GameTruthCheckTests(SavesFixture):
         # the game again is skipped next time.
         gt.request_capture(self.truth, editor_version="t")
         self.live()
-        stop = lambda request_id: (self.truth / "requests" / f"{request_id}.req").rename(
-            self.truth / "requests" / f"{request_id}.stopped")
         first = editor._truth_auto_check_once()
-        stop(first)
+        self.stop(first)
         self.assertIsNone(editor._truth_auto_check_once(), "a stopped check waits for the player")
+        self.assertEqual(editor.game_truth_status()["evaluation"]["state"], "stopped")
         editor.op_truth_clear_stopped({})
+        self.assertIsNone(editor.game_truth_status()["evaluation"], "the status line lets go of a cleared check")
         self.assertEqual(editor._truth_store().request_strikes(BUILD, "eval"), {"0-0-5-3": 1})
         second = editor._truth_auto_check_once()
         self.assertEqual([line.split("\t")[0] for line in self.request_lines(second)], ["0-0-5-3"],
                          "one strike: asked about again")
-        stop(second)
+        self.stop(second)
         editor.op_truth_clear_stopped({})
         self.assertEqual(editor._truth_store().request_strikes(BUILD, "eval"), {"0-0-5-3": 2})
         editor._truth_auto_check_once()
         self.assertEqual(gt.request_files(self.truth)["waiting"], [], "two strikes: not asked about again")
         manual = editor.op_truth_verify({"scope": "missing"})
         self.assertIn("stopped the game twice", manual["ok"])
+
+    def test_a_check_the_player_played_on_after_suspects_nothing(self):
+        gt.request_capture(self.truth, editor_version="t")
+        self.live()
+        first = editor._truth_auto_check_once()
+        self.stop(first, ended_on_it=False)
+        editor.op_truth_clear_stopped({})
+        self.assertEqual(editor._truth_store().request_strikes(BUILD, "eval"), {}, "an ordinary quit is no strike")
+        second = editor._truth_auto_check_once()
+        self.assertEqual([line.split("\t")[0] for line in self.request_lines(second)], ["0-0-5-3"])
+
+    def test_a_click_and_the_automatic_check_never_queue_two_checks(self):
+        gt.request_capture(self.truth, editor_version="t")
+        self.live()
+        original = editor._truth_coverage
+
+        def slow(force=False):
+            time.sleep(0.2)   # the 1-2 s a large Vault takes, shortened
+            return original(force=force)
+
+        def run(target, *args):
+            try:
+                target(*args)
+            finally:
+                editor._truth_store().close()   # this thread's own connection
+
+        with mock.patch.object(editor, "_truth_coverage", slow):
+            threads = [threading.Thread(target=run, args=(editor._truth_auto_check_once,)),
+                       threading.Thread(target=run, args=(editor.op_truth_verify, {"scope": "missing"}))]
+            for thread in threads:
+                thread.start()
+            for thread in threads:
+                thread.join(10)
+        self.assertEqual(len(gt.request_files(self.truth)["waiting"]), 1)
 
     def test_an_item_the_game_could_not_build_is_not_asked_about_again(self):
         gt.request_capture(self.truth, editor_version="t")
@@ -299,12 +355,6 @@ class GameTextDrawingTests(SavesFixture):
     def drawing_lines(self, request_id, suffix=".req"):
         return (self.truth / "tips" / f"{request_id}{suffix}").read_text(encoding="utf-8").splitlines()
 
-    def append_journal(self, *records):
-        with (self.truth / "journal" / "live.ndjson").open("a", encoding="utf-8") as handle:
-            handle.write("".join(json.dumps(record) + "\n" for record in records))
-        editor._truth_store().ingest_journal_dir(self.truth / "journal")
-        editor._TRUTH_COVERAGE.update(at=-1e9, value=None)
-
     def test_verified_items_are_sent_to_be_drawn(self):
         request_id = editor._truth_auto_check_once()
         self.assertEqual([line.split("\t")[0] for line in self.drawing_lines(request_id)], [BELT_KEY])
@@ -328,16 +378,25 @@ class GameTextDrawingTests(SavesFixture):
 
     def test_a_drawing_cut_short_strikes_the_item_it_stopped_on(self):
         first = editor._truth_auto_check_once()
-        (self.truth / "tips" / f"{first}.req").rename(self.truth / "tips" / f"{first}.stopped")
+        self.stop(first, "tips")
         second = editor._truth_auto_check_once()
         self.assertNotEqual(first, second)
         self.assertFalse((self.truth / "tips" / f"{first}.stopped").exists(), "a stopped drawing is cleared on its own")
         self.assertEqual(editor._truth_store().request_strikes(BUILD, "tipdraw"), {BELT_KEY: 1})
         self.assertEqual([line.split("\t")[0] for line in self.drawing_lines(second)], [BELT_KEY],
                          "one strike: asked for again")
-        (self.truth / "tips" / f"{second}.req").rename(self.truth / "tips" / f"{second}.stopped")
+        self.stop(second, "tips")
         self.assertIsNone(editor._truth_auto_check_once(), "two strikes: not asked for again on this build")
         self.assertEqual(editor._truth_store().request_strikes(BUILD, "tipdraw"), {BELT_KEY: 2})
+
+    def test_a_drawing_paused_before_an_ordinary_quit_strikes_nothing(self):
+        # Drawing runs only while a tooltip is open: the player closes it, plays
+        # on and quits, and the request comes back stopped with no one to blame.
+        first = editor._truth_auto_check_once()
+        self.stop(first, "tips", ended_on_it=False)
+        second = editor._truth_auto_check_once()
+        self.assertEqual(editor._truth_store().request_strikes(BUILD, "tipdraw"), {})
+        self.assertEqual([line.split("\t")[0] for line in self.drawing_lines(second)], [BELT_KEY])
 
     def test_a_drawing_the_editor_cannot_tie_is_not_asked_for_again(self):
         request_id = editor._truth_auto_check_once()

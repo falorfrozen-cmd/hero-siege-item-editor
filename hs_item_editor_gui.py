@@ -1818,24 +1818,27 @@ def _truth_coverage(force: bool = False) -> dict:
 # verify (never asked about again automatically in this session).
 _TRUTH_LAST_REQUEST: dict = {"id": None, "keys": frozenset(), "scope": None, "items": 0}
 _TRUTH_GIVEN_UP: set = set()
+# One writer of requests at a time: a click on the pill (a server thread) and the
+# automatic check (its own thread) each look for a queued request, then write one.
+_TRUTH_QUEUE_LOCK = threading.RLock()
 
 
 def _truth_evaluation_state(store) -> dict | None:
     request_id = _TRUTH_LAST_REQUEST.get("id")
     files = game_truth.request_files(ITEM_TRUTH_DIR)
-    if not request_id:
-        return {"state": "stopped", "request": files["stopped"][-1]} if files["stopped"] else None
-    progress = store.evaluation(request_id) if store is not None else None
-    if request_id in files["stopped"]:
+    progress = store.evaluation(request_id) if store is not None and request_id else None
+    if request_id and request_id in files["stopped"]:
         state = "stopped"
     elif progress and progress["finished"]:
         state = "done"
-    elif request_id in files["running"] or progress:
+    elif request_id and request_id in files["running"]:
         state = "running"
-    elif request_id in files["waiting"]:
+    elif request_id and request_id in files["waiting"]:
         state = "waiting"
     else:
-        state = "done" if progress else "waiting"
+        # No request of ours, or it is gone unfinished (cleared, or its last
+        # progress line not read yet): only a stopped check is worth showing.
+        return {"state": "stopped", "request": files["stopped"][-1]} if files["stopped"] else None
     return {"state": state, "request": request_id, "items": _TRUTH_LAST_REQUEST.get("items"),
             "scope": _TRUTH_LAST_REQUEST.get("scope"), "progress": progress}
 
@@ -1857,19 +1860,20 @@ def op_truth_verify(body: dict) -> dict:
     capture = game_truth.capture_status(ITEM_TRUTH_DIR)
     if not capture["requested"]:
         return {"err": "Game capture is off. Turn it on first; the game only checks items while it is on."}
-    files = game_truth.request_files(ITEM_TRUTH_DIR)
-    if files["waiting"] or files["running"]:
-        return {"err": "A check is already queued or running."}
-    if scope == "all":
-        entries = [(key, data) for _, key, data in _owned_item_payloads()]
-    else:
-        entries = list(_truth_coverage(force=True)["missing"])
-    wanted = _without_struck_out(entries, "eval")
-    skipped = len(entries) - len(wanted)
-    try:
-        request_id, count = _queue_truth_check(wanted, scope)
-    except OSError as exc:
-        return {"err": f"The check could not be queued: {exc}"}
+    with _TRUTH_QUEUE_LOCK:
+        files = game_truth.request_files(ITEM_TRUTH_DIR)
+        if files["waiting"] or files["running"]:
+            return {"err": "A check is already queued or running."}
+        if scope == "all":
+            entries = [(key, data) for _, key, data in _owned_item_payloads()]
+        else:
+            entries = list(_truth_coverage(force=True)["missing"])
+        wanted = _without_struck_out(entries, "eval")
+        skipped = len(entries) - len(wanted)
+        try:
+            request_id, count = _queue_truth_check(wanted, scope)
+        except OSError as exc:
+            return {"err": f"The check could not be queued: {exc}"}
     if not request_id:
         if skipped:
             return {"ok": f"Nothing to check: {skipped:,} item(s) stopped the game twice and are skipped on this build.",
@@ -1886,21 +1890,30 @@ def op_truth_clear_stopped(body: dict) -> dict:
     the game a second time is not asked about again on this build."""
     if not GAME_TRUTH_ACTIVE:
         return {"err": "Game truth is not running in this editor."}
-    store = _truth_store()
-    build, _ = _current_game_build()
-    if store is not None and build:
-        missing = {key for key, _ in _truth_coverage(force=True)["missing"]}
-        _strike_stopped_requests("eval", store, build, missing)
-    removed = game_truth.clear_stopped_requests(ITEM_TRUTH_DIR)
+    with _TRUTH_QUEUE_LOCK:
+        stopped = set(game_truth.request_files(ITEM_TRUTH_DIR)["stopped"])
+        store = _truth_store()
+        build, _ = _current_game_build()
+        if store is not None and build:
+            missing = {key for key, _ in _truth_coverage(force=True)["missing"]}
+            _strike_stopped_requests("eval", store, build, missing)
+        removed = game_truth.clear_stopped_requests(ITEM_TRUTH_DIR)
+        if _TRUTH_LAST_REQUEST.get("id") in stopped:
+            # Nothing is left to follow: the status line must not wait on it.
+            _TRUTH_LAST_REQUEST.update(id=None, keys=frozenset(), scope=None, items=0)
     return {"ok": f"Cleared {removed} unfinished check(s).", "status": game_truth_status()}
 
 
 def _strike_stopped_requests(kind: str, store, build: str, pending: set) -> list:
     """Give a strike to the item each stopped request of ``kind`` was on when the
     game closed or failed: the first of its items, in the order the game took them,
-    that the game has still not done (``pending``)."""
+    that the game has still not done (``pending``). Only when the request was what
+    the game was doing as its session ended: a drawing paused while the player
+    went on playing and then quit is not a suspect."""
     suspects = []
     for request_id in game_truth.request_files(ITEM_TRUTH_DIR, kind)["stopped"]:
+        if not store.request_ended_session(request_id):
+            continue
         keys = game_truth.stopped_request_keys(ITEM_TRUTH_DIR, request_id, kind)
         suspect = next((key for key in keys if key in pending), None)
         if suspect is not None:
@@ -1927,23 +1940,24 @@ def _truth_auto_check_once() -> str | None:
     capture = game_truth.capture_status(ITEM_TRUTH_DIR)
     if not capture["requested"] or not capture["reporting"]:
         return None
-    files = game_truth.request_files(ITEM_TRUTH_DIR)
-    if files["waiting"] or files["running"] or files["stopped"]:
-        return None   # a stopped check waits for the player: it may be what stopped the game
-    coverage = _truth_coverage(force=True)
-    last = _TRUTH_LAST_REQUEST
-    store = _truth_store()
-    if last.get("id") and store is not None:
-        progress = store.evaluation(last["id"])
-        if progress and progress["finished"]:
-            still = {key for key, _ in coverage["missing"]}
-            _TRUTH_GIVEN_UP.update(key for key in last["keys"] if key in still)
-    missing = _without_struck_out(
-        [(key, data) for key, data in coverage["missing"] if key not in _TRUTH_GIVEN_UP], "eval")
-    if not missing:
-        return _truth_auto_draw_once(coverage, store)
-    request_id, _ = _queue_truth_check(missing, "auto")
-    return request_id
+    with _TRUTH_QUEUE_LOCK:
+        files = game_truth.request_files(ITEM_TRUTH_DIR)
+        if files["waiting"] or files["running"] or files["stopped"]:
+            return None   # a stopped check waits for the player: it may be what stopped the game
+        coverage = _truth_coverage(force=True)
+        last = _TRUTH_LAST_REQUEST
+        store = _truth_store()
+        if last.get("id") and store is not None:
+            progress = store.evaluation(last["id"])
+            if progress and progress["finished"]:
+                still = {key for key, _ in coverage["missing"]}
+                _TRUTH_GIVEN_UP.update(key for key in last["keys"] if key in still)
+        missing = _without_struck_out(
+            [(key, data) for key, data in coverage["missing"] if key not in _TRUTH_GIVEN_UP], "eval")
+        if not missing:
+            return _truth_auto_draw_once(coverage, store)
+        request_id, _ = _queue_truth_check(missing, "auto")
+        return request_id
 
 
 # The drawing request this editor last queued, and items a finished drawing did

@@ -75,7 +75,7 @@ TIER_NAMES = {1: "C", 2: "B", 3: "A", 4: "S", 5: "SS"}
 _SPOOL_PATTERNS = ("*_claim.ndjson", "worker_*.ndjson")
 _BATCH = 2000
 # Bumped when the store keeps something new from journal lines it has read.
-_JOURNAL_READ_VERSION = "2"
+_JOURNAL_READ_VERSION = "3"
 
 
 # ---- small helpers -------------------------------------------------------------
@@ -455,6 +455,8 @@ class TruthStore:
         result.files = 1
         pending = 0
         session = re.sub(r"-\d+\.ndjson$", "", path.name)   # a journal's parts continue each other
+        journal = path.name.startswith("live")
+        tail = self._session_tail(connection, session) if journal else None
         with self._write_lock, path.open("rb") as handle:
             handle.seek(offset)
             try:
@@ -470,7 +472,9 @@ class TruthStore:
                         tooltip = None if progress is not None else _parse_tooltip(document)
                         parsed = None if progress is not None or tooltip is not None else parse(document)
                     except (ValueError, TypeError, KeyError):
-                        progress = tooltip = parsed = None
+                        document = progress = tooltip = parsed = None
+                    if journal:
+                        tail = _next_tail(tail, document, progress, tooltip)
                     if progress is not None:
                         self._last_item.pop(session, None)
                         self._record_progress(connection, progress)
@@ -501,6 +505,9 @@ class TruthStore:
                     "INSERT OR REPLACE INTO sources(path, size, mtime_ns, offset) VALUES (?, ?, ?, ?)",
                     (key, stat.st_size if done else -1, stat.st_mtime_ns if done else -1, offset),
                 )
+                if journal and tail is not None:
+                    connection.execute("INSERT OR REPLACE INTO meta(key, value) VALUES (?, ?)",
+                                       ("journal-tail:" + session, json.dumps(tail)))
                 connection.execute("COMMIT")
             except Exception:
                 if connection.in_transaction:
@@ -520,6 +527,30 @@ class TruthStore:
                    updated_at=MAX(evals.updated_at, excluded.updated_at)""",
             progress,
         )
+
+    @staticmethod
+    def _session_tail(connection: sqlite3.Connection, session: str) -> list | None:
+        row = connection.execute("SELECT value FROM meta WHERE key=?", ("journal-tail:" + session,)).fetchone()
+        try:
+            tail = json.loads(row["value"]) if row is not None else None
+        except ValueError:
+            return None
+        return tail if isinstance(tail, list) and len(tail) == 2 else None
+
+    def request_ended_session(self, request_id: str) -> bool:
+        """Whether an editor request was what the game was doing when a session
+        ended: that session's journal closes with the request's own lines, or with
+        one line of play after them (the item a drawing built before drawing it).
+        A request cut short by an ordinary quit, after the player went on playing,
+        does not count."""
+        for row in self._connection().execute("SELECT value FROM meta WHERE key LIKE 'journal-tail:%'"):
+            try:
+                request, after = json.loads(row["value"])
+            except (ValueError, TypeError):
+                continue
+            if request == request_id and _is_number(after) and after <= 1:
+                return True
+        return False
 
     def _link(self, session: str, tooltip: dict[str, Any]) -> dict[str, Any]:
         """A tooltip the game drew for an editor request, tied to the content of
@@ -795,6 +826,26 @@ def _row_record(row: sqlite3.Row) -> dict[str, Any]:
         "native": json.loads(row["native_json"]) if row["native_json"] else None,
         "info": json.loads(row["info_json"]) if row["info_json"] else {},
     }
+
+
+def _next_tail(tail: list | None, document: Any, progress: dict | None, tooltip: dict | None) -> list | None:
+    """How a session's journal ends, line by line: [editor request, lines of play
+    after its last line]. A line of a request - its progress, an item it built, a
+    tooltip it drew - starts it again; any other line counts one; the stat table
+    written after a drawing counts nothing."""
+    request = None
+    if progress is not None:
+        request = progress["req"]
+    elif tooltip is not None:
+        if tooltip["kind"] != "tooltip":
+            return tail
+        request = tooltip.get("request")
+    elif isinstance(document, dict):
+        found = document.get("req")
+        request = found if isinstance(found, str) and REQUEST_ID.fullmatch(found) else None
+    if request:
+        return [request, 0]
+    return None if tail is None else [tail[0], tail[1] + 1]
 
 
 def _parse_eval_progress(record: Any) -> dict | None:
