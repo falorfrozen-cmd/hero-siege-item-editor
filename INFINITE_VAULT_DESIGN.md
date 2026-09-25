@@ -50,12 +50,25 @@ never remove the only active copy.
 
 Startup scans ports 8765-8774 for the editor's application identity and PID
 under the short launcher lock. The same release is reused. A different or
-PID-less legacy editor is rejected, not moved to another port. Startup also
-fails closed if even one port is occupied by an unidentified process. While
-v2.8 is alive it serves its identity on all ten reserved ports. This prevents
-v2.7.2's old "try the next port" launcher from starting after v2.8. Save and
-Vault POST paths still repeat the peer check before dispatch and at the final
-write barrier.
+PID-less legacy editor is rejected, not moved to another port. So is a build
+older than v2.7.2 on 8765: those have no `/api/instance`, but they only ever
+listened on 8765, and they serve their page there under the title "Hero Siege
+Item Editor". Since 2.16.2 a port held by anything else is left to its owner
+(ForgePact's panel prefers 8766); until then startup refused. The editor serves
+its identity on every other port of the range. This prevents v2.7.2's old "try
+the next port" launcher from starting after v2.8. A port left to another
+program is the one place it could still start, once that program closes.
+
+The editor binds with `EditorHTTPServer`, which leaves SO_REUSEADDR off on
+Windows. `ThreadingHTTPServer` turns it on, and on Windows that let the bind
+succeed on a port another program already served: the other program kept the
+connections, and startup counted the port as reserved. Without the option an
+occupied port fails the bind and is identified as above, and a SO_REUSEADDR
+bind such as v2.7.2's launcher makes cannot land on a port the editor holds.
+Save and Vault POST paths still repeat the peer check before dispatch and at
+the final write barrier. That check also covers the ports left to other
+programs, so an editor from v2.7.2 on that starts there later still stops this
+one's writes.
 
 The HTTP server binds only to `127.0.0.1`. It also requires the exact active
 loopback `Host` on every request. POST accepts a bounded JSON object only,
