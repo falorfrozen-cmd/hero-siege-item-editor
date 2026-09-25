@@ -206,7 +206,7 @@ def _resource_base() -> Path:
 BASE = _resource_base()
 CATALOG_FILE = BASE / "hs_full_catalog.json"
 PORT = 8765
-APP_VERSION = "2.16.0-s10"
+APP_VERSION = "2.16.1-s10"
 APPLICATION_ID = "hero-siege-item-editor"
 CATALOG_PROFILE = "Season 10"
 MAX_POST_BYTES = 2 * 1024 * 1024
@@ -5392,6 +5392,166 @@ def op_vault_item(body: dict) -> dict:
         return {"err": str(exc)}
 
 
+# ------------------------------------------------------------------ AFK FARM camp
+# AFK FARM's camp keeps Basic and Crystal Keys on a key rack and jewelcrafting
+# materials in its Jeweler's stock. The player fills them from AFK Materials:
+# the stacks used shrink or leave the Vault, at most once per AFK FARM request
+# id (a repeated id answers with the recorded take, a cancelled id never takes).
+# SQLite only, like the AFK transfer, so Hero Siege may be running.
+AFK_TAKE_KINDS = {12: frozenset(range(44)), 14: frozenset((*range(24), 44))}  # keys; jeweler's materials
+AFK_TAKE_MAX_KINDS = 32
+AFK_TAKE_MAX_AMOUNT = 1_000_000
+_AFK_TAKE_REQUEST_RE = re.compile(r"[A-Za-z0-9_-]{16,128}\Z")
+
+
+def _afk_take_request_id(value: object) -> str:
+    if not isinstance(value, str) or not _AFK_TAKE_REQUEST_RE.fullmatch(value):
+        raise VaultValidationError("A request id of 16-128 letters, digits, _ or - is required.")
+    return value
+
+
+def _afk_take_name(cls: int, base: int) -> str:
+    row = BY_ADDR.get((0, cls, 0, base)) or {}
+    return str(row.get("name") or row.get("key") or f"{STACKABLE_CLS.get(cls, 'Item')} {base}")
+
+
+def _afk_take_count(record) -> int:
+    return native_stack_count(record.decoded_item().get("data", {})) or 0
+
+
+def _afk_take_stacks(store) -> tuple[object | None, dict[tuple[int, int], list]]:
+    """AFK Materials and its plain stacks of the kinds the camp may take, by (class, base).
+
+    Custom-named items, other sub/kind values and stacks over 999 are left out
+    (``_vault_stack_identity``)."""
+
+    materials = _afk_find_collection(store, AFK_INGEST_MATERIALS_COLLECTION)
+    stacks: dict[tuple[int, int], list] = {}
+    if materials is None:
+        return None, stacks
+    for record in store.list_all_available_items(collection=materials.id):
+        key = _vault_stack_identity(record)
+        if key is None or key[2] or key[3] or not float(key[1]).is_integer():
+            continue
+        cls, base = int(key[0]), int(key[1])
+        if base in AFK_TAKE_KINDS.get(cls, ()):
+            stacks.setdefault((cls, base), []).append(record)
+    return materials, stacks
+
+
+def _afk_take_stock(stacks: dict) -> list[dict]:
+    return [{"cls": cls, "base": base, "name": _afk_take_name(cls, base), "stacks": len(records),
+             "count": sum(_afk_take_count(record) for record in records)}
+            for (cls, base), records in sorted(stacks.items())]
+
+
+def _afk_take_wanted(raw: object) -> dict[tuple[int, int], int]:
+    if not isinstance(raw, list) or not 1 <= len(raw) <= AFK_TAKE_MAX_KINDS:
+        raise VaultValidationError("Choose the keys or materials to take.")
+    wanted: dict[tuple[int, int], int] = {}
+    for entry in raw:
+        cls, base = (entry.get("cls"), entry.get("base")) if isinstance(entry, dict) else (None, None)
+        if (isinstance(cls, bool) or not isinstance(cls, int) or isinstance(base, bool)
+                or not isinstance(base, int) or base not in AFK_TAKE_KINDS.get(cls, ())):
+            raise VaultValidationError("Only keys and jewelcrafting materials can go to AFK FARM's camp.")
+        wanted[(cls, base)] = wanted.get((cls, base), 0) + clean_positive_stack_amount(entry.get("count"))
+        if wanted[(cls, base)] > AFK_TAKE_MAX_AMOUNT:
+            raise VaultValidationError(f"At most {AFK_TAKE_MAX_AMOUNT:,} of one kind can be taken at once.")
+    return wanted
+
+
+def _afk_take_plan(stacks: dict, wanted: dict) -> tuple[list[str], list[tuple[str, str]]]:
+    """Which stacks leave and which shrink; smaller stacks are used up first."""
+
+    remove: list[str] = []
+    update: list[tuple[str, str]] = []
+    for (cls, base), amount in sorted(wanted.items()):
+        records = sorted(stacks.get((cls, base), []), key=lambda r: (_afk_take_count(r), r.created_at, r.id))
+        have = sum(_afk_take_count(record) for record in records)
+        if have < amount:
+            raise VaultValidationError(
+                f"AFK Materials has {have:,} {_afk_take_name(cls, base)}, not {amount:,}. Nothing was taken.")
+        for record in records:
+            count = _afk_take_count(record)
+            if amount >= count:
+                remove.append(record.id)
+                amount -= count
+            else:
+                update.append((record.id, _vault_restack_raw(record, count - amount)))
+                amount = 0
+            if amount == 0:
+                break
+    return remove, update
+
+
+def _afk_take_reply(event: dict) -> dict:
+    details = event.get("details") or {}
+    cancelled = event.get("eventType") == InfiniteVault.TAKE_CANCELLED_EVENT
+    return {"state": "cancelled" if cancelled else "done", "requestId": details.get("requestId"),
+            "taken": [] if cancelled else list(details.get("taken") or []),
+            "eventId": event.get("id"), "at": event.get("createdAt")}
+
+
+def op_vault_afk_take(body: dict) -> dict:
+    """AFK FARM's camp and AFK Materials (``POST /api/vault/afk-take``).
+
+    ``stock`` counts the keys (class 12) and jewelcrafting materials (class 14,
+    bases 0-23 and 44) in AFK Materials. ``take`` takes ``items``
+    ([{cls, base, count}]) all at once or not at all, at most once per
+    ``requestId``; a repeated id answers with the recorded take (``replayed``).
+    ``status`` reports a request (``unknown`` if none arrived). ``cancel`` makes
+    sure a request never takes anything, or reports the take it already made.
+    An ``err`` reply means nothing was taken; a committed take never answers
+    with one.
+    """
+
+    try:
+        action = body.get("action")
+        with SAVE_WRITE_LOCK:
+            store = vault_store()
+            if action == "stock":
+                materials, stacks = _afk_take_stacks(store)
+                return {"category": materials.name if materials else None, "stock": _afk_take_stock(stacks)}
+            if action not in {"take", "status", "cancel"}:
+                raise VaultValidationError("Unknown AFK FARM camp action.")
+            request_id = _afk_take_request_id(body.get("requestId"))
+            if action == "status":
+                event = store.take_request(request_id)
+                if event is None:
+                    return {"state": "unknown", "requestId": request_id, "taken": []}
+                return {**_afk_take_reply(event), "replayed": True}
+            if action == "cancel":
+                event = store.cancel_take(request_id, details={"source": "afk-farm"})
+                return {**_afk_take_reply(event), "replayed": event["eventType"] == InfiniteVault.TAKE_EVENT}
+            earlier = store.take_request(request_id)
+            if earlier is not None:
+                return {**_afk_take_reply(earlier), "replayed": True}
+            wanted = _afk_take_wanted(body.get("items"))
+            materials, stacks = _afk_take_stacks(store)
+            if materials is None:
+                raise VaultValidationError("The Vault has no AFK Materials yet. Nothing was taken.")
+            remove, update = _afk_take_plan(stacks, wanted)
+            taken = [{"cls": cls, "base": base, "name": _afk_take_name(cls, base), "count": count}
+                     for (cls, base), count in sorted(wanted.items())]
+            details: dict = {"taken": taken, "source": "afk-farm"}
+            purpose = body.get("purpose")
+            if isinstance(purpose, str) and purpose.strip() and len(purpose) <= 120 and purpose.isprintable():
+                details["purpose"] = purpose.strip()
+            token = store.preview_item_rework(remove + [item_id for item_id, _ in update])
+            result = store.take_items(request_id, remove=remove, update=update, preview_token=token,
+                                      collection_name=materials.name, details=details)
+            reply = {**_afk_take_reply(result["event"]), "replayed": result["replayed"]}
+            try:
+                reply["stock"] = _afk_take_stock(_afk_take_stacks(store)[1])
+            except (VaultError, OSError, sqlite3.Error, TypeError, ValueError):
+                pass  # the take is committed: an error reply would tell AFK FARM it was not
+            if not result["replayed"]:
+                reply["ok"] = "Took " + ", ".join(f"{t['count']:,} {t['name']}" for t in taken) + " for AFK FARM's camp."
+            return reply
+    except (VaultError, OSError, sqlite3.Error, TypeError, ValueError) as exc:
+        return {"err": str(exc)}
+
+
 def vault_history() -> dict:
     try:
         store = vault_store()
@@ -9838,6 +9998,8 @@ class H(BaseHTTPRequestHandler):
             self._json(op_vault_afk_split(body))
         elif path == "/api/vault/dismantle":
             self._json(op_vault_dismantle(body))
+        elif path == "/api/vault/afk-take":
+            self._json(op_vault_afk_take(body))
         else:
             self._json({"err": "not found"}, 404)
 

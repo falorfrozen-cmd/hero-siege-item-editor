@@ -1537,7 +1537,7 @@ class InfiniteVault:
                 undone.add(event_id)
         for row in rows:
             if row["event_type"] in {"category_contents_deleted", "stash_page_deleted", "items_purged", "items_split",
-                                     "items_stacked", "items_dismantled"}:
+                                     "items_stacked", "items_dismantled", "afk_items_taken"}:
                 # Older layout/move undo may point into storage that was deleted.
                 return None
             if row["event_type"] in reversible and int(row["id"]) not in undone:
@@ -3569,6 +3569,120 @@ class InfiniteVault:
                 ).fetchone()
                 result.append(self._item_from_row(row))
             return result
+
+        return self._write(operation)
+
+    # Another local tool (AFK FARM's camp) takes stacks out of the Vault. Every
+    # take carries the tool's request id and happens at most once: a repeated id
+    # returns the recorded take, and a cancelled id can never take anything, so a
+    # tool that lost a reply settles it either way instead of guessing.
+    TAKE_EVENT = "afk_items_taken"
+    TAKE_CANCELLED_EVENT = "afk_take_cancelled"
+
+    def _take_event(self, connection: sqlite3.Connection, request_id: str) -> dict[str, Any] | None:
+        needle = '"requestId":' + json.dumps(request_id)
+        row = connection.execute(
+            """SELECT * FROM events WHERE event_type IN (?, ?) AND instr(details_json, ?) > 0
+               ORDER BY id LIMIT 1""",
+            (self.TAKE_EVENT, self.TAKE_CANCELLED_EVENT, needle),
+        ).fetchone()
+        return None if row is None else self._event_payload(row)
+
+    def take_request(self, request_id: str) -> dict[str, Any] | None:
+        """The take or cancellation recorded for ``request_id``, or None."""
+
+        clean = _clean_required_request_id(request_id)
+        return self._read(lambda connection: self._take_event(connection, clean))
+
+    def take_items(
+        self,
+        request_id: str,
+        *,
+        remove: Iterable[str] = (),
+        update: Iterable[tuple[str, str]] = (),
+        preview_token: str,
+        collection_name: str | None = None,
+        details: Mapping[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        """Take items out of the Vault at most once per ``request_id``.
+
+        In one transaction: an id that was already settled returns its event
+        with ``replayed`` and changes nothing. Otherwise the items must still
+        match ``preview_token`` (``preview_item_rework``); ``remove`` items
+        leave with their deposit keys recorded as deleted, so an AFK transfer of
+        the same records cannot bring them back, and ``update`` pairs get their
+        new (smaller) payload. The ``afk_items_taken`` event keeps the request
+        id and ``details``; it is an undo barrier.
+        """
+
+        clean = _clean_required_request_id(request_id)
+        if not isinstance(preview_token, str) or len(preview_token) != 64:
+            raise VaultValidationError("A fresh review is required.")
+        remove_ids = sorted({_clean_id(item_id, "item id") for item_id in remove})
+        updates: list[tuple[str, str, str, dict[str, Any]]] = []
+        for item_id, raw_json in update:
+            decoded = validate_raw_item_json(raw_json)
+            updates.append((_clean_id(item_id, "item id"), raw_json,
+                            hashlib.sha256(raw_json.encode("utf-8")).hexdigest(), decoded))
+        if set(remove_ids) & {entry[0] for entry in updates}:
+            raise VaultValidationError("an item cannot be removed and changed at once")
+        touched = sorted(set(remove_ids) | {entry[0] for entry in updates})
+        if not touched:
+            raise VaultValidationError("Nothing to take.")
+
+        def operation(connection: sqlite3.Connection) -> dict[str, Any]:
+            earlier = self._take_event(connection, clean)
+            if earlier is not None:
+                return {"replayed": True, "event": earlier}
+            rows, token = self._rework_snapshot(connection, touched)
+            if token != preview_token:
+                raise VaultConflictError("The items changed. Review again.")
+            by_id = {str(row["id"]): row for row in rows}
+            now = _utc_now()
+            for start in range(0, len(remove_ids), 500):
+                chunk = remove_ids[start:start + 500]
+                marks = ",".join("?" * len(chunk))
+                connection.execute(
+                    f"""INSERT OR IGNORE INTO deleted_deposit_keys(deposit_key, raw_sha256, deleted_at)
+                        SELECT deposit_key, raw_sha256, ? FROM items
+                        WHERE deposit_key IS NOT NULL AND id IN ({marks})""",
+                    (now, *chunk),
+                )
+                connection.execute(f"DELETE FROM items WHERE id IN ({marks})", tuple(chunk))
+            for item_id, raw_json, digest, decoded in updates:
+                row = by_id[item_id]
+                _validate_stored_raw_item_integrity(row["raw_json"], row["raw_sha256"])
+                search_text = _search_document(
+                    decoded, (row["source_item_key"], row["label"], row["source"], row["custom_name"])
+                )
+                connection.execute(
+                    "UPDATE items SET raw_json=?, raw_sha256=?, search_text=?, updated_at=? WHERE id=?",
+                    (raw_json, digest, search_text, now, item_id),
+                )
+            self._event(connection, self.TAKE_EVENT, collection_name=collection_name,
+                        details={**dict(details or {}), "requestId": clean,
+                                 "removed": len(remove_ids), "updated": len(updates)})
+            return {"replayed": False, "event": self._take_event(connection, clean)}
+
+        return self._write(operation)
+
+    def cancel_take(self, request_id: str, *, details: Mapping[str, Any] | None = None) -> dict[str, Any]:
+        """Make sure ``request_id`` never takes anything.
+
+        Returns its take when it already happened; otherwise records an
+        ``afk_take_cancelled`` event under the write lock, so a take arriving
+        later with the same id is answered with that cancellation.
+        """
+
+        clean = _clean_required_request_id(request_id)
+
+        def operation(connection: sqlite3.Connection) -> dict[str, Any]:
+            earlier = self._take_event(connection, clean)
+            if earlier is not None:
+                return earlier
+            self._event(connection, self.TAKE_CANCELLED_EVENT,
+                        details={**dict(details or {}), "requestId": clean})
+            return self._take_event(connection, clean)
 
         return self._write(operation)
 
