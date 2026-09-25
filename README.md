@@ -8,6 +8,19 @@ A local/offline save editor for **Hero Siege** (Pixel Prone Games). Manage items
 
 Single file, no install, no Python needed. Just run it.
 
+## v2.16.2-s10 — starts beside ForgePact
+
+- **The editor starts while ForgePact's panel is open.** The editor keeps ten
+  local ports (8765-8774) so that no older copy of it can start alongside, and
+  ForgePact's panel prefers 8766. A port another program already holds is now
+  left to that program, and the editor takes the rest. Before, the editor bound
+  8766 on top of the panel without noticing, or, where a program would not share
+  its port, refused to start ("occupied by an unidentified or legacy process").
+  It still refuses to run beside another Item Editor version, builds older than
+  2.7.2 included.
+
+See [the v2.16.2 release notes](RELEASE_NOTES_v2.16.2.md).
+
 ## v2.16.1-s10 — goods for AFK FARM's camp and town
 
 - **AFK FARM's camp and town take the town's goods from AFK Materials.** In AFK

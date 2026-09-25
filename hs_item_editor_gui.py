@@ -206,7 +206,7 @@ def _resource_base() -> Path:
 BASE = _resource_base()
 CATALOG_FILE = BASE / "hs_full_catalog.json"
 PORT = 8765
-APP_VERSION = "2.16.1-s10"
+APP_VERSION = "2.16.2-s10"
 APPLICATION_ID = "hero-siege-item-editor"
 CATALOG_PROFILE = "Season 10"
 MAX_POST_BYTES = 2 * 1024 * 1024
@@ -12702,6 +12702,23 @@ def _open_window(port: int) -> bool:
         return False
 
 
+class EditorHTTPServer(ThreadingHTTPServer):
+    """The editor's loopback server, whose bind fails on an occupied port.
+
+    ``ThreadingHTTPServer`` turns SO_REUSEADDR on.  On Windows that lets the
+    bind succeed on a port another program already listens on (ForgePact's
+    panel is one such server): that program keeps receiving the connections,
+    and startup would count the port as its own without learning it was
+    taken.  Without the option the bind raises OSError, so ``main()``
+    identifies whoever holds the port, and another program's SO_REUSEADDR
+    bind cannot land on a port this editor holds.  Windows still rebinds a
+    port whose old connections sit in TIME_WAIT, so a restart is unaffected.
+    POSIX keeps the option, which there only permits that rebind.
+    """
+
+    allow_reuse_address = os.name != "nt"
+
+
 def _editor_identity(port: int, timeout: float = 1.0):
     """Return a validated local Item Editor identity, including legacy peers."""
     try:
@@ -12724,6 +12741,21 @@ def _served_version(port: int):
     """Return the version of an existing editor server, if the port is ours."""
     identity = _editor_identity(port)
     return identity["version"] if identity else None
+
+
+def _legacy_editor_page(port: int, timeout: float = 1.0) -> bool:
+    """Whether an Item Editor older than v2.7.2 serves this port.
+
+    Those builds have no /api/instance (it answers 404), and they only ever
+    listened on PORT.  Every one of them serves its page at / with this title
+    at the top.
+    """
+    try:
+        with urlopen(f"http://127.0.0.1:{port}/", timeout=timeout) as response:
+            head = response.read(4096)
+    except Exception:
+        return False
+    return b"<title>Hero Siege Item Editor" in head
 
 
 def _peer_editor_error(
@@ -12796,7 +12828,7 @@ def main():
             if reuse_port is None and startup_error is None:
                 for candidate in range(PORT, PORT + 10):
                     try:
-                        candidate_server = ThreadingHTTPServer(("127.0.0.1", candidate), H)
+                        candidate_server = EditorHTTPServer(("127.0.0.1", candidate), H)
                         if not servers:
                             port = candidate
                         servers.append(candidate_server)
@@ -12804,12 +12836,19 @@ def main():
                     except OSError:
                         identity = _editor_identity(candidate, timeout=0.2)
                         if identity is None:
-                            startup_error = (
-                                f"Local editor port {candidate} is occupied by an "
-                                "unidentified or legacy process. Close it before "
-                                f"starting Item Editor v{APP_VERSION}."
-                            )
-                        elif identity["version"] == APP_VERSION and identity.get("pid") is not None:
+                            if candidate == PORT and _legacy_editor_page(candidate):
+                                startup_error = (
+                                    "An Item Editor older than v2.7.2 is already "
+                                    f"running on port {candidate}. Close it before "
+                                    f"starting Item Editor v{APP_VERSION}."
+                                )
+                                break
+                            # Not an Item Editor: another program holds the
+                            # port (ForgePact's panel prefers 8766), or Windows
+                            # reserved it.  Leave it; the peer guard still
+                            # checks it before every write.
+                            continue
+                        if identity["version"] == APP_VERSION and identity.get("pid") is not None:
                             reuse_port = candidate
                         else:
                             startup_error = (

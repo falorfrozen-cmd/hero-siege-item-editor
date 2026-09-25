@@ -1,15 +1,22 @@
 import importlib.util
 import json
+import os
+import random
 import re
 import shutil
+import socket
 import subprocess
 import sys
 import tempfile
+import threading
 import unittest
 import webbrowser
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import Mock, patch
+from urllib.error import HTTPError
+from urllib.request import urlopen
 
 
 MODULE_PATH = Path(__file__).with_name("hs_item_editor_gui.py")
@@ -30,6 +37,72 @@ class _Response:
 
     def read(self):
         return self.payload
+
+
+class _ForeignPanel(BaseHTTPRequestHandler):
+    """Answers like ForgePact's panel: its own page at /, a JSON 404 elsewhere."""
+
+    page = b"<!DOCTYPE html><html><head><title>ForgePact</title></head><body></body></html>"
+
+    def do_GET(self):
+        if self.path == "/":
+            body, status, kind = self.page, 200, "text/html; charset=utf-8"
+        else:
+            body, status, kind = b'{"err": "not found"}', 404, "application/json"
+        self.send_response(status)
+        self.send_header("Content-Type", kind)
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
+
+    def log_message(self, *_args):
+        pass
+
+
+class _PreInstanceEditor(_ForeignPanel):
+    """An Item Editor before v2.7.2: /api/instance is a 404, its page is at /."""
+
+    page = (
+        b'<!DOCTYPE html>\n<html lang="en"><head><meta charset="utf-8">'
+        b"<title>Hero Siege Item Editor \xe2\x80\x94 Season 10</title>\n<style>"
+    )
+
+
+class _UnsharedHTTPServer(ThreadingHTTPServer):
+    """A listener that never shares its port, like most programs not built on http.server."""
+
+    allow_reuse_address = False
+
+
+def _get(port, path):
+    """(status, JSON body) of a GET on this loopback port."""
+    try:
+        with urlopen(f"http://127.0.0.1:{port}{path}", timeout=2) as response:
+            return response.status, json.loads(response.read())
+    except HTTPError as error:
+        return error.code, json.loads(error.read())
+
+
+def _free_ports(count):
+    """The first of `count` consecutive loopback ports nothing holds right now.
+
+    Drawn from 20000-32767, outside the ephemeral ranges Windows (49152 up, or
+    as low as 1024-15000 on some machines) and Linux (32768 up) hand out to
+    this test's own connections, one port after another.
+    """
+    for first in random.sample(range(20000, 32768 - count), 50):
+        held = []
+        try:
+            for port in range(first, first + count):
+                held.append(socket.socket())
+                held[-1].bind(("127.0.0.1", port))
+        except OSError:
+            continue
+        finally:
+            for sock in held:
+                sock.close()
+        return first
+    raise unittest.SkipTest(f"no {count} consecutive free loopback ports")
 
 
 class LaunchReadinessTests(unittest.TestCase):
@@ -185,7 +258,7 @@ class LaunchReadinessTests(unittest.TestCase):
             patch.object(editor, "_exclusive_save_file", return_value=editor.nullcontext()),
             patch.object(editor, "_editor_identity", return_value=None),
             patch.object(editor, "_peer_editor_error", return_value=None),
-            patch.object(editor, "ThreadingHTTPServer", side_effect=servers) as server_factory,
+            patch.object(editor, "EditorHTTPServer", side_effect=servers) as server_factory,
             patch.object(editor.threading, "Thread", side_effect=server_threads),
             patch.object(editor, "_open_window", return_value=False),
         ):
@@ -219,7 +292,7 @@ class LaunchReadinessTests(unittest.TestCase):
         with (
             patch.object(editor, "_exclusive_save_file", return_value=editor.nullcontext()),
             patch.object(editor, "_editor_identity", side_effect=identity),
-            patch.object(editor, "ThreadingHTTPServer") as server_factory,
+            patch.object(editor, "EditorHTTPServer") as server_factory,
             patch.object(editor, "_open_window", return_value=True) as open_window,
             patch.object(editor, "_show_startup_error") as show_error,
         ):
@@ -240,7 +313,7 @@ class LaunchReadinessTests(unittest.TestCase):
         with (
             patch.object(editor, "_exclusive_save_file", return_value=editor.nullcontext()),
             patch.object(editor, "_editor_identity", side_effect=identity),
-            patch.object(editor, "ThreadingHTTPServer") as server_factory,
+            patch.object(editor, "EditorHTTPServer") as server_factory,
             patch.object(editor, "_open_window") as open_window,
             patch.object(editor, "_show_startup_error") as show_error,
         ):
@@ -252,16 +325,13 @@ class LaunchReadinessTests(unittest.TestCase):
         self.assertIn("v2.7.2", message)
         self.assertIn(editor.APP_VERSION, message)
 
-    def test_main_fails_closed_if_any_reserved_port_is_unidentified(self):
-        first_server = SimpleNamespace(
-            serve_forever=Mock(), shutdown=Mock(), server_close=Mock(),
-        )
+    def test_main_refuses_an_editor_older_than_v2_7_2_on_its_first_port(self):
         with (
             patch.object(editor, "_exclusive_save_file", return_value=editor.nullcontext()),
             patch.object(editor, "_editor_identity", return_value=None),
+            patch.object(editor, "_legacy_editor_page", return_value=True) as legacy_page,
             patch.object(
-                editor, "ThreadingHTTPServer",
-                side_effect=[first_server, OSError("occupied")],
+                editor, "EditorHTTPServer", side_effect=OSError("occupied"),
             ) as server_factory,
             patch.object(editor.threading, "Thread") as thread_factory,
             patch.object(editor, "_open_window") as open_window,
@@ -269,14 +339,85 @@ class LaunchReadinessTests(unittest.TestCase):
         ):
             editor.main()
 
-        self.assertEqual(server_factory.call_count, 2)
-        first_server.server_close.assert_called_once_with()
-        first_server.shutdown.assert_not_called()
+        server_factory.assert_called_once()
+        legacy_page.assert_called_once_with(editor.PORT)
         thread_factory.assert_not_called()
         open_window.assert_not_called()
         message = show_error.call_args.args[0]
-        self.assertIn(str(editor.PORT + 1), message)
-        self.assertIn("unidentified or legacy", message)
+        self.assertIn("older than v2.7.2", message)
+        self.assertIn(f"port {editor.PORT}", message)
+
+    def test_main_leaves_ports_other_programs_hold_and_says_so_when_none_is_left(self):
+        with (
+            patch.object(editor, "_exclusive_save_file", return_value=editor.nullcontext()),
+            patch.object(editor, "_editor_identity", return_value=None),
+            patch.object(editor, "_legacy_editor_page", return_value=False) as legacy_page,
+            patch.object(
+                editor, "EditorHTTPServer", side_effect=OSError("occupied"),
+            ) as server_factory,
+            patch.object(editor.threading, "Thread") as thread_factory,
+            patch.object(editor, "_open_window") as open_window,
+            patch.object(editor, "_show_startup_error") as show_error,
+        ):
+            editor.main()
+
+        # Every port is tried; only the first one ever hosted a pre-2.7.2 editor.
+        self.assertEqual(server_factory.call_count, 10)
+        legacy_page.assert_called_once_with(editor.PORT)
+        thread_factory.assert_not_called()
+        open_window.assert_not_called()
+        show_error.assert_called_once_with(
+            f"No free editor port in {editor.PORT}..{editor.PORT + 9}."
+        )
+
+    def test_legacy_editor_page_recognizes_only_an_item_editor_page(self):
+        pages = (
+            (b'<!DOCTYPE html>\n<html lang="tr"><head><meta charset="utf-8">'
+             b"<title>Hero Siege Item Editor</title>\n<style>", True),
+            (b'<!DOCTYPE html>\n<html lang="en"><head><meta charset="utf-8">'
+             b"<title>Hero Siege Item Editor \xe2\x80\x94 Season 10</title>", True),
+            (b"<!DOCTYPE html><html><head><title>ForgePact</title></head>", False),
+            (b'{"err": "not found"}', False),
+        )
+        for page, expected in pages:
+            with self.subTest(page=page[:60]):
+                response = Mock()
+                response.__enter__ = Mock(return_value=response)
+                response.__exit__ = Mock(return_value=False)
+                response.read = Mock(return_value=page)
+                with patch.object(editor, "urlopen", return_value=response) as request:
+                    self.assertIs(editor._legacy_editor_page(editor.PORT), expected)
+                request.assert_called_once_with(f"http://127.0.0.1:{editor.PORT}/", timeout=1.0)
+                response.read.assert_called_once_with(4096)
+        with patch.object(editor, "urlopen", side_effect=OSError("refused")):
+            self.assertFalse(editor._legacy_editor_page(editor.PORT))
+
+    def test_peer_guard_still_checks_a_port_startup_left_to_another_program(self):
+        left = editor.PORT + 1
+        reserved = frozenset(range(editor.PORT, editor.PORT + 10)) - {left}
+
+        def identity(candidate, timeout=1.0):
+            if candidate == left:
+                return {"version": "2.7.2", "pid": None, "port": candidate}
+            return None
+
+        with (
+            patch.object(editor, "INSTANCE_GUARD_ACTIVE", True),
+            patch.object(editor, "INSTANCE_RESERVED_PORTS", reserved),
+            patch.object(editor, "_editor_identity", return_value=None) as lookup,
+        ):
+            self.assertIsNone(editor._active_peer_editor_error())
+        self.assertEqual([call.args[0] for call in lookup.call_args_list], [left])
+
+        # An editor that later starts on that port is still caught before a write.
+        with (
+            patch.object(editor, "INSTANCE_GUARD_ACTIVE", True),
+            patch.object(editor, "INSTANCE_RESERVED_PORTS", reserved),
+            patch.object(editor, "_editor_identity", side_effect=identity),
+        ):
+            error = editor._active_peer_editor_error()
+        self.assertIn("v2.7.2", error)
+        self.assertIn(f"port {left}", error)
 
     def test_main_closes_new_server_if_peer_appears_after_bind(self):
         servers = [SimpleNamespace(
@@ -288,7 +429,7 @@ class LaunchReadinessTests(unittest.TestCase):
             patch.object(editor, "_exclusive_save_file", return_value=editor.nullcontext()),
             patch.object(editor, "_editor_identity", return_value=None),
             patch.object(editor, "_peer_editor_error", return_value=peer_error),
-            patch.object(editor, "ThreadingHTTPServer", side_effect=servers),
+            patch.object(editor, "EditorHTTPServer", side_effect=servers),
             patch.object(editor.threading, "Thread", side_effect=server_threads),
             patch.object(editor, "_open_window") as open_window,
             patch.object(editor, "_show_startup_error") as show_error,
@@ -510,6 +651,122 @@ console.log(JSON.stringify(out));
                 "outside": {"speed": 0, "frame": 0, "scheduled": False},
             },
         )
+
+
+class ForeignPortTests(unittest.TestCase):
+    """main() against real loopback sockets, on a free run of ten ports.
+
+    ForgePact's panel prefers 8766, the editor's second port. Only the window,
+    the startup lock and game truth are replaced; binding, identifying and
+    serving are real.
+    """
+
+    def setUp(self):
+        editor.INSTANCE_GUARD_ACTIVE = False
+        editor.INSTANCE_PORT = None
+        editor.INSTANCE_RESERVED_PORTS = frozenset()
+
+    def _serve(self, server_class, port, handler):
+        server = server_class(("127.0.0.1", port), handler)
+        threading.Thread(
+            target=server.serve_forever, kwargs={"poll_interval": 0.01}, daemon=True,
+        ).start()
+        self.addCleanup(server.server_close)
+        self.addCleanup(server.shutdown)
+
+    def _start_editor(self, first, other):
+        """Run main() on first..first+9; the window records what it saw."""
+        seen = {}
+
+        def open_window(port):
+            seen["port"] = port
+            seen["reserved"] = editor.INSTANCE_RESERVED_PORTS
+            seen["editor"] = _get(port, "/api/instance")
+            seen["other"] = _get(other, "/api/instance")
+            seen["peer_error"] = editor._active_peer_editor_error()
+            return True  # the native window closed, so main() shuts down
+
+        serve_forever = editor.EditorHTTPServer.serve_forever
+        errors = []
+        with (
+            patch.object(editor, "PORT", first),
+            patch.object(editor, "_exclusive_save_file", return_value=editor.nullcontext()),
+            patch.object(editor, "_start_game_truth"),
+            patch.object(editor, "_open_window", side_effect=open_window),
+            patch.object(editor, "_show_startup_error", side_effect=errors.append),
+            # main() stops its servers one after another, and each notices
+            # only at its next poll: 0.5 s by default, seconds per run here.
+            patch.object(
+                editor.EditorHTTPServer, "serve_forever",
+                lambda server: serve_forever(server, poll_interval=0.01),
+            ),
+        ):
+            editor.main()
+        return errors, seen
+
+    def test_editor_starts_beside_another_program_and_leaves_its_port_alone(self):
+        cases = (
+            # ForgePact's panel sets SO_REUSEADDR. On Windows the editor's
+            # bind used to succeed on top of it, silently.
+            ("shares its port, on the second one", ThreadingHTTPServer, 1),
+            # A listener that does not share: the bind failed, and startup
+            # refused with "occupied by an unidentified or legacy process".
+            ("keeps its port, on the second one", _UnsharedHTTPServer, 1),
+            # Not an editor on the first port either: the editor moves past it.
+            ("shares its port, on the first one", ThreadingHTTPServer, 0),
+        )
+        for label, server_class, offset in cases:
+            with self.subTest(label):
+                first = _free_ports(10)
+                other = first + offset
+                self._serve(server_class, other, _ForeignPanel)
+
+                errors, seen = self._start_editor(first, other)
+
+                self.assertEqual(errors, [])
+                self.assertEqual(seen["port"], first + 1 if other == first else first)
+                self.assertEqual(
+                    seen["reserved"], frozenset(range(first, first + 10)) - {other}
+                )
+                status, identity = seen["editor"]
+                self.assertEqual(status, 200)
+                self.assertEqual(identity["application"], editor.APPLICATION_ID)
+                self.assertEqual(identity["pid"], os.getpid())
+                self.assertEqual(seen["other"], (404, {"err": "not found"}))
+                self.assertIsNone(seen["peer_error"])
+                # The other program kept its port throughout and still has it.
+                self.assertEqual(_get(other, "/api/instance"), (404, {"err": "not found"}))
+
+    def test_an_item_editor_older_than_v2_7_2_on_the_first_port_is_refused(self):
+        first = _free_ports(10)
+        # Those builds served PORT from ThreadingHTTPServer, SO_REUSEADDR and all.
+        self._serve(ThreadingHTTPServer, first, _PreInstanceEditor)
+
+        errors, seen = self._start_editor(first, first)
+
+        self.assertEqual(seen, {})
+        self.assertEqual(len(errors), 1)
+        self.assertIn("older than v2.7.2", errors[0])
+        self.assertIn(f"port {first}", errors[0])
+
+    def test_a_port_the_editor_holds_refuses_address_reuse_and_rebinds_at_once(self):
+        port = _free_ports(1)
+        server = editor.EditorHTTPServer(("127.0.0.1", port), editor.H)
+        threading.Thread(
+            target=server.serve_forever, kwargs={"poll_interval": 0.01}, daemon=True,
+        ).start()
+        try:
+            for _ in range(5):
+                self.assertEqual(_get(port, "/api/instance")[0], 200)
+            # v2.7.2's launcher and ForgePact bind with SO_REUSEADDR, which on
+            # Windows shares a port with a listener that set it too.
+            with self.assertRaises(OSError):
+                ThreadingHTTPServer(("127.0.0.1", port), _ForeignPanel).server_close()
+        finally:
+            server.shutdown()
+            server.server_close()
+        # The connections just served sit in TIME_WAIT; a restart still binds.
+        editor.EditorHTTPServer(("127.0.0.1", port), editor.H).server_close()
 
 
 if __name__ == "__main__":
