@@ -8,6 +8,23 @@ A local/offline save editor for **Hero Siege** (Pixel Prone Games). Manage items
 
 Single file, no install, no Python needed. Just run it.
 
+## v2.16.1-s10 — goods for AFK FARM's camp and town
+
+- **AFK FARM's camp and town take the town's goods from AFK Materials.** In AFK
+  FARM 0.8 an adventurer opens golden chests with Basic Keys and crystal chests with
+  Crystal Keys from the camp's key rack, and the jeweler works from the camp's
+  material stock. AFK FARM 0.9's town (fortifications, merchants, trade wagons)
+  stocks the town's goods: keys, fragments and shards, tarot cards, materials,
+  dusts, rare consumables, runes, gems, jewels and orbs. AFK FARM fills its stock
+  from your Vault: the amounts you choose leave AFK Materials (smaller stacks
+  first), all at once or not at all. Each request is carried out at most once: if
+  AFK FARM loses the editor's answer, it asks again and gets the same result
+  instead of taking the goods a second time. Custom-named stacks are never taken,
+  and Hero Siege may be running. The Vault's history lists every take; History
+  undo does not reach past one.
+
+See [the v2.16.1 release notes](RELEASE_NOTES_v2.16.1.md).
+
 ## v2.16.0-s10 — tooltips show what the game built
 
 A save keeps only an item's seeds; the game works out every line — the rolled

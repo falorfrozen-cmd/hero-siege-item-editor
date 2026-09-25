@@ -279,6 +279,10 @@ never choose a second destination and duplicate the item.
   one category; see Confirmed deletion.
 - `GET /api/vault/ingest/status`: how many of one expedition's records the
   Vault holds, has already returned to the Shared Stash, or has intentionally deleted.
+- `POST /api/vault/afk-take`: AFK FARM's camp and town. `stock` counts the town's
+  goods (`AFK_TAKE_KINDS`, classes 12-15) in AFK Materials;
+  `take` removes `items` ([{cls, base, count}]) at most once per `requestId`;
+  `status` and `cancel` settle a request whose reply was lost. SQLite only.
 
 Collection management never edits a game save. Deposit and withdrawal always
 run under `SAVE_WRITE_LOCK` and refuse while the game is running.
@@ -415,3 +419,30 @@ of the categories the removal touched in the same transaction, also ones that we
 empty before (`removedPages`), keeping the lowest-numbered one when all are empty; the
 preview reports that count as `emptyStashes`. The event records `rarities` or
 `pageIndex`.
+
+## AFK FARM camp takes (2.16.1)
+
+`op_vault_afk_take` serves AFK FARM's camp (0.8: the adventurer's key rack, the
+jeweler's material stock) and town (0.9: fortifications, merchants, trade wagons).
+It takes the town's goods, `AFK_TAKE_KINDS`: the 226 kinds of AFK FARM's
+`tools/goods.py`, namely keys, fragments and shards, tarot cards, materials, dusts,
+rare consumables, runes, gems, jewels and orbs (classes 12-15). Anything else is
+refused, for example the Pickaxe 12:20, boss parts, soulgems and singletons such as
+14:59. Names come from the catalog; runes and orbs, bare there, read `Lum Rune` and
+`Orb of Goblin`, as in AFK FARM. Only plain stacks in AFK Materials count
+(`_vault_stack_identity`: no custom name, sub and kind 0, at most 999). A take is
+all or nothing; smaller stacks are used up first (`_afk_take_plan`): used-up
+stacks are removed with their deposit keys kept as deleted, so a repeated AFK
+transfer cannot bring them back, and the last one gets a smaller `o`.
+
+`InfiniteVault.take_items(request_id, remove=, update=, preview_token=)` runs in
+one transaction under the write lock. A request id already recorded in an
+`afk_items_taken` or `afk_take_cancelled` event (`details.requestId`) is answered
+from that event and changes nothing; otherwise the rows must still match the
+`preview_item_rework` token. `cancel_take` records `afk_take_cancelled` unless the
+take already happened. A client that lost a reply therefore settles it either
+way: `status` says `done` (it credits the take once) or `unknown`, and then
+`cancel` makes sure nothing is ever taken with that id. `afk_items_taken` is an
+undo barrier. Only the rolling `.bak` sidecar is written, not a `before-*` copy:
+takes are small, and the event records exactly what left. SQLite only, like the
+AFK transfer, so Hero Siege may run.

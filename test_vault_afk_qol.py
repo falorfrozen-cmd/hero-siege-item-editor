@@ -10,11 +10,15 @@ import json
 import random
 import sqlite3
 import tempfile
+import threading
 import unittest
 from contextlib import closing
+from http.server import ThreadingHTTPServer
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import patch
+from urllib.error import HTTPError
+from urllib.request import Request, urlopen
 
 from test_vault_ingest import RARITY_BELTS, belt, editor, spool_record
 from infinite_vault import InfiniteVault, VaultConflictError
@@ -577,6 +581,220 @@ class AfkFarmSplitTests(unittest.TestCase):
 
     def test_nothing_to_split_without_afk_farm(self):
         self.assertIn("err", editor.op_vault_afk_split({"action": "preview"}))
+
+
+def stackable(seq, cls, base, amount, name):
+    return spool_record(seq, cls, name, {"b": float(base), "a": float(5000 + seq), "j": 0, "c": 0.0, "o": float(amount)})
+
+
+class AfkCampTakeTests(unittest.TestCase):
+    """AFK FARM's camp takes the town's goods out of AFK Materials:
+    all or nothing, smaller stacks first, at most once per request id."""
+
+    setUp = VaultAfkQolTests.setUp
+    ingest = VaultAfkQolTests.ingest
+
+    def fill(self):
+        self.records = [
+            stackable(1, 12, 0, 999, "Basic Key"), stackable(2, 12, 0, 5, "Basic Key"),
+            stackable(3, 12, 1, 27, "Crystal Key"), stackable(4, 14, 5, 40, "Jewel material"),
+            stackable(5, 14, 60, 300, "Satanic Crystal Fragment"), stackable(6, 15, 1, 3, "Rune"),
+        ]
+        self.ingest(self.records, "exp_keys")
+        self.materials = editor._afk_find_collection(self.store, editor.AFK_INGEST_MATERIALS_COLLECTION)
+
+    def camp(self, action, **body):
+        return editor.op_vault_afk_take({"action": action, **body})
+
+    def take(self, request_id, items, **extra):
+        return self.camp("take", requestId=request_id, items=items, **extra)
+
+    def counts(self):
+        return {(row["cls"], row["base"]): row["count"] for row in self.camp("stock")["stock"]}
+
+    def basic_key_stacks(self):
+        return sorted(r.decoded_item()["data"]["o"] for r in self.store.list_all_available_items(collection=self.materials.id)
+                      if r.source_item_key.endswith("-12") and r.decoded_item()["data"]["b"] == 0.0)
+
+    def test_stock_counts_the_stacks_of_each_kind(self):
+        self.assertEqual(self.camp("stock"), {"category": None, "stock": []})
+        self.fill()
+        stock = self.camp("stock")
+        self.assertEqual(stock["category"], "AFK Materials")
+        self.assertEqual({(row["cls"], row["base"]): (row["count"], row["stacks"]) for row in stock["stock"]},
+                         {(12, 0): (1004, 2), (12, 1): (27, 1), (14, 5): (40, 1), (14, 60): (300, 1), (15, 1): (3, 1)})
+        self.assertTrue(all(row["name"] for row in stock["stock"]))
+
+    def test_a_take_uses_up_the_smaller_stack_first_and_happens_once(self):
+        self.fill()
+        request = "camp-take-0001-abcdef"
+        first = self.take(request, [{"cls": 12, "base": 0, "count": 7}, {"cls": 12, "base": 1, "count": 2}], purpose="Key rack")
+        self.assertNotIn("err", first, first.get("err"))
+        self.assertEqual((first["state"], first["replayed"]), ("done", False))
+        self.assertIn("ok", first)
+        self.assertEqual([(t["cls"], t["base"], t["count"]) for t in first["taken"]], [(12, 0, 7), (12, 1, 2)])
+        self.assertEqual(self.basic_key_stacks(), [997.0])
+        self.assertEqual(self.counts(), {(12, 0): 997, (12, 1): 25, (14, 5): 40, (14, 60): 300, (15, 1): 3})
+        self.assertEqual({(row["cls"], row["base"]): row["count"] for row in first["stock"]}, self.counts())
+
+        again = self.take(request, [{"cls": 12, "base": 0, "count": 7}])
+        self.assertEqual((again["state"], again["replayed"], again["taken"], again["eventId"]),
+                         ("done", True, first["taken"], first["eventId"]))
+        self.assertNotIn("ok", again)
+        status = self.camp("status", requestId=request)
+        self.assertEqual((status["state"], status["taken"]), ("done", first["taken"]))
+        self.assertEqual(self.counts()[(12, 0)], 997)
+        # The used-up stack's AFK import cannot come back with a repeated transfer.
+        self.assertEqual(self.ingest(self.records, "exp_keys")["deposited"], 0)
+        self.assertEqual(self.counts()[(12, 0)], 997)
+        with patch.object(editor, "_afk_take_stock", side_effect=sqlite3.OperationalError("busy")):
+            late = self.take("camp-take-0008-abcdef", [{"cls": 12, "base": 1, "count": 1}])
+        self.assertEqual((late["state"], late.get("err")), ("done", None))  # committed: never an error reply
+        self.assertNotIn("stock", late)
+        event = next(e for e in self.store.list_events(limit=5)
+                     if e["eventType"] == "afk_items_taken" and e["details"]["requestId"] == request)
+        self.assertEqual((event["details"]["requestId"], event["details"]["purpose"], event["details"]["removed"]),
+                         (request, "Key rack", 1))
+
+    def test_nothing_is_taken_when_any_part_is_missing_or_not_allowed(self):
+        self.fill()
+        before = self.counts()
+        short = self.take("camp-take-0002-abcdef", [{"cls": 12, "base": 0, "count": 3}, {"cls": 12, "base": 1, "count": 28}])
+        self.assertIn("27", short.get("err", ""))
+        for items in ([{"cls": 13, "base": 2, "count": 1}], [{"cls": 16, "base": 1, "count": 1}], [],
+                      [{"cls": 12, "base": 0, "count": 0}], [{"cls": 12, "base": 0, "count": 1.5}],
+                      [{"cls": True, "base": 0, "count": 1}], None):
+            self.assertIn("err", self.take("camp-take-0003-abcdef", items), items)
+        self.assertIn("err", self.take("short", [{"cls": 12, "base": 0, "count": 1}]))
+        self.assertIn("err", self.camp("drop"))
+        self.assertEqual(self.counts(), before)
+        # A refused request id is not used up.
+        self.assertEqual(self.take("camp-take-0002-abcdef", [{"cls": 12, "base": 0, "count": 3}])["state"], "done")
+
+    def test_a_cancelled_request_never_takes_and_a_cancel_reports_an_earlier_take(self):
+        self.fill()
+        request = "camp-take-0004-abcdef"
+        self.assertEqual(self.camp("status", requestId=request)["state"], "unknown")
+        cancelled = self.camp("cancel", requestId=request)
+        self.assertEqual((cancelled["state"], cancelled["replayed"]), ("cancelled", False))
+        late = self.take(request, [{"cls": 12, "base": 0, "count": 1}])
+        self.assertEqual((late["state"], late["taken"]), ("cancelled", []))
+        self.assertEqual(self.camp("cancel", requestId=request)["state"], "cancelled")
+        self.assertEqual(self.counts()[(12, 0)], 1004)
+        done = self.take("camp-take-0005-abcdef", [{"cls": 14, "base": 5, "count": 40}])
+        self.assertNotIn((14, 5), self.counts())
+        report = self.camp("cancel", requestId="camp-take-0005-abcdef")
+        self.assertEqual((report["state"], report["replayed"], report["taken"]), ("done", True, done["taken"]))
+
+    def test_a_take_is_an_undo_barrier_and_a_stale_review_changes_nothing(self):
+        self.fill()
+        elsewhere = self.store.create_collection("Elsewhere")
+        rune = next(r for r in self.store.list_all_available_items(collection=self.materials.id)
+                    if r.source_item_key.endswith("-15"))
+        self.store.move_item(rune.id, elsewhere.id)
+        self.assertEqual(self.store.preview_metadata_undo()["eventType"], "item_moved")
+        crystal = next(r for r in self.store.list_all_available_items(collection=self.materials.id)
+                       if r.source_item_key.endswith("-12") and r.decoded_item()["data"]["b"] == 1.0)
+        token = self.store.preview_item_rework([crystal.id])
+        self.store.set_item_custom_name(crystal.id, "Mine")
+        with self.assertRaises(VaultConflictError):
+            self.store.take_items("camp-take-0006-abcdef", remove=[crystal.id], preview_token=token)
+        self.assertIsNone(self.store.take_request("camp-take-0006-abcdef"))
+        self.assertNotIn((12, 1), self.counts())  # a custom-named stack is not the camp's to take
+        self.assertEqual(self.take("camp-take-0007-abcdef", [{"cls": 12, "base": 0, "count": 1}])["state"], "done")
+        self.assertIsNone(self.store.preview_metadata_undo())
+
+    def test_the_route_needs_the_editor_header(self):
+        self.fill()
+        server = ThreadingHTTPServer(("127.0.0.1", 0), editor.H)
+        thread = threading.Thread(target=server.serve_forever, daemon=True)
+        thread.start()
+        try:
+            url = f"http://127.0.0.1:{server.server_port}/api/vault/afk-take"
+            body = json.dumps({"action": "stock"}).encode("utf-8")
+            with self.assertRaises(HTTPError) as refused:
+                urlopen(Request(url, data=body, method="POST", headers={"Content-Type": "application/json"}), timeout=5)
+            self.assertEqual(refused.exception.code, 403)
+            request = Request(url, data=body, method="POST",
+                              headers={"Content-Type": "application/json", editor.EDITOR_REQUEST_HEADER: "1"})
+            with urlopen(request, timeout=5) as response:
+                self.assertEqual(json.load(response)["category"], "AFK Materials")
+        finally:
+            server.shutdown()
+            server.server_close()
+            thread.join(5)
+
+
+class AfkTownGoodsTakeTests(unittest.TestCase):
+    """AFK FARM 0.9's town takes any of its goods (``AFK_TAKE_KINDS``, AFK FARM's
+    tools/goods.py) the same way, and nothing that is not on that list."""
+
+    setUp = VaultAfkQolTests.setUp
+    ingest = VaultAfkQolTests.ingest
+    camp = AfkCampTakeTests.camp
+    take = AfkCampTakeTests.take
+    counts = AfkCampTakeTests.counts
+
+    def fill(self):
+        self.ingest([
+            stackable(1, 15, 17, 10, "Lum"), stackable(2, 13, 1, 8, "Dimensional Shard"),
+            stackable(3, 14, 64, 3, "Destiny Shard"), stackable(4, 12, 8, 2, "Angelic Key"),
+            # Not the town's goods: a soulgem, a singleton material, a Pickaxe, a consumable.
+            stackable(5, 15, 136, 5, "Soulgem"), stackable(6, 14, 59, 1, "Reflection of Tarethiel"),
+            stackable(7, 12, 20, 4, "Pickaxe"),
+            spool_record(8, 11, "Soul of Hatred", {"b": 14.0, "a": 5008.0, "j": 0, "c": 0.0}),
+        ], "exp_town")
+        self.materials = editor._afk_find_collection(self.store, editor.AFK_INGEST_MATERIALS_COLLECTION)
+
+    def vault_rows(self):
+        return sorted((r.id, r.collection_id, r.raw_sha256) for r in self.store.list_all_available_items())
+
+    def test_a_rune_shards_and_an_angelic_key_can_be_taken(self):
+        self.fill()
+        request = "town-take-0001-abcdef"
+        items = [{"cls": 15, "base": 17, "count": 4}, {"cls": 13, "base": 1, "count": 8},
+                 {"cls": 14, "base": 64, "count": 3}, {"cls": 12, "base": 8, "count": 1}]
+        done = self.take(request, items, purpose="Trade wagon")
+        self.assertNotIn("err", done, done.get("err"))
+        self.assertEqual((done["state"], done["replayed"]), ("done", False))
+        self.assertEqual([(t["cls"], t["base"], t["name"], t["count"]) for t in done["taken"]],
+                         [(12, 8, "Angelic Key", 1), (13, 1, "Dimensional Shard", 8),
+                          (14, 64, "Destiny Shard", 3), (15, 17, "Lum Rune", 4)])
+        self.assertEqual(self.counts(), {(12, 8): 1, (15, 17): 6})  # used-up stacks leave the Vault
+        again = self.take(request, items)
+        self.assertEqual((again["state"], again["replayed"], again["eventId"]), ("done", True, done["eventId"]))
+        self.assertEqual(self.counts(), {(12, 8): 1, (15, 17): 6})
+
+    def test_goods_outside_the_list_are_refused_and_nothing_is_taken(self):
+        self.fill()
+        soul = next(r for r in self.store.list_all_available_items() if r.source_item_key.endswith("-11"))
+        self.store.move_item(soul.id, self.materials.id)  # refused even from AFK Materials
+        before = self.vault_rows()
+        request = "town-take-0002-abcdef"
+        for cls, base in ((15, 136), (14, 59), (11, 14), (12, 20)):
+            for items in ([{"cls": cls, "base": base, "count": 1}],
+                          [{"cls": 12, "base": 8, "count": 1}, {"cls": cls, "base": base, "count": 1}]):
+                self.assertIn("err", self.take(request, items), items)
+        self.assertEqual(self.vault_rows(), before)
+        self.assertEqual(self.camp("status", requestId=request)["state"], "unknown")
+        self.assertNotIn("afk_items_taken", [e["eventType"] for e in self.store.list_events(limit=50)])
+
+    def test_stock_lists_the_new_kinds(self):
+        self.fill()
+        stock = self.camp("stock")["stock"]
+        self.assertEqual({(row["cls"], row["base"]): (row["name"], row["count"], row["stacks"]) for row in stock},
+                         {(12, 8): ("Angelic Key", 2, 1), (13, 1): ("Dimensional Shard", 8, 1),
+                          (14, 64): ("Destiny Shard", 3, 1), (15, 17): ("Lum Rune", 10, 1)})
+        # Every good is a proven native stack named from the catalog; runes and orbs say what they are.
+        self.assertEqual(sum(len(bases) for bases in editor.AFK_TAKE_KINDS.values()), 226)
+        for cls, bases in editor.AFK_TAKE_KINDS.items():
+            for base in bases:
+                self.assertIsNotNone(editor.native_stackable_info(f"0-0-0-{cls}", {"b": base}), (cls, base))
+                name = editor.BY_ADDR[(0, cls, 0, base)]["name"]
+                self.assertTrue(name and not name.startswith("?"), (cls, base))
+                self.assertIn(name, editor._afk_take_name(cls, base))
+        self.assertEqual([editor._afk_take_name(15, base) for base in (1, 33, 112, 126)],
+                         ["Ol Rune", "Zed Rune", "Orb of Goblin", "Orb of Earth"])
 
 
 if __name__ == "__main__":
