@@ -118,8 +118,20 @@ class BuildIdTests(unittest.TestCase):
 class IdentityTests(unittest.TestCase):
     def test_placement_fields_and_number_spelling_do_not_matter(self):
         record = {"a": 107725.0, "b": 2.0, "c": 0.0, "j": 0.0}
-        saved = {"w": 1, "g": 8.0, "a": 107725, "b": 2, "c": 0, "j": 0, "zz": {"sockets": 2}}
+        saved = {"w": 1, "g": 8.0, "a": 107725, "b": 2, "c": 0, "j": 0}
         self.assertIsNone(gt.definition_mismatch(record, saved))
+
+    def test_zz_sockets_is_part_of_a_non_unique_item_only(self):
+        # Measured 2026-09-26: a non-unique item shows the larger of zz.sockets
+        # and its seed's count; a unique never reads zz.sockets.
+        record = {"a": 107725.0, "b": 2.0, "c": 0.0, "j": 0.0, "zz": {"sockets": 2.0}}
+        self.assertIsNone(gt.definition_mismatch(record, {**record, "zz": {"sockets": 2, "future": "keep"}}))
+        self.assertEqual(gt.definition_mismatch(record, {**record, "zz": {"sockets": 4}}), "zz.sockets")
+        self.assertEqual(gt.definition_mismatch({k: v for k, v in record.items() if k != "zz"}, record), "zz.sockets")
+        bare = {"a": 107725.0, "b": 2.0, "c": 0.0, "j": 0.0}
+        self.assertIsNone(gt.definition_mismatch(bare, {**bare, "zz": {"sockets": 0}}))
+        unique = {"a": 5983559.0, "b": 52.0, "c": 1.0, "j": 0.0, "m": 1.0}
+        self.assertIsNone(gt.definition_mismatch(unique, {**unique, "zz": {"sockets": 4}}))
 
     def test_a_single_item_is_the_same_with_or_without_m_and_o(self):
         self.assertIsNone(gt.definition_mismatch({"a": 1, "b": 2, "c": 1}, {"a": 1, "b": 2, "c": 1, "m": 1.0}))

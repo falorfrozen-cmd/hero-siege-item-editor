@@ -119,8 +119,13 @@ class InfiniteVaultIntegrationTests(unittest.TestCase):
 
         self.game_patch = patch.object(editor, "game_running", return_value=False)
         self.game_patch.start()
+        # Generation reads the local Custom Forge store (a forged item's seed is
+        # skipped); keep it on the test's own empty folder, never the user's.
+        self.root_patch = patch.object(editor, "ROOT", self.saves)
+        self.root_patch.start()
 
     def tearDown(self):
+        self.root_patch.stop()
         self.game_patch.stop()
         editor.SAVES = self.old_saves
         if self.had_vault_path:
@@ -1077,7 +1082,12 @@ class InfiniteVaultIntegrationTests(unittest.TestCase):
         self.assertEqual(result["changeCount"], 1)
         changed = self._read_stash()["stash_tab_1"]
         self.assertEqual(changed[SOURCE_KEY], before_original)
-        self.assertEqual(changed[cap_key]["data"]["a"], 172693)
+        # a white Cap takes the best game-built Common seed, not the profile's
+        # 172693 (hs_game_seeds.json)
+        self.assertEqual(
+            changed[cap_key]["data"]["a"],
+            editor.white_seed_choice({"kind": "normal", "cls": 0, "sub": 0, "b": 0})["seed"],
+        )
         self.assertTrue(result["backup"])
 
     def test_shared_stash_max_sets_only_proven_stackables_to_native_x999(self):
@@ -1199,7 +1209,11 @@ class InfiniteVaultIntegrationTests(unittest.TestCase):
             "previewToken": preview["previewToken"],
         })
         self._assert_ok(result)
-        self.assertEqual(vault.get_item(item.id).decoded_item()["data"]["a"], 172693)
+        # a white Cap takes the best game-built Common seed (hs_game_seeds.json)
+        self.assertEqual(
+            vault.get_item(item.id).decoded_item()["data"]["a"],
+            editor.white_seed_choice({"kind": "normal", "cls": 0, "sub": 0, "b": 0})["seed"],
+        )
         self.assertTrue(result["backup"])
 
     def test_vault_stash_roll_rejects_stale_preview_without_partial_write(self):

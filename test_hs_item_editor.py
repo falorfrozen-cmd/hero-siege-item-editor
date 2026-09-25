@@ -185,8 +185,13 @@ class ItemEditorSeason10Tests(unittest.TestCase):
 
         self.game_patch = patch.object(editor, "game_running", return_value=False)
         self.game_patch.start()
+        # Generation reads the local Custom Forge store (a forged item's seed is
+        # skipped); keep it on the test's own empty folder, never the user's.
+        self.root_patch = patch.object(editor, "ROOT", self.saves)
+        self.root_patch.start()
 
     def tearDown(self):
+        self.root_patch.stop()
         self.game_patch.stop()
         editor.SAVES = self.old_saves
         editor.VAULT_DB_FILE, editor._VAULT_STORE, editor._VAULT_STORE_PATH = self.old_vault
@@ -441,10 +446,14 @@ class ItemEditorSeason10Tests(unittest.TestCase):
         profile = gown["rollProfile"]
         socket_roll = editor.socket_roll_for_profile(profile)
         self.assertEqual(data["a"], float(socket_roll["seed"]))
-        self.assertIn("BEST VERIFIED + MAX SOCKETS", result["ok"])
+        # The game gives this seed 3 sockets (hs_game_seeds.json), not the 4
+        # the older build's socket table claimed: no MAX SOCKETS claim.
+        self.assertIn("BEST VERIFIED applied (", result["ok"])
+        self.assertIn("3 sockets, game-verified", result["ok"])
+        self.assertNotIn("MAX SOCKETS", result["ok"])
         self.assertEqual(data["i"], 222.0)
         self.assertEqual(data["s"], 333.0)
-        self.assertEqual(data["zz"], {"sockets": 4.0})
+        self.assertEqual(data["zz"], {"sockets": 3.0})
 
     def test_equipped_perfect_roll_is_an_idempotent_noop(self):
         gown = catalog_row("armors_zephys_gown")
@@ -465,7 +474,10 @@ class ItemEditorSeason10Tests(unittest.TestCase):
             "key": key,
         })
 
-        self.assertIn("already BEST VERIFIED + MAX SOCKETS", result["ok"])
+        # The game gives this seed 3 sockets (hs_game_seeds.json), not the 4
+        # the older build's socket table claimed: no MAX SOCKETS claim.
+        self.assertIn("already BEST VERIFIED (", result["ok"])
+        self.assertNotIn("MAX SOCKETS", result["ok"])
         self.assertEqual(result["backup"], "")
         self.assertEqual(char_path.read_bytes(), char_before)
         self.assertEqual(
@@ -525,10 +537,14 @@ class ItemEditorSeason10Tests(unittest.TestCase):
         gown = next(row for row in rows if row.get("key") == "armors_zephys_gown")
         profile = gown["rollProfile"]
         self.assertEqual(profile["fieldSeeds"]["a"], 5_983_559.0)
-        self.assertEqual(profile["maxSockets"], 4)
+        # The game gives this seed 3 sockets (hs_game_seeds.json), not the 4
+        # the older build's socket table claimed: no MAX SOCKETS claim.
+        self.assertEqual(profile["maxSockets"], 3)
         self.assertEqual(profile["mode"], "best")
-        self.assertEqual(profile["rollLabel"], "BEST VERIFIED + MAX SOCKETS")
+        self.assertEqual(profile["rollLabel"], "BEST VERIFIED")
         self.assertEqual(profile["socketRoll"]["seed"], 5_983_559)
+        self.assertEqual(profile["gameSeed"]["seed"], 5_983_559)
+        self.assertEqual(profile["gameSeed"]["sockets"], 3)
         # The authenticated source profile remains immutable; the socket data
         # is an explicit client/runtime overlay rather than a database rewrite.
         source = catalog_row("armors_zephys_gown")["rollProfile"]
@@ -1056,7 +1072,10 @@ class ItemEditorSeason10Tests(unittest.TestCase):
         stash_path = self.saves / "stash.hss"
         stash = json.loads(editor.decode_hss(stash_path))
         key, entry = next(iter(stash["stash_tab_1"].items()))
-        self.assertEqual(entry["data"]["a"], 356_137.0)
+        # `a` is the base's best game-built Common seed (the profile's own
+        # 356137 rolls a non-Common base, and a runeword forms only on Common);
+        # `i` is the runeword profile's.
+        self.assertEqual(entry["data"]["a"], float(editor.white_seed_choice(dict(base, kind="normal"))["seed"]))
         self.assertEqual(entry["data"]["i"], 424_123.0)
         self.assertNotIn("s", entry["data"])
 
@@ -1075,8 +1094,12 @@ class ItemEditorSeason10Tests(unittest.TestCase):
             "key": key,
         })
         self.assertIn("EXACT MAX", result["ok"])
+        self.assertIn("base Common, game-verified", result["ok"])
         updated = json.loads(editor.decode_hss(stash_path))["stash_tab_1"][key]["data"]
-        self.assertEqual((updated["a"], updated["i"]), (356_137.0, 424_123.0))
+        self.assertEqual(
+            (updated["a"], updated["i"]),
+            (float(editor.white_seed_choice(dict(base, kind="normal"))["seed"]), 424_123.0),
+        )
         self.assertEqual(updated["s"], 777.0)
         self.assertEqual(updated["zz"], zz_before)
         self.assertEqual(
@@ -1164,7 +1187,10 @@ class ItemEditorSeason10Tests(unittest.TestCase):
             "key": key,
         })
 
-        self.assertIn("BEST VERIFIED + MAX SOCKETS", result["ok"])
+        # The game gives this seed 3 sockets (hs_game_seeds.json), not the 4
+        # the older build's socket table claimed: no MAX SOCKETS claim.
+        self.assertIn("BEST VERIFIED applied (", result["ok"])
+        self.assertNotIn("MAX SOCKETS", result["ok"])
         data = json.loads(editor.decode_hss(path))["inventory_tab_0"][key]["data"]
         self.assertEqual(
             (data["a"], data["i"], data["s"]),
@@ -1175,7 +1201,7 @@ class ItemEditorSeason10Tests(unittest.TestCase):
              if field not in {"a", "i", "s", "zz"}},
             untouched_before,
         )
-        self.assertEqual(data["zz"], {"sockets": 4.0, "opaque": {"keep": True}})
+        self.assertEqual(data["zz"], {"sockets": 3.0, "opaque": {"keep": True}})
 
     def test_measured_socket_a_keeps_legacy_s_profile_actionable_without_creating_s(self):
         gown = catalog_row("armors_zephys_gown")
@@ -1199,10 +1225,13 @@ class ItemEditorSeason10Tests(unittest.TestCase):
             "key": key,
         })
 
-        self.assertIn("BEST VERIFIED + MAX SOCKETS", result["ok"])
+        # The game gives this seed 3 sockets (hs_game_seeds.json), not the 4
+        # the older build's socket table claimed: no MAX SOCKETS claim.
+        self.assertIn("BEST VERIFIED (", result["ok"])
+        self.assertNotIn("MAX SOCKETS", result["ok"])
         data = json.loads(editor.decode_hss(path))["inventory_tab_0"][key]["data"]
         self.assertEqual(data["a"], 5_983_559.0)
-        self.assertEqual(data["zz"], {"sockets": 4.0})
+        self.assertEqual(data["zz"], {"sockets": 3.0})
         self.assertNotIn("s", data)
 
     def test_every_build_specific_equipment_address_fails_closed_without_a_profile(self):

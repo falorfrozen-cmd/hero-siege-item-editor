@@ -32,7 +32,7 @@ path was never modelled. Replaying harder cannot keep up with a moving target.
 built it, for this exact item version, on the running build. Everything else is
 an estimate and says so.
 
-The work is split into three steps, each useful on its own.
+The work is split into four steps, each useful on its own.
 
 ## Step 1 — the game's records (Item Editor 2.16.0, ForgePact 1.4.5)
 
@@ -225,6 +225,77 @@ tooltip is not rebuilt from rules, it is recorded as the game draws it.
   same. The rest of such a tooltip (name, header, footer) stays the editor's until
   the game draws the item.
 
+## Step 4 — seeds the game built (Item Editor 2.16.3)
+
+Players reported white bases and runeword bases coming out yellow, and editor
+items taking a gem in only some of their sockets. Building the editor's exact
+definitions through step 2 showed why.
+
+### What the game does (measured on `pe-6aaa6779-0cad4fc8`, 2026-09-26)
+
+- **Rarity comes from `a`.** The roll profiles chose `a` for the best stat draws
+  only (the CPR model predicts the stat draws and the socket draw, not rarity).
+  Of the 363 white equipment bases 2.16.2 made, 203 came out Common, 98 Superior,
+  57 Rare and 5 higher. Random seeds give about 61% Common. Amulets and rings
+  never came out Common in 16,000 builds.
+- **A runeword forms only on a Common base**: 2,410 of the 2,429 Common pairs
+  formed, 2 of the 1,286 others. Disaster and Celestus also do not form on some
+  of the bases their targets name, even Common with the right sockets.
+- **Sockets.** A non-unique item (`c` 0) shows the larger of `zz.sockets` and the
+  count its seed rolls; on a seed that rolls none, `zz.sockets` 1-6 gave exactly
+  that count on every equipment class, gloves and belts included. A unique (`c`
+  1) shows its seed's count and never reads `zz.sockets`. Filled payloads never
+  add a socket: `s1..s5` on a seed that rolls 3 gave 3 sockets, and the extra
+  payloads stay in the definition, unused. 96 of 553 uniques the editor claimed
+  sockets on had a different count in the game; all 14 unique charms of the
+  socket table have none or one, not two.
+- **Custom Forge recognises an item by its type and `a`/`b`/`c`/`j`.** The
+  Great Helm's profile seed was the owner's forged Miner's Helmet's, so every
+  white Great Helm and every runeword on one was built as that Miner's Helmet.
+
+### The table (`hs_game_seeds.json`, built by `build_game_seed_table.py`)
+
+- **White bases** (308; every non-jewelry equipment base): up to four `a` seeds
+  that the game built Common and with no socket, best CPR stat score first, and
+  `maxSockets`, the most sockets the game rolled for the base in 332 seeds.
+- **Uniques** (567): the seed the editor writes and the socket count the game
+  gives it. Where the game gave fewer than the old claim, 240 stat-ranked seeds
+  were built and the best with the most sockets taken (7 improved).
+- **`runewordBlocked`**: recipe x base pairs the game did not form.
+
+The editor refuses to start without a valid table, like the socket table: a
+fallback would hand out the Rare-rolling seeds again.
+
+The game keeps every item it evaluates in memory until it closes (about 95 KB
+each; a session that evaluated about 200,000 crashed in `ucrtbase.dll` on
+2026-09-26). `build_game_seed_table.py` therefore evaluates at most 30,000 items
+per game session, keeps what the game built in a work file, and stops with exit
+code 2 until everything is measured: restart Hero Siege and run it again.
+
+### How the editor uses it
+
+- A new white base takes the best seed no Custom Forge item uses, and no
+  `zz.sockets`; a runeword takes the same seed for `a`, its profile's `i`, and
+  `zz.sockets` = the rune count. Perfect on a white base writes the best seed;
+  Reroll on a runeword or an editor-made white base picks another table seed; a
+  dropped item still rerolls at random.
+- The socket editor's limit on a white base is its `maxSockets`, and the count
+  is `zz.sockets`. A unique must keep its seed's count (from the table, or the
+  game's record of the item). A non-unique item the game recorded with more
+  sockets than its `zz.sockets` never goes below that count.
+- A game record describes a non-unique item only while its `zz.sockets` matches
+  (`identity_fields` keeps that count; it ignores the rest of `zz`, and all of it
+  on a unique).
+- A unique's roll label claims MAX SOCKETS only while the game gives the socket
+  table's maximum.
+
+### Checked in the game
+
+With the table in place, the game built what the editor writes: 308 of 308
+white bases Common with no socket; 273 of 273 at their `maxSockets` via
+`zz.sockets`; 553 of 553 uniques with the socket count the editor writes; 3,687
+of 3,715 runeword pairs formed, and the 28 that did not are the blocked list.
+
 ## Files
 
 | Path | Written by | Read by |
@@ -237,3 +308,4 @@ tooltip is not rebuilt from rules, it is recorded as the game draws it.
 | `…\itemtruth\status.json` | ForgePact | Item Editor |
 | `…\itemtruth\truth.sqlite3` | Item Editor | Item Editor |
 | `…\afk\spool\*_claim.ndjson`, `worker_*.ndjson` | AFK FARM | Item Editor |
+| `hs_game_seeds.json` (shipped with the editor) | `build_game_seed_table.py` | Item Editor |
