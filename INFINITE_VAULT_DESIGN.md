@@ -279,8 +279,8 @@ never choose a second destination and duplicate the item.
   one category; see Confirmed deletion.
 - `GET /api/vault/ingest/status`: how many of one expedition's records the
   Vault holds, has already returned to the Shared Stash, or has intentionally deleted.
-- `POST /api/vault/afk-take`: AFK FARM's camp. `stock` counts the keys (class 12)
-  and jewelcrafting materials (class 14, bases 0-23 and 44) in AFK Materials;
+- `POST /api/vault/afk-take`: AFK FARM's camp and town. `stock` counts the town's
+  goods (`AFK_TAKE_KINDS`, classes 12-15) in AFK Materials;
   `take` removes `items` ([{cls, base, count}]) at most once per `requestId`;
   `status` and `cancel` settle a request whose reply was lost. SQLite only.
 
@@ -422,10 +422,14 @@ preview reports that count as `emptyStashes`. The event records `rarities` or
 
 ## AFK FARM camp takes (2.16.1)
 
-`op_vault_afk_take` serves AFK FARM's camp (0.8): the adventurer's key rack (Basic
-Key 12:0 opens golden chests, Crystal Key 12:1 crystal chests; every key 12:0-43
-is accepted) and the jeweler's material stock (the jewel recipes' inputs 14:0-23
-and the Enchanted Sigil 14:44). Only plain stacks in AFK Materials count
+`op_vault_afk_take` serves AFK FARM's camp (0.8: the adventurer's key rack, the
+jeweler's material stock) and town (0.9: fortifications, merchants, trade wagons).
+It takes the town's goods, `AFK_TAKE_KINDS`: the 226 kinds of AFK FARM's
+`tools/goods.py`, namely keys, fragments and shards, tarot cards, materials, dusts,
+rare consumables, runes, gems, jewels and orbs (classes 12-15). Anything else is
+refused, for example the Pickaxe 12:20, boss parts, soulgems and singletons such as
+14:59. Names come from the catalog; runes and orbs, bare there, read `Lum Rune` and
+`Orb of Goblin`, as in AFK FARM. Only plain stacks in AFK Materials count
 (`_vault_stack_identity`: no custom name, sub and kind 0, at most 999). A take is
 all or nothing; smaller stacks are used up first (`_afk_take_plan`): used-up
 stacks are removed with their deposit keys kept as deleted, so a repeated AFK

@@ -5393,12 +5393,17 @@ def op_vault_item(body: dict) -> dict:
 
 
 # ------------------------------------------------------------------ AFK FARM camp
-# AFK FARM's camp keeps Basic and Crystal Keys on a key rack and jewelcrafting
-# materials in its Jeweler's stock. The player fills them from AFK Materials:
+# AFK FARM's camp (key rack, Jeweler's stock) and town (fortifications, merchants,
+# trade wagons) keep game goods in stock. The player fills it from AFK Materials:
 # the stacks used shrink or leave the Vault, at most once per AFK FARM request
 # id (a repeated id answers with the recorded take, a cancelled id never takes).
 # SQLite only, like the AFK transfer, so Hero Siege may be running.
-AFK_TAKE_KINDS = {12: frozenset(range(44)), 14: frozenset((*range(24), 44))}  # keys; jeweler's materials
+AFK_TAKE_KINDS = {  # AFK FARM's town goods list (its tools/goods.py)
+    12: frozenset((0, 1, 2, *range(7, 20), *range(21, 31), 33)),
+    13: frozenset((0, 1, *range(18, 43), 54, 55)),
+    14: frozenset((*range(24), *range(27, 40), 43, 44, 49, 50, 51, *range(53, 59), *range(60, 67), 68, 69, 70)),
+    15: frozenset((*range(1, 70), *range(78, 97), *range(112, 136))),
+}
 AFK_TAKE_MAX_KINDS = 32
 AFK_TAKE_MAX_AMOUNT = 1_000_000
 _AFK_TAKE_REQUEST_RE = re.compile(r"[A-Za-z0-9_-]{16,128}\Z")
@@ -5411,8 +5416,16 @@ def _afk_take_request_id(value: object) -> str:
 
 
 def _afk_take_name(cls: int, base: int) -> str:
+    """The catalog name. Runes and orbs are bare there ("Lum", "Goblin"): say what they are, as AFK FARM does."""
+
     row = BY_ADDR.get((0, cls, 0, base)) or {}
-    return str(row.get("name") or row.get("key") or f"{STACKABLE_CLS.get(cls, 'Item')} {base}")
+    name = str(row.get("name") or row.get("key") or f"{STACKABLE_CLS.get(cls, 'Item')} {base}")
+    key = str(row.get("key") or "")
+    if key.startswith("socketable_orb_of_") and not name.startswith("Orb "):
+        return f"Orb of {name}"
+    if key.startswith("socketable_") and key.endswith("_rune") and not name.endswith(" Rune"):
+        return f"{name} Rune"
+    return name
 
 
 def _afk_take_count(record) -> int:
@@ -5447,13 +5460,13 @@ def _afk_take_stock(stacks: dict) -> list[dict]:
 
 def _afk_take_wanted(raw: object) -> dict[tuple[int, int], int]:
     if not isinstance(raw, list) or not 1 <= len(raw) <= AFK_TAKE_MAX_KINDS:
-        raise VaultValidationError("Choose the keys or materials to take.")
+        raise VaultValidationError(f"Choose the goods to take (1 to {AFK_TAKE_MAX_KINDS} kinds at once).")
     wanted: dict[tuple[int, int], int] = {}
     for entry in raw:
         cls, base = (entry.get("cls"), entry.get("base")) if isinstance(entry, dict) else (None, None)
         if (isinstance(cls, bool) or not isinstance(cls, int) or isinstance(base, bool)
                 or not isinstance(base, int) or base not in AFK_TAKE_KINDS.get(cls, ())):
-            raise VaultValidationError("Only keys and jewelcrafting materials can go to AFK FARM's camp.")
+            raise VaultValidationError("Only goods on AFK FARM's town list can go to its camp and town.")
         wanted[(cls, base)] = wanted.get((cls, base), 0) + clean_positive_stack_amount(entry.get("count"))
         if wanted[(cls, base)] > AFK_TAKE_MAX_AMOUNT:
             raise VaultValidationError(f"At most {AFK_TAKE_MAX_AMOUNT:,} of one kind can be taken at once.")
@@ -5493,12 +5506,13 @@ def _afk_take_reply(event: dict) -> dict:
 
 
 def op_vault_afk_take(body: dict) -> dict:
-    """AFK FARM's camp and AFK Materials (``POST /api/vault/afk-take``).
+    """AFK FARM's camp and town, and AFK Materials (``POST /api/vault/afk-take``).
 
-    ``stock`` counts the keys (class 12) and jewelcrafting materials (class 14,
-    bases 0-23 and 44) in AFK Materials. ``take`` takes ``items``
-    ([{cls, base, count}]) all at once or not at all, at most once per
-    ``requestId``; a repeated id answers with the recorded take (``replayed``).
+    ``stock`` counts the town's goods (``AFK_TAKE_KINDS``: keys, fragments,
+    tarot cards, materials, runes, gems, jewels, orbs) in AFK Materials.
+    ``take`` takes ``items`` ([{cls, base, count}]) all at once or not at all,
+    at most once per ``requestId``; a repeated id answers with the recorded
+    take (``replayed``).
     ``status`` reports a request (``unknown`` if none arrived). ``cancel`` makes
     sure a request never takes anything, or reports the take it already made.
     An ``err`` reply means nothing was taken; a committed take never answers
