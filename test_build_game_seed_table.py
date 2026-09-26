@@ -7,6 +7,8 @@ file lets the next run carry on where it left off.
 """
 import importlib.util
 import io
+import subprocess
+import sys
 import tempfile
 import unittest
 from contextlib import redirect_stdout
@@ -16,6 +18,19 @@ MODULE_PATH = Path(__file__).with_name("build_game_seed_table.py")
 SPEC = importlib.util.spec_from_file_location("build_game_seed_table_tests", MODULE_PATH)
 tool = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(tool)
+
+
+class ImportTests(unittest.TestCase):
+    def test_the_module_imports_without_numpy(self):
+        """The release build's environment (requirements-build.txt) has no numpy;
+        only the CPR scan needs it. v2.16.3's first build failed on exactly this."""
+        code = ("import sys, importlib.util; sys.modules['numpy'] = None; "
+                f"spec = importlib.util.spec_from_file_location('seed_table_without_numpy', {str(MODULE_PATH)!r}); "
+                "module = importlib.util.module_from_spec(spec); spec.loader.exec_module(module); "
+                "print(module.spend(None, 1))")
+        run = subprocess.run([sys.executable, "-c", code], capture_output=True, text=True, timeout=120)
+        self.assertEqual(0, run.returncode, run.stderr)
+        self.assertEqual("None", run.stdout.strip())
 
 
 class RunLimitTests(unittest.TestCase):

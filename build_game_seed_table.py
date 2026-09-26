@@ -50,8 +50,6 @@ import tempfile
 import time
 from pathlib import Path
 
-import numpy as np
-
 HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))
 
@@ -84,6 +82,11 @@ def a_chain_bounds(profile: dict | None) -> list | None:
 
 def ranked_seeds(signatures: dict[tuple, int], stop: int, block: int = 1_000_000) -> dict[tuple, list]:
     """Per stat signature, the best seeds by (stats at top, deficit, seed)."""
+
+    # Only the CPR scan needs numpy. Importing it here keeps the rest of this
+    # module (and test_build_game_seed_table.py) importable where numpy is not
+    # installed - the release build's environment (requirements-build.txt).
+    import numpy as np
 
     best = {signature: [] for signature in signatures}
     scored = {signature: sum(1 for bound in signature if bound is not None) for signature in signatures}
