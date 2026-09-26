@@ -8,6 +8,30 @@ A local/offline save editor for **Hero Siege** (Pixel Prone Games). Manage items
 
 Single file, no install, no Python needed. Just run it.
 
+## v2.16.3-s10 — white bases come out white
+
+- **White bases and runeword bases are Common again.** The editor picked their
+  seeds for the best stat rolls only, and the game rolls rarity from the same
+  seed: built by the game, 160 of 363 white bases came out Superior, Rare or
+  better, and a runeword forms only on a Common base, so about a third of the
+  forged runewords never became runewords. Every white equipment base now takes
+  a seed the running game itself built as Common, with its stats at the top, and
+  every runeword is forged on one. Checked in the game: 308 of 308 white bases
+  Common, 3,687 of 3,715 recipe x base runewords formed.
+- **The socket editor matches the game.** A white base takes any socket count up
+  to the most the game rolls for it (a Royal Shield 5, gloves and belts none),
+  and the game shows exactly that count. A unique always has the sockets its seed
+  rolls - the game ignores any other saved count - so the editor now writes that
+  count and keeps it: 59 uniques used to show more sockets than they have in the
+  game, which is why gems could be socketed into only some of them.
+- **Runewords the game does not form on a base are closed there.** Disaster and
+  Celestus do not form on some of the bases their targets name, even on a Common
+  base with the right sockets; those bases are shown as unavailable.
+- A white Great Helm no longer turns into the Miner's Helmet: new items never
+  take a seed a Custom Forge item already uses.
+
+See [the v2.16.3 release notes](RELEASE_NOTES_v2.16.3.md).
+
 ## v2.16.2-s10 — starts beside ForgePact
 
 - **The editor starts while ForgePact's panel is open.** The editor keeps ten

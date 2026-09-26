@@ -1,0 +1,12169 @@
+{
+ "schemaVersion": 1,
+ "note": "Seeds the running game itself built, through its own save loader (ForgePact Item Truth evaluation requests): per white equipment base, `a` seeds that come out Common and roll no socket, best CPR stat score first, and the most sockets the game rolled for the base; per unique the editor claims sockets on, the `a` seed to use and the socket count the game gives it. A non-unique item (c 0) shows the larger of zz.sockets and its seed's count, so on these seeds zz.sockets is the count; a unique (c 1) shows its seed's count and never reads zz.sockets; filled socket payloads never add a socket. Amulets and rings never come out Common, so they have no entry.",
+ "build": "pe-6aaa6779-0cad4fc8",
+ "exeSha256": "835fae99ff4de7b7b7c45e97b76f97d57379cafd715302e831d24f32100b1156",
+ "generated": "2026-09-26",
+ "white": {
+  "0:0:0": {
+   "name": "Cap",
+   "seeds": [
+    {
+     "seed": 173266,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 173269,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 173272,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 173275,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    }
+   ],
+   "maxSockets": 3
+  },
+  "0:0:1": {
+   "name": "Casque",
+   "seeds": [
+    {
+     "seed": 173266,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 173269,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 173272,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 173275,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    }
+   ],
+   "maxSockets": 3
+  },
+  "0:0:10": {
+   "name": "Great Helm",
+   "seeds": [
+    {
+     "seed": 358912,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 358915,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 358918,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 358921,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    }
+   ],
+   "maxSockets": 4
+  },
+  "0:0:11": {
+   "name": "War Visage",
+   "seeds": [
+    {
+     "seed": 358912,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 358915,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 358918,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 358921,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    }
+   ],
+   "maxSockets": 4
+  },
+  "0:0:12": {
+   "name": "Shako",
+   "seeds": [
+    {
+     "seed": 370699,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 370702,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 370705,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 370708,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    }
+   ],
+   "maxSockets": 4
+  },
+  "0:0:13": {
+   "name": "Horned Helm",
+   "seeds": [
+    {
+     "seed": 370699,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 370702,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 370705,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 370708,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    }
+   ],
+   "maxSockets": 4
+  },
+  "0:0:14": {
+   "name": "Basilisk Skull",
+   "seeds": [
+    {
+     "seed": 370699,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 370702,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 370705,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 370708,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    }
+   ],
+   "maxSockets": 4
+  },
+  "0:0:2": {
+   "name": "Basinet",
+   "seeds": [
+    {
+     "seed": 173266,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 173269,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 173272,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 173275,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    }
+   ],
+   "maxSockets": 3
+  },
+  "0:0:3": {
+   "name": "Cap",
+   "seeds": [
+    {
+     "seed": 333094,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 333097,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 333100,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 333103,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    }
+   ],
+   "maxSockets": 3
+  },
+  "0:0:4": {
+   "name": "Casque",
+   "seeds": [
+    {
+     "seed": 333094,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 333097,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 333100,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 333103,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    }
+   ],
+   "maxSockets": 3
+  },
+  "0:0:5": {
+   "name": "Basinet",
+   "seeds": [
+    {
+     "seed": 333094,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 333097,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 333100,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 333103,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    }
+   ],
+   "maxSockets": 3
+  },
+  "0:0:6": {
+   "name": "War Hat",
+   "seeds": [
+    {
+     "seed": 358912,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 358915,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 358918,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 358921,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    }
+   ],
+   "maxSockets": 3
+  },
+  "0:0:7": {
+   "name": "Great Helm",
+   "seeds": [
+    {
+     "seed": 358912,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 358915,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 358918,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 358921,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    }
+   ],
+   "maxSockets": 3
+  },
+  "0:0:8": {
+   "name": "War Visage",
+   "seeds": [
+    {
+     "seed": 358912,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 358915,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 358918,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 358921,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    }
+   ],
+   "maxSockets": 3
+  },
+  "0:0:9": {
+   "name": "War Hat",
+   "seeds": [
+    {
+     "seed": 358912,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 358915,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 358918,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 358921,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    }
+   ],
+   "maxSockets": 4
+  },
+  "1:0:0": {
+   "name": "Steel Armor",
+   "seeds": [
+    {
+     "seed": 333094,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 333097,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 333100,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 333103,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    }
+   ],
+   "maxSockets": 4
+  },
+  "1:0:1": {
+   "name": "Leather Coat",
+   "seeds": [
+    {
+     "seed": 333094,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 333097,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 333100,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 333103,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    }
+   ],
+   "maxSockets": 4
+  },
+  "1:0:10": {
+   "name": "Templar Coat",
+   "seeds": [
+    {
+     "seed": 420028,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 420043,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 420046,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 420052,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    }
+   ],
+   "maxSockets": 4
+  },
+  "1:0:11": {
+   "name": "Wire Fleece",
+   "seeds": [
+    {
+     "seed": 420028,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 420043,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 420046,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 420052,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    }
+   ],
+   "maxSockets": 4
+  },
+  "1:0:12": {
+   "name": "Breast Plate",
+   "seeds": [
+    {
+     "seed": 420028,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 420043,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 420046,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 420052,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    }
+   ],
+   "maxSockets": 4
+  },
+  "1:0:13": {
+   "name": "Cuirass",
+   "seeds": [
+    {
+     "seed": 420028,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 420043,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 420046,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 420052,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    }
+   ],
+   "maxSockets": 4
+  },
+  "1:0:14": {
+   "name": "Templar Coat",
+   "seeds": [
+    {
+     "seed": 420028,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 420043,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 420046,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 420052,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    }
+   ],
+   "maxSockets": 4
+  },
+  "1:0:15": {
+   "name": "Wire Fleece",
+   "seeds": [
+    {
+     "seed": 420028,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 420043,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 420046,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 420052,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    }
+   ],
+   "maxSockets": 4
+  },
+  "1:0:16": {
+   "name": "Boneweave",
+   "seeds": [
+    {
+     "seed": 420028,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 420043,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 420046,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 420052,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    }
+   ],
+   "maxSockets": 4
+  },
+  "1:0:17": {
+   "name": "Chaos Armor",
+   "seeds": [
+    {
+     "seed": 420028,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 420043,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 420046,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 420052,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    }
+   ],
+   "maxSockets": 4
+  },
+  "1:0:18": {
+   "name": "Dusk Shroud",
+   "seeds": [
+    {
+     "seed": 420028,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 420043,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 420046,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 420052,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    }
+   ],
+   "maxSockets": 4
+  },
+  "1:0:19": {
+   "name": "Great Hauberk",
+   "seeds": [
+    {
+     "seed": 420028,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 420043,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 420046,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 420052,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    }
+   ],
+   "maxSockets": 4
+  },
+  "1:0:2": {
+   "name": "Studded Leather",
+   "seeds": [
+    {
+     "seed": 333094,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 333097,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 333100,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 333103,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    }
+   ],
+   "maxSockets": 4
+  },
+  "1:0:3": {
+   "name": "Trellised Armor",
+   "seeds": [
+    {
+     "seed": 333094,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 333097,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 333100,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 333103,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    }
+   ],
+   "maxSockets": 4
+  },
+  "1:0:4": {
+   "name": "Steel Armor",
+   "seeds": [
+    {
+     "seed": 394273,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 394279,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 394297,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 394300,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    }
+   ],
+   "maxSockets": 4
+  },
+  "1:0:5": {
+   "name": "Leather Coat",
+   "seeds": [
+    {
+     "seed": 394273,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 394279,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 394297,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 394300,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    }
+   ],
+   "maxSockets": 4
+  },
+  "1:0:6": {
+   "name": "Studded Leather",
+   "seeds": [
+    {
+     "seed": 394273,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 394279,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 394297,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 394300,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    }
+   ],
+   "maxSockets": 4
+  },
+  "1:0:7": {
+   "name": "Trellised Armor",
+   "seeds": [
+    {
+     "seed": 394273,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 394279,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 394297,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 394300,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    }
+   ],
+   "maxSockets": 4
+  },
+  "1:0:8": {
+   "name": "Breast Plate",
+   "seeds": [
+    {
+     "seed": 420028,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 420043,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 420046,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 420052,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    }
+   ],
+   "maxSockets": 4
+  },
+  "1:0:9": {
+   "name": "Cuirass",
+   "seeds": [
+    {
+     "seed": 420028,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 420043,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 420046,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 420052,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    }
+   ],
+   "maxSockets": 4
+  },
+  "2:0:0": {
+   "name": "Boots",
+   "seeds": [
+    {
+     "seed": 353683,
+     "maxed": 2,
+     "total": 2,
+     "deficit": 0
+    },
+    {
+     "seed": 353692,
+     "maxed": 2,
+     "total": 2,
+     "deficit": 0
+    },
+    {
+     "seed": 353701,
+     "maxed": 2,
+     "total": 2,
+     "deficit": 0
+    },
+    {
+     "seed": 353728,
+     "maxed": 2,
+     "total": 2,
+     "deficit": 0
+    }
+   ],
+   "maxSockets": 2
+  },
+  "2:0:1": {
+   "name": "Heavy Boots",
+   "seeds": [
+    {
+     "seed": 353683,
+     "maxed": 2,
+     "total": 2,
+     "deficit": 0
+    },
+    {
+     "seed": 353692,
+     "maxed": 2,
+     "total": 2,
+     "deficit": 0
+    },
+    {
+     "seed": 353701,
+     "maxed": 2,
+     "total": 2,
+     "deficit": 0
+    },
+    {
+     "seed": 353728,
+     "maxed": 2,
+     "total": 2,
+     "deficit": 0
+    }
+   ],
+   "maxSockets": 2
+  },
+  "2:0:10": {
+   "name": "Boneweave Boots",
+   "seeds": [
+    {
+     "seed": 364843,
+     "maxed": 2,
+     "total": 2,
+     "deficit": 0
+    },
+    {
+     "seed": 364852,
+     "maxed": 2,
+     "total": 2,
+     "deficit": 0
+    },
+    {
+     "seed": 364861,
+     "maxed": 2,
+     "total": 2,
+     "deficit": 0
+    },
+    {
+     "seed": 364870,
+     "maxed": 2,
+     "total": 2,
+     "deficit": 0
+    }
+   ],
+   "maxSockets": 4
+  },
+  "2:0:11": {
+   "name": "Crusader Marchers",
+   "seeds": [
+    {
+     "seed": 353854,
+     "maxed": 2,
+     "total": 2,
+     "deficit": 0
+    },
+    {
+     "seed": 353899,
+     "maxed": 2,
+     "total": 2,
+     "deficit": 0
+    },
+    {
+     "seed": 353908,
+     "maxed": 2,
+     "total": 2,
+     "deficit": 0
+    },
+    {
+     "seed": 353917,
+     "maxed": 2,
+     "total": 2,
+     "deficit": 0
+    }
+   ],
+   "maxSockets": 4
+  },
+  "2:0:12": {
+   "name": "Demonplate Boots",
+   "seeds": [
+    {
+     "seed": 228034,
+     "maxed": 2,
+     "total": 2,
+     "deficit": 0
+    },
+    {
+     "seed": 228070,
+     "maxed": 2,
+     "total": 2,
+     "deficit": 0
+    },
+    {
+     "seed": 228079,
+     "maxed": 2,
+     "total": 2,
+     "deficit": 0
+    },
+    {
+     "seed": 228106,
+     "maxed": 2,
+     "total": 2,
+     "deficit": 0
+    }
+   ],
+   "maxSockets": 4
+  },
+  "2:0:13": {
+   "name": "Scarabshell Boots",
+   "seeds": [
+    {
+     "seed": 386848,
+     "maxed": 2,
+     "total": 2,
+     "deficit": 0
+    },
+    {
+     "seed": 386857,
+     "maxed": 2,
+     "total": 2,
+     "deficit": 0
+    },
+    {
+     "seed": 386920,
+     "maxed": 2,
+     "total": 2,
+     "deficit": 0
+    },
+    {
+     "seed": 387427,
+     "maxed": 2,
+     "total": 2,
+     "deficit": 0
+    }
+   ],
+   "maxSockets": 4
+  },
+  "2:0:14": {
+   "name": "Wyrmhide Boots",
+   "seeds": [
+    {
+     "seed": 353854,
+     "maxed": 2,
+     "total": 2,
+     "deficit": 0
+    },
+    {
+     "seed": 353899,
+     "maxed": 2,
+     "total": 2,
+     "deficit": 0
+    },
+    {
+     "seed": 353908,
+     "maxed": 2,
+     "total": 2,
+     "deficit": 0
+    },
+    {
+     "seed": 353917,
+     "maxed": 2,
+     "total": 2,
+     "deficit": 0
+    }
+   ],
+   "maxSockets": 4
+  },
+  "2:0:2": {
+   "name": "Light Plated Boots",
+   "seeds": [
+    {
+     "seed": 338050,
+     "maxed": 2,
+     "total": 2,
+     "deficit": 0
+    },
+    {
+     "seed": 338059,
+     "maxed": 2,
+     "total": 2,
+     "deficit": 0
+    },
+    {
+     "seed": 338068,
+     "maxed": 2,
+     "total": 2,
+     "deficit": 0
+    },
+    {
+     "seed": 393085,
+     "maxed": 2,
+     "total": 2,
+     "deficit": 0
+    }
+   ],
+   "maxSockets": 2
+  },
+  "2:0:3": {
+   "name": "Chain Boots",
+   "seeds": [
+    {
+     "seed": 353683,
+     "maxed": 2,
+     "total": 2,
+     "deficit": 0
+    },
+    {
+     "seed": 353692,
+     "maxed": 2,
+     "total": 2,
+     "deficit": 0
+    },
+    {
+     "seed": 353701,
+     "maxed": 2,
+     "total": 2,
+     "deficit": 0
+    },
+    {
+     "seed": 353728,
+     "maxed": 2,
+     "total": 2,
+     "deficit": 0
+    }
+   ],
+   "maxSockets": 2
+  },
+  "2:0:4": {
+   "name": "Greaves",
+   "seeds": [
+    {
+     "seed": 338050,
+     "maxed": 2,
+     "total": 2,
+     "deficit": 0
+    },
+    {
+     "seed": 338059,
+     "maxed": 2,
+     "total": 2,
+     "deficit": 0
+    },
+    {
+     "seed": 338068,
+     "maxed": 2,
+     "total": 2,
+     "deficit": 0
+    },
+    {
+     "seed": 393085,
+     "maxed": 2,
+     "total": 2,
+     "deficit": 0
+    }
+   ],
+   "maxSockets": 2
+  },
+  "2:0:5": {
+   "name": "Battle Boots",
+   "seeds": [
+    {
+     "seed": 354913,
+     "maxed": 2,
+     "total": 2,
+     "deficit": 0
+    },
+    {
+     "seed": 364780,
+     "maxed": 2,
+     "total": 2,
+     "deficit": 0
+    },
+    {
+     "seed": 364807,
+     "maxed": 2,
+     "total": 2,
+     "deficit": 0
+    },
+    {
+     "seed": 364816,
+     "maxed": 2,
+     "total": 2,
+     "deficit": 0
+    }
+   ],
+   "maxSockets": 2
+  },
+  "2:0:6": {
+   "name": "Devilhide Boots",
+   "seeds": [
+    {
+     "seed": 338050,
+     "maxed": 2,
+     "total": 2,
+     "deficit": 0
+    },
+    {
+     "seed": 338059,
+     "maxed": 2,
+     "total": 2,
+     "deficit": 0
+    },
+    {
+     "seed": 338068,
+     "maxed": 2,
+     "total": 2,
+     "deficit": 0
+    },
+    {
+     "seed": 393085,
+     "maxed": 2,
+     "total": 2,
+     "deficit": 0
+    }
+   ],
+   "maxSockets": 2
+  },
+  "2:0:7": {
+   "name": "Mesh Boots",
+   "seeds": [
+    {
+     "seed": 354913,
+     "maxed": 2,
+     "total": 2,
+     "deficit": 0
+    },
+    {
+     "seed": 364780,
+     "maxed": 2,
+     "total": 2,
+     "deficit": 0
+    },
+    {
+     "seed": 364807,
+     "maxed": 2,
+     "total": 2,
+     "deficit": 0
+    },
+    {
+     "seed": 364816,
+     "maxed": 2,
+     "total": 2,
+     "deficit": 0
+    }
+   ],
+   "maxSockets": 2
+  },
+  "2:0:8": {
+   "name": "Viperskin Boots",
+   "seeds": [
+    {
+     "seed": 354913,
+     "maxed": 2,
+     "total": 2,
+     "deficit": 0
+    },
+    {
+     "seed": 364780,
+     "maxed": 2,
+     "total": 2,
+     "deficit": 0
+    },
+    {
+     "seed": 364807,
+     "maxed": 2,
+     "total": 2,
+     "deficit": 0
+    },
+    {
+     "seed": 364816,
+     "maxed": 2,
+     "total": 2,
+     "deficit": 0
+    }
+   ],
+   "maxSockets": 2
+  },
+  "2:0:9": {
+   "name": "War Boots",
+   "seeds": [
+    {
+     "seed": 353854,
+     "maxed": 2,
+     "total": 2,
+     "deficit": 0
+    },
+    {
+     "seed": 353899,
+     "maxed": 2,
+     "total": 2,
+     "deficit": 0
+    },
+    {
+     "seed": 353908,
+     "maxed": 2,
+     "total": 2,
+     "deficit": 0
+    },
+    {
+     "seed": 353917,
+     "maxed": 2,
+     "total": 2,
+     "deficit": 0
+    }
+   ],
+   "maxSockets": 3
+  },
+  "3:10:0": {
+   "name": "Wand",
+   "seeds": [
+    {
+     "seed": 4,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 7,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 10,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 19,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    }
+   ],
+   "maxSockets": 2
+  },
+  "3:10:1": {
+   "name": "Yew Wand",
+   "seeds": [
+    {
+     "seed": 4,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 7,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 10,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 19,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    }
+   ],
+   "maxSockets": 1
+  },
+  "3:10:2": {
+   "name": "Wand",
+   "seeds": [
+    {
+     "seed": 225265,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 225295,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 738593,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 738596,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    }
+   ],
+   "maxSockets": 3
+  },
+  "3:10:3": {
+   "name": "Yew Wand",
+   "seeds": [
+    {
+     "seed": 225265,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 225295,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 738593,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 738596,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    }
+   ],
+   "maxSockets": 2
+  },
+  "3:10:4": {
+   "name": "Wand",
+   "seeds": [
+    {
+     "seed": 173266,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 173269,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 173272,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 173275,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    }
+   ],
+   "maxSockets": 4
+  },
+  "3:10:5": {
+   "name": "Yew Wand",
+   "seeds": [
+    {
+     "seed": 173266,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 173269,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 173272,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 173275,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    }
+   ],
+   "maxSockets": 3
+  },
+  "3:10:6": {
+   "name": "Wand",
+   "seeds": [
+    {
+     "seed": 333094,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 333097,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 333100,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 333103,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    }
+   ],
+   "maxSockets": 5
+  },
+  "3:10:7": {
+   "name": "Yew Wand",
+   "seeds": [
+    {
+     "seed": 333094,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 333097,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 333100,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 333103,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    }
+   ],
+   "maxSockets": 3
+  },
+  "3:10:8": {
+   "name": "Wand",
+   "seeds": [
+    {
+     "seed": 271570,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 271573,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 271576,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 271579,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    }
+   ],
+   "maxSockets": 5
+  },
+  "3:10:9": {
+   "name": "Yew Wand",
+   "seeds": [
+    {
+     "seed": 271570,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 271573,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 271576,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 271579,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    }
+   ],
+   "maxSockets": 3
+  },
+  "3:11:0": {
+   "name": "Magic Tome",
+   "seeds": [
+    {
+     "seed": 173266,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 173269,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 173272,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 173275,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    }
+   ],
+   "maxSockets": 1
+  },
+  "3:11:1": {
+   "name": "Magic Tome",
+   "seeds": [
+    {
+     "seed": 173266,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 173269,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 173272,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 173275,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    }
+   ],
+   "maxSockets": 2
+  },
+  "3:11:2": {
+   "name": "Magic Tome",
+   "seeds": [
+    {
+     "seed": 666401,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 666428,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 666431,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 666437,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    }
+   ],
+   "maxSockets": 3
+  },
+  "3:11:3": {
+   "name": "Magic Tome",
+   "seeds": [
+    {
+     "seed": 173266,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 173269,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 173272,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 173275,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    }
+   ],
+   "maxSockets": 4
+  },
+  "3:11:4": {
+   "name": "Magic Tome",
+   "seeds": [
+    {
+     "seed": 173266,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 173269,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 173272,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 173275,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    }
+   ],
+   "maxSockets": 4
+  },
+  "3:12:0": {
+   "name": "Spellblade",
+   "seeds": [
+    {
+     "seed": 4,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 7,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 10,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 19,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    }
+   ],
+   "maxSockets": 1
+  },
+  "3:12:1": {
+   "name": "Spellblade",
+   "seeds": [
+    {
+     "seed": 4,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 7,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 10,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 19,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    }
+   ],
+   "maxSockets": 1
+  },
+  "3:12:2": {
+   "name": "Spellblade",
+   "seeds": [
+    {
+     "seed": 173266,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 173269,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 173272,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 173275,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    }
+   ],
+   "maxSockets": 2
+  },
+  "3:12:3": {
+   "name": "Spellblade",
+   "seeds": [
+    {
+     "seed": 173266,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 173269,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 173272,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 173275,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    }
+   ],
+   "maxSockets": 2
+  },
+  "3:12:4": {
+   "name": "Spellblade",
+   "seeds": [
+    {
+     "seed": 173266,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 173269,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 173272,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 173275,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    }
+   ],
+   "maxSockets": 4
+  },
+  "3:12:5": {
+   "name": "Spellblade",
+   "seeds": [
+    {
+     "seed": 173266,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 173269,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 173272,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 173275,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    }
+   ],
+   "maxSockets": 4
+  },
+  "3:12:6": {
+   "name": "Spellblade",
+   "seeds": [
+    {
+     "seed": 173266,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 173269,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 173272,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 173275,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    }
+   ],
+   "maxSockets": 4
+  },
+  "3:12:7": {
+   "name": "Spellblade",
+   "seeds": [
+    {
+     "seed": 173266,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 173269,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 173272,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 173275,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    }
+   ],
+   "maxSockets": 4
+  },
+  "3:12:8": {
+   "name": "Spellblade",
+   "seeds": [
+    {
+     "seed": 271570,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 271573,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 271576,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 271579,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    }
+   ],
+   "maxSockets": 5
+  },
+  "3:12:9": {
+   "name": "Spellblade",
+   "seeds": [
+    {
+     "seed": 271570,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 271573,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 271576,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 271579,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    }
+   ],
+   "maxSockets": 5
+  },
+  "3:13:0": {
+   "name": "Crossbow",
+   "seeds": [
+    {
+     "seed": 173266,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 173269,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 173272,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 173275,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    }
+   ],
+   "maxSockets": 3
+  },
+  "3:13:1": {
+   "name": "Short War Bow",
+   "seeds": [
+    {
+     "seed": 225265,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 225295,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 738593,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 738596,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    }
+   ],
+   "maxSockets": 3
+  },
+  "3:13:10": {
+   "name": "Long Bow",
+   "seeds": [
+    {
+     "seed": 271570,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 271573,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 271576,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 271579,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    }
+   ],
+   "maxSockets": 5
+  },
+  "3:13:11": {
+   "name": "Gothic Bow",
+   "seeds": [
+    {
+     "seed": 271570,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 271573,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 271576,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 271579,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    }
+   ],
+   "maxSockets": 4
+  },
+  "3:13:12": {
+   "name": "Crossbow",
+   "seeds": [
+    {
+     "seed": 271570,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 271573,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 271576,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 271579,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    }
+   ],
+   "maxSockets": 5
+  },
+  "3:13:13": {
+   "name": "Short War Bow",
+   "seeds": [
+    {
+     "seed": 666401,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 666428,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 666431,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 666437,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    }
+   ],
+   "maxSockets": 5
+  },
+  "3:13:14": {
+   "name": "Long Bow",
+   "seeds": [
+    {
+     "seed": 271570,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 271573,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 271576,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 271579,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    }
+   ],
+   "maxSockets": 6
+  },
+  "3:13:15": {
+   "name": "Gothic Bow",
+   "seeds": [
+    {
+     "seed": 271570,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 271573,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 271576,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 271579,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    }
+   ],
+   "maxSockets": 4
+  },
+  "3:13:16": {
+   "name": "Crossbow",
+   "seeds": [
+    {
+     "seed": 271570,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 271573,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 271576,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 271579,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    }
+   ],
+   "maxSockets": 6
+  },
+  "3:13:17": {
+   "name": "Short War Bow",
+   "seeds": [
+    {
+     "seed": 271570,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 271573,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 271576,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 271579,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    }
+   ],
+   "maxSockets": 5
+  },
+  "3:13:18": {
+   "name": "Long Bow",
+   "seeds": [
+    {
+     "seed": 271570,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 271573,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 271576,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 271579,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    }
+   ],
+   "maxSockets": 6
+  },
+  "3:13:19": {
+   "name": "Gothic Bow",
+   "seeds": [
+    {
+     "seed": 333094,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 333097,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 333100,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 333103,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    }
+   ],
+   "maxSockets": 4
+  },
+  "3:13:2": {
+   "name": "Long Bow",
+   "seeds": [
+    {
+     "seed": 173266,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 173269,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 173272,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 173275,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    }
+   ],
+   "maxSockets": 3
+  },
+  "3:13:3": {
+   "name": "Gothic Bow",
+   "seeds": [
+    {
+     "seed": 225265,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 225295,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 738593,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 738596,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    }
+   ],
+   "maxSockets": 3
+  },
+  "3:13:4": {
+   "name": "Crossbow",
+   "seeds": [
+    {
+     "seed": 737888,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 737894,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 737903,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 737906,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    }
+   ],
+   "maxSockets": 3
+  },
+  "3:13:5": {
+   "name": "Short War Bow",
+   "seeds": [
+    {
+     "seed": 173266,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 173269,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 173272,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 173275,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    }
+   ],
+   "maxSockets": 4
+  },
+  "3:13:6": {
+   "name": "Long Bow",
+   "seeds": [
+    {
+     "seed": 271570,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 271573,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 271576,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 271579,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    }
+   ],
+   "maxSockets": 4
+  },
+  "3:13:7": {
+   "name": "Gothic Bow",
+   "seeds": [
+    {
+     "seed": 271570,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 271573,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 271576,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 271579,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    }
+   ],
+   "maxSockets": 3
+  },
+  "3:13:8": {
+   "name": "Crossbow",
+   "seeds": [
+    {
+     "seed": 271570,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 271573,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 271576,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 271579,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    }
+   ],
+   "maxSockets": 4
+  },
+  "3:13:9": {
+   "name": "Short War Bow",
+   "seeds": [
+    {
+     "seed": 737888,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 737894,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 737903,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 737909,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    }
+   ],
+   "maxSockets": 5
+  },
+  "3:14:0": {
+   "name": "Hand Cannon",
+   "seeds": [
+    {
+     "seed": 4,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 7,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 10,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 19,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    }
+   ],
+   "maxSockets": 2
+  },
+  "3:14:1": {
+   "name": "Hunting Rifle",
+   "seeds": [
+    {
+     "seed": 173266,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 173269,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 173272,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 173275,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    }
+   ],
+   "maxSockets": 3
+  },
+  "3:14:10": {
+   "name": "Hunting Rifle",
+   "seeds": [
+    {
+     "seed": 737894,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 737903,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 737909,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 737912,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    }
+   ],
+   "maxSockets": 6
+  },
+  "3:14:11": {
+   "name": "Gatling Gun",
+   "seeds": [
+    {
+     "seed": 173266,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 173272,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 173275,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 173281,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    }
+   ],
+   "maxSockets": 5
+  },
+  "3:14:12": {
+   "name": "Battle Blaster",
+   "seeds": [
+    {
+     "seed": 271570,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 271573,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 271576,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 271579,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    }
+   ],
+   "maxSockets": 6
+  },
+  "3:14:2": {
+   "name": "Hand Cannon",
+   "seeds": [
+    {
+     "seed": 173266,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 173269,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 173272,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 173275,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    }
+   ],
+   "maxSockets": 2
+  },
+  "3:14:3": {
+   "name": "Hunting Rifle",
+   "seeds": [
+    {
+     "seed": 737888,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 737894,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 737903,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 737906,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    }
+   ],
+   "maxSockets": 4
+  },
+  "3:14:4": {
+   "name": "Hand Cannon",
+   "seeds": [
+    {
+     "seed": 173266,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 173269,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 173272,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 173275,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    }
+   ],
+   "maxSockets": 3
+  },
+  "3:14:5": {
+   "name": "Hunting Rifle",
+   "seeds": [
+    {
+     "seed": 333094,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 333097,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 333100,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 333103,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    }
+   ],
+   "maxSockets": 4
+  },
+  "3:14:6": {
+   "name": "Hand Cannon",
+   "seeds": [
+    {
+     "seed": 173266,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 173269,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 173272,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 173275,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    }
+   ],
+   "maxSockets": 4
+  },
+  "3:14:7": {
+   "name": "Hunting Rifle",
+   "seeds": [
+    {
+     "seed": 737888,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 737894,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 737903,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 737909,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    }
+   ],
+   "maxSockets": 5
+  },
+  "3:14:8": {
+   "name": "Gatling Gun",
+   "seeds": [
+    {
+     "seed": 173266,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 173269,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 173272,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 173275,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    }
+   ],
+   "maxSockets": 4
+  },
+  "3:14:9": {
+   "name": "Hand Cannon",
+   "seeds": [
+    {
+     "seed": 173266,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 173269,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 173272,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 173275,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    }
+   ],
+   "maxSockets": 4
+  },
+  "3:15:0": {
+   "name": "Poison Flask",
+   "seeds": [
+    {
+     "seed": 4,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 7,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 10,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 19,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    }
+   ],
+   "maxSockets": 1
+  },
+  "3:15:1": {
+   "name": "Poison Flask",
+   "seeds": [
+    {
+     "seed": 173266,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 173269,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 173272,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 173275,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    }
+   ],
+   "maxSockets": 1
+  },
+  "3:15:2": {
+   "name": "Caustic Vial",
+   "seeds": [
+    {
+     "seed": 271570,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 271573,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 271576,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 271579,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    }
+   ],
+   "maxSockets": 2
+  },
+  "3:15:3": {
+   "name": "Acid Flask",
+   "seeds": [
+    {
+     "seed": 666401,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 666428,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 666431,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 666437,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    }
+   ],
+   "maxSockets": 4
+  },
+  "3:15:4": {
+   "name": "Alchemist's Flask",
+   "seeds": [
+    {
+     "seed": 333094,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 333097,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 333100,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 333103,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    }
+   ],
+   "maxSockets": 4
+  },
+  "3:16:0": {
+   "name": "Throwing Axe",
+   "seeds": [
+    {
+     "seed": 4,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 7,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 10,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 19,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    }
+   ],
+   "maxSockets": 1
+  },
+  "3:16:1": {
+   "name": "Throwing Axe",
+   "seeds": [
+    {
+     "seed": 173266,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 173269,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 173272,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 173275,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    }
+   ],
+   "maxSockets": 2
+  },
+  "3:16:10": {
+   "name": "Throwing Disc",
+   "seeds": [
+    {
+     "seed": 4,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 7,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 10,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 19,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    }
+   ],
+   "maxSockets": 1
+  },
+  "3:16:11": {
+   "name": "Throwing Disc",
+   "seeds": [
+    {
+     "seed": 173266,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 173269,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 173272,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 173275,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    }
+   ],
+   "maxSockets": 2
+  },
+  "3:16:12": {
+   "name": "Throwing Disc",
+   "seeds": [
+    {
+     "seed": 173266,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 173269,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 173272,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 173275,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    }
+   ],
+   "maxSockets": 2
+  },
+  "3:16:13": {
+   "name": "Throwing Disc",
+   "seeds": [
+    {
+     "seed": 173266,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 173269,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 173272,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 173275,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    }
+   ],
+   "maxSockets": 2
+  },
+  "3:16:14": {
+   "name": "Throwing Disc",
+   "seeds": [
+    {
+     "seed": 173266,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 173269,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 173272,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 173275,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    }
+   ],
+   "maxSockets": 4
+  },
+  "3:16:15": {
+   "name": "Javelin",
+   "seeds": [
+    {
+     "seed": 4,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 7,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 10,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 19,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    }
+   ],
+   "maxSockets": 1
+  },
+  "3:16:16": {
+   "name": "Throwing Spear",
+   "seeds": [
+    {
+     "seed": 173266,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 173269,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 173272,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 173275,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    }
+   ],
+   "maxSockets": 2
+  },
+  "3:16:17": {
+   "name": "Pilum",
+   "seeds": [
+    {
+     "seed": 173266,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 173269,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 173272,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 173275,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    }
+   ],
+   "maxSockets": 3
+  },
+  "3:16:18": {
+   "name": "Simbilan",
+   "seeds": [
+    {
+     "seed": 173266,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 173269,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 173272,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 173275,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    }
+   ],
+   "maxSockets": 3
+  },
+  "3:16:19": {
+   "name": "Harpoon",
+   "seeds": [
+    {
+     "seed": 173266,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 173269,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 173272,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 173275,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    }
+   ],
+   "maxSockets": 3
+  },
+  "3:16:2": {
+   "name": "Throwing Axe",
+   "seeds": [
+    {
+     "seed": 173266,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 173269,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 173272,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 173275,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    }
+   ],
+   "maxSockets": 2
+  },
+  "3:16:3": {
+   "name": "Throwing Axe",
+   "seeds": [
+    {
+     "seed": 173266,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 173269,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 173272,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 173275,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    }
+   ],
+   "maxSockets": 2
+  },
+  "3:16:4": {
+   "name": "Throwing Axe",
+   "seeds": [
+    {
+     "seed": 173266,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 173269,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 173272,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 173275,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    }
+   ],
+   "maxSockets": 4
+  },
+  "3:16:5": {
+   "name": "Battle Darts",
+   "seeds": [
+    {
+     "seed": 4,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 7,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 10,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 19,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    }
+   ],
+   "maxSockets": 1
+  },
+  "3:16:6": {
+   "name": "Battle Darts",
+   "seeds": [
+    {
+     "seed": 173266,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 173269,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 173272,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 173275,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    }
+   ],
+   "maxSockets": 2
+  },
+  "3:16:7": {
+   "name": "Battle Darts",
+   "seeds": [
+    {
+     "seed": 173266,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 173269,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 173272,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 173275,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    }
+   ],
+   "maxSockets": 2
+  },
+  "3:16:8": {
+   "name": "Battle Darts",
+   "seeds": [
+    {
+     "seed": 173266,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 173269,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 173272,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 173275,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    }
+   ],
+   "maxSockets": 2
+  },
+  "3:16:9": {
+   "name": "Battle Darts",
+   "seeds": [
+    {
+     "seed": 173266,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 173269,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 173272,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 173275,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    }
+   ],
+   "maxSockets": 2
+  },
+  "3:1:0": {
+   "name": "Short Sword",
+   "seeds": [
+    {
+     "seed": 4,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 7,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 10,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 19,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    }
+   ],
+   "maxSockets": 6
+  },
+  "3:1:1": {
+   "name": "Sabre",
+   "seeds": [
+    {
+     "seed": 4,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 7,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 10,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 19,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    }
+   ],
+   "maxSockets": 1
+  },
+  "3:1:10": {
+   "name": "Broad Sword",
+   "seeds": [
+    {
+     "seed": 392302,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 392305,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 392311,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 392314,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    }
+   ],
+   "maxSockets": 5
+  },
+  "3:1:11": {
+   "name": "Scimitar",
+   "seeds": [
+    {
+     "seed": 758354,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 758360,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 758369,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 758375,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    }
+   ],
+   "maxSockets": 3
+  },
+  "3:1:12": {
+   "name": "Giant Sword",
+   "seeds": [
+    {
+     "seed": 370699,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 370702,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 370705,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 370708,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    }
+   ],
+   "maxSockets": 4
+  },
+  "3:1:13": {
+   "name": "Falchion",
+   "seeds": [
+    {
+     "seed": 353614,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 353617,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 353623,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 353632,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    }
+   ],
+   "maxSockets": 3
+  },
+  "3:1:14": {
+   "name": "War Sword",
+   "seeds": [
+    {
+     "seed": 358912,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 358915,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 358918,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 358921,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    }
+   ],
+   "maxSockets": 6
+  },
+  "3:1:15": {
+   "name": "Falchion",
+   "seeds": [
+    {
+     "seed": 353614,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 353617,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 353623,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 353632,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    }
+   ],
+   "maxSockets": 3
+  },
+  "3:1:16": {
+   "name": "Flamberge",
+   "seeds": [
+    {
+     "seed": 394273,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 394279,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 394297,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 394300,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    }
+   ],
+   "maxSockets": 6
+  },
+  "3:1:17": {
+   "name": "Zangetsu",
+   "seeds": [
+    {
+     "seed": 369919,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 369922,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 369931,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 369937,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    }
+   ],
+   "maxSockets": 6
+  },
+  "3:1:2": {
+   "name": "Claymore",
+   "seeds": [
+    {
+     "seed": 225265,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 225295,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 738593,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 738596,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    }
+   ],
+   "maxSockets": 3
+  },
+  "3:1:3": {
+   "name": "Short Sword",
+   "seeds": [
+    {
+     "seed": 173266,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 173269,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 173272,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 173275,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    }
+   ],
+   "maxSockets": 4
+  },
+  "3:1:4": {
+   "name": "Sabre",
+   "seeds": [
+    {
+     "seed": 173266,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 173269,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 173272,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 173275,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    }
+   ],
+   "maxSockets": 2
+  },
+  "3:1:5": {
+   "name": "Claymore",
+   "seeds": [
+    {
+     "seed": 666401,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 666428,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 666431,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 666437,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    }
+   ],
+   "maxSockets": 4
+  },
+  "3:1:6": {
+   "name": "Broad Sword",
+   "seeds": [
+    {
+     "seed": 173266,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 173269,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 173272,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 173275,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    }
+   ],
+   "maxSockets": 4
+  },
+  "3:1:7": {
+   "name": "Scimitar",
+   "seeds": [
+    {
+     "seed": 173266,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 173269,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 173272,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 173275,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    }
+   ],
+   "maxSockets": 3
+  },
+  "3:1:8": {
+   "name": "Giant Sword",
+   "seeds": [
+    {
+     "seed": 271570,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 271573,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 271576,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 271579,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    }
+   ],
+   "maxSockets": 4
+  },
+  "3:1:9": {
+   "name": "Katana",
+   "seeds": [
+    {
+     "seed": 271570,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 271573,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 271576,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 271579,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    }
+   ],
+   "maxSockets": 4
+  },
+  "3:2:0": {
+   "name": "Dagger",
+   "seeds": [
+    {
+     "seed": 4,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 7,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 10,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 19,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    }
+   ],
+   "maxSockets": 2
+  },
+  "3:2:1": {
+   "name": "Dagger",
+   "seeds": [
+    {
+     "seed": 4,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 7,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 10,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 19,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    }
+   ],
+   "maxSockets": 2
+  },
+  "3:2:2": {
+   "name": "Dagger",
+   "seeds": [
+    {
+     "seed": 173266,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 173269,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 173272,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 173275,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    }
+   ],
+   "maxSockets": 2
+  },
+  "3:2:3": {
+   "name": "Dirge",
+   "seeds": [
+    {
+     "seed": 173266,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 173269,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 173272,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 173275,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    }
+   ],
+   "maxSockets": 2
+  },
+  "3:2:4": {
+   "name": "Dirge",
+   "seeds": [
+    {
+     "seed": 271570,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 271573,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 271576,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 271579,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    }
+   ],
+   "maxSockets": 2
+  },
+  "3:2:5": {
+   "name": "Dirge",
+   "seeds": [
+    {
+     "seed": 271570,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 271573,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 271576,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 271579,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    }
+   ],
+   "maxSockets": 2
+  },
+  "3:2:6": {
+   "name": "Dirge",
+   "seeds": [
+    {
+     "seed": 737888,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 737894,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 737903,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 737906,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    }
+   ],
+   "maxSockets": 2
+  },
+  "3:2:7": {
+   "name": "Kris",
+   "seeds": [
+    {
+     "seed": 737888,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 737894,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 737903,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 737906,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    }
+   ],
+   "maxSockets": 3
+  },
+  "3:2:8": {
+   "name": "Kris",
+   "seeds": [
+    {
+     "seed": 271570,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 271573,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 271576,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 271579,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    }
+   ],
+   "maxSockets": 3
+  },
+  "3:2:9": {
+   "name": "Kris",
+   "seeds": [
+    {
+     "seed": 271570,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 271573,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 271576,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 271579,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    }
+   ],
+   "maxSockets": 3
+  },
+  "3:3:0": {
+   "name": "Cudgel",
+   "seeds": [
+    {
+     "seed": 4,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 7,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 10,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 19,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    }
+   ],
+   "maxSockets": 1
+  },
+  "3:3:1": {
+   "name": "Mace",
+   "seeds": [
+    {
+     "seed": 4,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 7,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 10,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 19,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    }
+   ],
+   "maxSockets": 2
+  },
+  "3:3:10": {
+   "name": "War Hammer",
+   "seeds": [
+    {
+     "seed": 173266,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 173269,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 173272,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 173275,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    }
+   ],
+   "maxSockets": 4
+  },
+  "3:3:11": {
+   "name": "Maul",
+   "seeds": [
+    {
+     "seed": 271570,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 271573,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 271576,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 271579,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    }
+   ],
+   "maxSockets": 5
+  },
+  "3:3:12": {
+   "name": "Flail",
+   "seeds": [
+    {
+     "seed": 173266,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 173269,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 173272,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 173275,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    }
+   ],
+   "maxSockets": 4
+  },
+  "3:3:13": {
+   "name": "Morning Star",
+   "seeds": [
+    {
+     "seed": 358912,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 358915,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 358918,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 358921,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    }
+   ],
+   "maxSockets": 3
+  },
+  "3:3:14": {
+   "name": "Spiked Club",
+   "seeds": [
+    {
+     "seed": 362200,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 362203,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 362215,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 362218,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    }
+   ],
+   "maxSockets": 2
+  },
+  "3:3:15": {
+   "name": "War Hammer",
+   "seeds": [
+    {
+     "seed": 358912,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 358915,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 358918,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 358921,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    }
+   ],
+   "maxSockets": 5
+  },
+  "3:3:16": {
+   "name": "Maul",
+   "seeds": [
+    {
+     "seed": 369919,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 369922,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 369931,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 369937,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    }
+   ],
+   "maxSockets": 6
+  },
+  "3:3:17": {
+   "name": "Ogre Maul",
+   "seeds": [
+    {
+     "seed": 353614,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 353623,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 353632,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 353638,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    }
+   ],
+   "maxSockets": 6
+  },
+  "3:3:18": {
+   "name": "Martel De Fer",
+   "seeds": [
+    {
+     "seed": 333094,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 333097,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 333100,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 333103,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    }
+   ],
+   "maxSockets": 5
+  },
+  "3:3:19": {
+   "name": "Flail",
+   "seeds": [
+    {
+     "seed": 831569,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 831578,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 831584,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 831587,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    }
+   ],
+   "maxSockets": 5
+  },
+  "3:3:2": {
+   "name": "Maul",
+   "seeds": [
+    {
+     "seed": 225265,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 225295,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 738593,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 738596,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    }
+   ],
+   "maxSockets": 3
+  },
+  "3:3:20": {
+   "name": "Flail",
+   "seeds": [
+    {
+     "seed": 404578,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 404584,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 404587,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 404590,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    }
+   ],
+   "maxSockets": 5
+  },
+  "3:3:21": {
+   "name": "Devil Star",
+   "seeds": [
+    {
+     "seed": 758354,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 758360,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 758369,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 758375,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    }
+   ],
+   "maxSockets": 3
+  },
+  "3:3:3": {
+   "name": "Flail",
+   "seeds": [
+    {
+     "seed": 4,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 7,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 10,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 19,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    }
+   ],
+   "maxSockets": 2
+  },
+  "3:3:4": {
+   "name": "Cudgel",
+   "seeds": [
+    {
+     "seed": 173266,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 173269,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 173272,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 173275,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    }
+   ],
+   "maxSockets": 2
+  },
+  "3:3:5": {
+   "name": "Mace",
+   "seeds": [
+    {
+     "seed": 173266,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 173269,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 173272,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 173275,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    }
+   ],
+   "maxSockets": 3
+  },
+  "3:3:6": {
+   "name": "Maul",
+   "seeds": [
+    {
+     "seed": 666401,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 666428,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 666431,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 666437,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    }
+   ],
+   "maxSockets": 4
+  },
+  "3:3:7": {
+   "name": "Flail",
+   "seeds": [
+    {
+     "seed": 173266,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 173269,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 173272,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 173275,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    }
+   ],
+   "maxSockets": 3
+  },
+  "3:3:8": {
+   "name": "Morning Star",
+   "seeds": [
+    {
+     "seed": 173266,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 173269,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 173272,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 173275,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    }
+   ],
+   "maxSockets": 3
+  },
+  "3:3:9": {
+   "name": "Spiked Club",
+   "seeds": [
+    {
+     "seed": 173266,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 173269,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 173272,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 173275,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    }
+   ],
+   "maxSockets": 2
+  },
+  "3:4:0": {
+   "name": "Hand Axe",
+   "seeds": [
+    {
+     "seed": 4,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 7,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 10,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 19,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    }
+   ],
+   "maxSockets": 2
+  },
+  "3:4:1": {
+   "name": "Hand Axe",
+   "seeds": [
+    {
+     "seed": 4,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 7,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 10,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 19,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    }
+   ],
+   "maxSockets": 2
+  },
+  "3:4:10": {
+   "name": "Broad Axe",
+   "seeds": [
+    {
+     "seed": 225265,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 225295,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 738593,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 738596,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    }
+   ],
+   "maxSockets": 4
+  },
+  "3:4:11": {
+   "name": "Broad Axe",
+   "seeds": [
+    {
+     "seed": 225265,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 225295,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 738593,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 738596,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    }
+   ],
+   "maxSockets": 4
+  },
+  "3:4:12": {
+   "name": "Broad Axe",
+   "seeds": [
+    {
+     "seed": 271570,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 271573,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 271576,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 271579,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    }
+   ],
+   "maxSockets": 4
+  },
+  "3:4:13": {
+   "name": "Broad Axe",
+   "seeds": [
+    {
+     "seed": 271570,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 271573,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 271576,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 271579,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    }
+   ],
+   "maxSockets": 4
+  },
+  "3:4:14": {
+   "name": "War Axe",
+   "seeds": [
+    {
+     "seed": 271570,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 271573,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 271576,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 271579,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    }
+   ],
+   "maxSockets": 5
+  },
+  "3:4:15": {
+   "name": "War Axe",
+   "seeds": [
+    {
+     "seed": 271570,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 271573,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 271576,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 271579,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    }
+   ],
+   "maxSockets": 5
+  },
+  "3:4:16": {
+   "name": "War Axe",
+   "seeds": [
+    {
+     "seed": 362200,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 362203,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 362215,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 362218,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    }
+   ],
+   "maxSockets": 5
+  },
+  "3:4:17": {
+   "name": "War Axe",
+   "seeds": [
+    {
+     "seed": 362200,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 362203,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 362215,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 362218,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    }
+   ],
+   "maxSockets": 5
+  },
+  "3:4:18": {
+   "name": "Giant Axe",
+   "seeds": [
+    {
+     "seed": 358912,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 358915,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 358918,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 358921,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    }
+   ],
+   "maxSockets": 6
+  },
+  "3:4:19": {
+   "name": "Giant Axe",
+   "seeds": [
+    {
+     "seed": 358912,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 358915,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 358918,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 358921,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    }
+   ],
+   "maxSockets": 6
+  },
+  "3:4:2": {
+   "name": "Hand Axe",
+   "seeds": [
+    {
+     "seed": 666401,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 666428,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 666431,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 666437,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    }
+   ],
+   "maxSockets": 3
+  },
+  "3:4:3": {
+   "name": "Hand Axe",
+   "seeds": [
+    {
+     "seed": 666401,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 666428,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 666431,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 666437,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    }
+   ],
+   "maxSockets": 3
+  },
+  "3:4:4": {
+   "name": "Hatchet",
+   "seeds": [
+    {
+     "seed": 173266,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 173269,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 173272,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 173275,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    }
+   ],
+   "maxSockets": 3
+  },
+  "3:4:5": {
+   "name": "Hatchet",
+   "seeds": [
+    {
+     "seed": 173266,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 173269,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 173272,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 173275,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    }
+   ],
+   "maxSockets": 3
+  },
+  "3:4:6": {
+   "name": "Hatchet",
+   "seeds": [
+    {
+     "seed": 362200,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 362203,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 362215,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 362218,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    }
+   ],
+   "maxSockets": 3
+  },
+  "3:4:7": {
+   "name": "Hatchet",
+   "seeds": [
+    {
+     "seed": 362200,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 362203,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 362215,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 362218,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    }
+   ],
+   "maxSockets": 3
+  },
+  "3:4:8": {
+   "name": "Naga",
+   "seeds": [
+    {
+     "seed": 370699,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 370702,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 370705,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 370708,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    }
+   ],
+   "maxSockets": 6
+  },
+  "3:4:9": {
+   "name": "Naga",
+   "seeds": [
+    {
+     "seed": 370699,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 370702,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 370705,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 370708,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    }
+   ],
+   "maxSockets": 6
+  },
+  "3:5:0": {
+   "name": "Wrist Blades",
+   "seeds": [
+    {
+     "seed": 173266,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 173269,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 173272,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 173275,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    }
+   ],
+   "maxSockets": 2
+  },
+  "3:5:1": {
+   "name": "Blade Talons",
+   "seeds": [
+    {
+     "seed": 173266,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 173269,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 173272,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 173275,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    }
+   ],
+   "maxSockets": 2
+  },
+  "3:5:10": {
+   "name": "Blade Talons",
+   "seeds": [
+    {
+     "seed": 333094,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 333097,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 333100,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 333103,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    }
+   ],
+   "maxSockets": 4
+  },
+  "3:5:11": {
+   "name": "Feral Claws",
+   "seeds": [
+    {
+     "seed": 333094,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 333097,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 333100,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 333103,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    }
+   ],
+   "maxSockets": 4
+  },
+  "3:5:12": {
+   "name": "Wrist Blades",
+   "seeds": [
+    {
+     "seed": 271570,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 271573,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 271576,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 271579,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    }
+   ],
+   "maxSockets": 4
+  },
+  "3:5:13": {
+   "name": "Blade Talons",
+   "seeds": [
+    {
+     "seed": 271570,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 271573,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 271576,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 271579,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    }
+   ],
+   "maxSockets": 4
+  },
+  "3:5:14": {
+   "name": "Feral Claws",
+   "seeds": [
+    {
+     "seed": 737888,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 737894,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 737903,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 737906,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    }
+   ],
+   "maxSockets": 4
+  },
+  "3:5:2": {
+   "name": "Feral Claws",
+   "seeds": [
+    {
+     "seed": 173266,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 173269,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 173272,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 173275,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    }
+   ],
+   "maxSockets": 2
+  },
+  "3:5:3": {
+   "name": "Wrist Blades",
+   "seeds": [
+    {
+     "seed": 173266,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 173269,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 173272,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 173275,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    }
+   ],
+   "maxSockets": 3
+  },
+  "3:5:4": {
+   "name": "Blade Talons",
+   "seeds": [
+    {
+     "seed": 173266,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 173269,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 173272,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 173275,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    }
+   ],
+   "maxSockets": 3
+  },
+  "3:5:5": {
+   "name": "Feral Claws",
+   "seeds": [
+    {
+     "seed": 173266,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 173269,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 173272,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 173275,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    }
+   ],
+   "maxSockets": 3
+  },
+  "3:5:6": {
+   "name": "Wrist Blades",
+   "seeds": [
+    {
+     "seed": 271570,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 271573,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 271576,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 271579,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    }
+   ],
+   "maxSockets": 3
+  },
+  "3:5:7": {
+   "name": "Blade Talons",
+   "seeds": [
+    {
+     "seed": 271570,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 271573,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 271576,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 271579,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    }
+   ],
+   "maxSockets": 3
+  },
+  "3:5:8": {
+   "name": "Feral Claws",
+   "seeds": [
+    {
+     "seed": 271570,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 271573,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 271576,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 271579,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    }
+   ],
+   "maxSockets": 3
+  },
+  "3:5:9": {
+   "name": "Wrist Blades",
+   "seeds": [
+    {
+     "seed": 333094,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 333097,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 333100,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 333103,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    }
+   ],
+   "maxSockets": 4
+  },
+  "3:6:0": {
+   "name": "Spear",
+   "seeds": [
+    {
+     "seed": 225265,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 225295,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 738593,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 738596,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    }
+   ],
+   "maxSockets": 3
+  },
+  "3:6:1": {
+   "name": "War Spear",
+   "seeds": [
+    {
+     "seed": 666401,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 666428,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 666431,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 666437,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    }
+   ],
+   "maxSockets": 4
+  },
+  "3:6:2": {
+   "name": "Fuscina",
+   "seeds": [
+    {
+     "seed": 271570,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 271573,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 271576,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 271579,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    }
+   ],
+   "maxSockets": 5
+  },
+  "3:6:3": {
+   "name": "Yari",
+   "seeds": [
+    {
+     "seed": 271570,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 271573,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 271576,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 271579,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    }
+   ],
+   "maxSockets": 6
+  },
+  "3:6:4": {
+   "name": "Hyperion Spear",
+   "seeds": [
+    {
+     "seed": 271570,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 271573,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 271576,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 271579,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    }
+   ],
+   "maxSockets": 6
+  },
+  "3:6:5": {
+   "name": "Royal Lance",
+   "seeds": [
+    {
+     "seed": 4,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 7,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 10,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 19,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    }
+   ],
+   "maxSockets": 3
+  },
+  "3:6:6": {
+   "name": "Royal Lance",
+   "seeds": [
+    {
+     "seed": 173266,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 173269,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 173272,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 173275,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    }
+   ],
+   "maxSockets": 3
+  },
+  "3:6:7": {
+   "name": "War Trident",
+   "seeds": [
+    {
+     "seed": 173266,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 173269,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 173272,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 173275,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    }
+   ],
+   "maxSockets": 4
+  },
+  "3:6:8": {
+   "name": "War Trident",
+   "seeds": [
+    {
+     "seed": 173266,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 173269,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 173272,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 173275,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    }
+   ],
+   "maxSockets": 4
+  },
+  "3:6:9": {
+   "name": "Battle Lance",
+   "seeds": [
+    {
+     "seed": 173266,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 173272,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 173275,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 173281,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    }
+   ],
+   "maxSockets": 5
+  },
+  "3:7:0": {
+   "name": "Battle Slicer",
+   "seeds": [
+    {
+     "seed": 225265,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 225295,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 738593,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 738596,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    }
+   ],
+   "maxSockets": 3
+  },
+  "3:7:1": {
+   "name": "Hand Saw",
+   "seeds": [
+    {
+     "seed": 225265,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 225295,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 738593,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 738596,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    }
+   ],
+   "maxSockets": 2
+  },
+  "3:7:10": {
+   "name": "War Saw",
+   "seeds": [
+    {
+     "seed": 271570,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 271573,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 271576,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 271579,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    }
+   ],
+   "maxSockets": 6
+  },
+  "3:7:11": {
+   "name": "Hand Saw",
+   "seeds": [
+    {
+     "seed": 173266,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 173272,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 173275,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 173281,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    }
+   ],
+   "maxSockets": 5
+  },
+  "3:7:2": {
+   "name": "Battle Slicer",
+   "seeds": [
+    {
+     "seed": 666401,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 666428,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 666431,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 666437,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    }
+   ],
+   "maxSockets": 3
+  },
+  "3:7:3": {
+   "name": "Hand Saw",
+   "seeds": [
+    {
+     "seed": 173266,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 173269,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 173272,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 173275,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    }
+   ],
+   "maxSockets": 2
+  },
+  "3:7:4": {
+   "name": "Trunk Cutter",
+   "seeds": [
+    {
+     "seed": 271570,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 271573,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 271576,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 271579,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    }
+   ],
+   "maxSockets": 4
+  },
+  "3:7:5": {
+   "name": "Hand Saw",
+   "seeds": [
+    {
+     "seed": 173266,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 173269,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 173272,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 173275,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    }
+   ],
+   "maxSockets": 3
+  },
+  "3:7:6": {
+   "name": "War Saw",
+   "seeds": [
+    {
+     "seed": 271570,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 271573,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 271576,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 271579,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    }
+   ],
+   "maxSockets": 5
+  },
+  "3:7:7": {
+   "name": "Trunk Cutter",
+   "seeds": [
+    {
+     "seed": 271570,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 271573,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 271576,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 271579,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    }
+   ],
+   "maxSockets": 5
+  },
+  "3:7:8": {
+   "name": "Hand Saw",
+   "seeds": [
+    {
+     "seed": 271570,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 271573,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 271576,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 271579,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    }
+   ],
+   "maxSockets": 4
+  },
+  "3:7:9": {
+   "name": "Battle Slicer",
+   "seeds": [
+    {
+     "seed": 271570,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 271573,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 271576,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 271579,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    }
+   ],
+   "maxSockets": 6
+  },
+  "3:8:0": {
+   "name": "Gnarled Staff",
+   "seeds": [
+    {
+     "seed": 225265,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 225295,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 738593,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 738596,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    }
+   ],
+   "maxSockets": 2
+  },
+  "3:8:1": {
+   "name": "Arcane Fork",
+   "seeds": [
+    {
+     "seed": 225265,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 225295,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 738593,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 738596,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    }
+   ],
+   "maxSockets": 3
+  },
+  "3:8:2": {
+   "name": "Gnarled Staff",
+   "seeds": [
+    {
+     "seed": 666401,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 666428,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 666431,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 666437,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    }
+   ],
+   "maxSockets": 2
+  },
+  "3:8:3": {
+   "name": "Arcane Fork",
+   "seeds": [
+    {
+     "seed": 666401,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 666428,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 666431,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 666437,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    }
+   ],
+   "maxSockets": 3
+  },
+  "3:8:4": {
+   "name": "Gnarled Staff",
+   "seeds": [
+    {
+     "seed": 333094,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 333097,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 333100,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 333103,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    }
+   ],
+   "maxSockets": 3
+  },
+  "3:8:5": {
+   "name": "Arcane Fork",
+   "seeds": [
+    {
+     "seed": 333094,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 333097,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 333100,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 333103,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    }
+   ],
+   "maxSockets": 4
+  },
+  "3:8:6": {
+   "name": "Gnarled Staff",
+   "seeds": [
+    {
+     "seed": 333094,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 333097,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 333100,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 333103,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    }
+   ],
+   "maxSockets": 4
+  },
+  "3:8:7": {
+   "name": "Arcane Fork",
+   "seeds": [
+    {
+     "seed": 333094,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 333097,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 333100,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 333103,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    }
+   ],
+   "maxSockets": 5
+  },
+  "3:8:8": {
+   "name": "Gnarled Staff",
+   "seeds": [
+    {
+     "seed": 271570,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 271573,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 271576,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 271579,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    }
+   ],
+   "maxSockets": 4
+  },
+  "3:8:9": {
+   "name": "Arcane Fork",
+   "seeds": [
+    {
+     "seed": 271570,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 271573,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 271576,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 271579,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    }
+   ],
+   "maxSockets": 6
+  },
+  "3:9:0": {
+   "name": "Cane",
+   "seeds": [
+    {
+     "seed": 173266,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 173269,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 173272,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 173275,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    }
+   ],
+   "maxSockets": 3
+  },
+  "3:9:1": {
+   "name": "Cane",
+   "seeds": [
+    {
+     "seed": 173266,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 173269,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 173272,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 173275,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    }
+   ],
+   "maxSockets": 4
+  },
+  "3:9:2": {
+   "name": "Cane",
+   "seeds": [
+    {
+     "seed": 271570,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 271573,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 271576,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 271579,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    }
+   ],
+   "maxSockets": 5
+  },
+  "3:9:3": {
+   "name": "Cane",
+   "seeds": [
+    {
+     "seed": 271570,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 271573,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 271576,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 271579,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    }
+   ],
+   "maxSockets": 6
+  },
+  "3:9:4": {
+   "name": "Cane",
+   "seeds": [
+    {
+     "seed": 271570,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 271573,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 271576,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 271579,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    }
+   ],
+   "maxSockets": 6
+  },
+  "4:0:0": {
+   "name": "Heavy Gloves",
+   "seeds": [
+    {
+     "seed": 1,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 4,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 10,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 19,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    }
+   ],
+   "maxSockets": 0
+  },
+  "4:0:1": {
+   "name": "Chain Gloves",
+   "seeds": [
+    {
+     "seed": 1,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 4,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 10,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 19,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    }
+   ],
+   "maxSockets": 0
+  },
+  "4:0:10": {
+   "name": "War Gauntlets",
+   "seeds": [
+    {
+     "seed": 333091,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 333094,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 333100,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 333103,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    }
+   ],
+   "maxSockets": 0
+  },
+  "4:0:11": {
+   "name": "Devilhide Gloves",
+   "seeds": [
+    {
+     "seed": 333091,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 333094,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 333100,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 333103,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    }
+   ],
+   "maxSockets": 0
+  },
+  "4:0:12": {
+   "name": "Snakeskin Gloves",
+   "seeds": [
+    {
+     "seed": 271573,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 271576,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 271582,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 271585,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    }
+   ],
+   "maxSockets": 0
+  },
+  "4:0:13": {
+   "name": "Heavy Bracers",
+   "seeds": [
+    {
+     "seed": 271573,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 271576,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 271582,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 271585,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    }
+   ],
+   "maxSockets": 0
+  },
+  "4:0:14": {
+   "name": "War Gauntlets",
+   "seeds": [
+    {
+     "seed": 271573,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 271576,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 271582,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 271585,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    }
+   ],
+   "maxSockets": 0
+  },
+  "4:0:15": {
+   "name": "Devilhide Gloves",
+   "seeds": [
+    {
+     "seed": 271573,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 271576,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 271582,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 271585,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    }
+   ],
+   "maxSockets": 0
+  },
+  "4:0:16": {
+   "name": "Vampirebone Gloves",
+   "seeds": [
+    {
+     "seed": 358915,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 358918,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 358924,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 358927,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    }
+   ],
+   "maxSockets": 0
+  },
+  "4:0:17": {
+   "name": "Demonbraces",
+   "seeds": [
+    {
+     "seed": 358915,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 358918,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 358924,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 358927,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    }
+   ],
+   "maxSockets": 0
+  },
+  "4:0:18": {
+   "name": "Ogre Gauntlets",
+   "seeds": [
+    {
+     "seed": 358915,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 358918,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 358924,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 358927,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    }
+   ],
+   "maxSockets": 0
+  },
+  "4:0:19": {
+   "name": "Archmage Wraps",
+   "seeds": [
+    {
+     "seed": 358915,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 358918,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 358924,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 358927,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    }
+   ],
+   "maxSockets": 0
+  },
+  "4:0:2": {
+   "name": "Gauntlets",
+   "seeds": [
+    {
+     "seed": 1,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 4,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 10,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 19,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    }
+   ],
+   "maxSockets": 0
+  },
+  "4:0:3": {
+   "name": "Leather Gloves",
+   "seeds": [
+    {
+     "seed": 1,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 4,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 10,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 19,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    }
+   ],
+   "maxSockets": 0
+  },
+  "4:0:4": {
+   "name": "Heavy Gloves",
+   "seeds": [
+    {
+     "seed": 225265,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 225268,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 225295,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 738590,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    }
+   ],
+   "maxSockets": 0
+  },
+  "4:0:5": {
+   "name": "Chain Gloves",
+   "seeds": [
+    {
+     "seed": 225265,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 225268,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 225295,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 738590,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    }
+   ],
+   "maxSockets": 0
+  },
+  "4:0:6": {
+   "name": "Gauntlets",
+   "seeds": [
+    {
+     "seed": 225265,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 225268,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 225295,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 738590,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    }
+   ],
+   "maxSockets": 0
+  },
+  "4:0:7": {
+   "name": "Leather Gloves",
+   "seeds": [
+    {
+     "seed": 225265,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 225268,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 225295,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 738590,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    }
+   ],
+   "maxSockets": 0
+  },
+  "4:0:8": {
+   "name": "Snakeskin Gloves",
+   "seeds": [
+    {
+     "seed": 333091,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 333094,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 333100,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 333103,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    }
+   ],
+   "maxSockets": 0
+  },
+  "4:0:9": {
+   "name": "Heavy Bracers",
+   "seeds": [
+    {
+     "seed": 333091,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 333094,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 333100,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 333103,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    }
+   ],
+   "maxSockets": 0
+  },
+  "6:0:0": {
+   "name": "Wooden Shield",
+   "seeds": [
+    {
+     "seed": 4,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 7,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 10,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 19,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    }
+   ],
+   "maxSockets": 3
+  },
+  "6:0:1": {
+   "name": "Buckler",
+   "seeds": [
+    {
+     "seed": 4,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 7,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 10,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 19,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    }
+   ],
+   "maxSockets": 2
+  },
+  "6:0:10": {
+   "name": "Small Crescent",
+   "seeds": [
+    {
+     "seed": 364186,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 364192,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 364195,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 364201,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    }
+   ],
+   "maxSockets": 4
+  },
+  "6:0:11": {
+   "name": "Aegis",
+   "seeds": [
+    {
+     "seed": 364186,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 364192,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 364195,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 364201,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    }
+   ],
+   "maxSockets": 5
+  },
+  "6:0:12": {
+   "name": "Kite Shield",
+   "seeds": [
+    {
+     "seed": 364186,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 364192,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 364195,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 364201,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    }
+   ],
+   "maxSockets": 4
+  },
+  "6:0:13": {
+   "name": "Bone Shield",
+   "seeds": [
+    {
+     "seed": 364186,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 364192,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 364195,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 364201,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    }
+   ],
+   "maxSockets": 5
+  },
+  "6:0:14": {
+   "name": "Luna",
+   "seeds": [
+    {
+     "seed": 370699,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 370702,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 370705,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 370708,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    }
+   ],
+   "maxSockets": 4
+  },
+  "6:0:15": {
+   "name": "Royal Shield",
+   "seeds": [
+    {
+     "seed": 370699,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 370702,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 370705,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 370708,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    }
+   ],
+   "maxSockets": 5
+  },
+  "6:0:16": {
+   "name": "Monarch",
+   "seeds": [
+    {
+     "seed": 370699,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 370702,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 370705,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 370708,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    }
+   ],
+   "maxSockets": 4
+  },
+  "6:0:17": {
+   "name": "Tribal Ward",
+   "seeds": [
+    {
+     "seed": 370699,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 370702,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 370705,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 370708,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    }
+   ],
+   "maxSockets": 5
+  },
+  "6:0:2": {
+   "name": "Steel Ward",
+   "seeds": [
+    {
+     "seed": 4,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 7,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 10,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 19,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    }
+   ],
+   "maxSockets": 3
+  },
+  "6:0:3": {
+   "name": "Wooden Shield",
+   "seeds": [
+    {
+     "seed": 173266,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 173269,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 173272,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 173275,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    }
+   ],
+   "maxSockets": 3
+  },
+  "6:0:4": {
+   "name": "Buckler",
+   "seeds": [
+    {
+     "seed": 173266,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 173269,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 173272,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 173275,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    }
+   ],
+   "maxSockets": 2
+  },
+  "6:0:5": {
+   "name": "Steel Ward",
+   "seeds": [
+    {
+     "seed": 173266,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 173269,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 173272,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 173275,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    }
+   ],
+   "maxSockets": 3
+  },
+  "6:0:6": {
+   "name": "Small Crescent",
+   "seeds": [
+    {
+     "seed": 364186,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 364192,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 364195,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 364201,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    }
+   ],
+   "maxSockets": 4
+  },
+  "6:0:7": {
+   "name": "Aegis",
+   "seeds": [
+    {
+     "seed": 364186,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 364192,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 364195,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 364201,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    }
+   ],
+   "maxSockets": 4
+  },
+  "6:0:8": {
+   "name": "Kite Shield",
+   "seeds": [
+    {
+     "seed": 364186,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 364192,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 364195,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 364201,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    }
+   ],
+   "maxSockets": 4
+  },
+  "6:0:9": {
+   "name": "Bone Shield",
+   "seeds": [
+    {
+     "seed": 364186,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 364192,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 364195,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 364201,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    }
+   ],
+   "maxSockets": 3
+  },
+  "8:0:0": {
+   "name": "Sash",
+   "seeds": [
+    {
+     "seed": 225265,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 225268,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 225295,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 738590,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    }
+   ],
+   "maxSockets": 0
+  },
+  "8:0:1": {
+   "name": "Leather Belt",
+   "seeds": [
+    {
+     "seed": 225265,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 225268,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 225295,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 738590,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    }
+   ],
+   "maxSockets": 0
+  },
+  "8:0:10": {
+   "name": "Viperskin Belt",
+   "seeds": [
+    {
+     "seed": 358915,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 358918,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 358924,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 358927,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    }
+   ],
+   "maxSockets": 0
+  },
+  "8:0:11": {
+   "name": "Battle Belt",
+   "seeds": [
+    {
+     "seed": 358915,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 358918,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 358924,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 358927,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    }
+   ],
+   "maxSockets": 0
+  },
+  "8:0:12": {
+   "name": "Wyrmhide Sash",
+   "seeds": [
+    {
+     "seed": 369922,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 369925,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 369931,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 369934,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    }
+   ],
+   "maxSockets": 0
+  },
+  "8:0:13": {
+   "name": "Mithril Coil",
+   "seeds": [
+    {
+     "seed": 369922,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 369925,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 369931,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 369934,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    }
+   ],
+   "maxSockets": 0
+  },
+  "8:0:14": {
+   "name": "Vampirefang Girdle",
+   "seeds": [
+    {
+     "seed": 369922,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 369925,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 369931,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 369934,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    }
+   ],
+   "maxSockets": 0
+  },
+  "8:0:2": {
+   "name": "Heavy Belt",
+   "seeds": [
+    {
+     "seed": 225265,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 225268,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 225295,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 738590,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    }
+   ],
+   "maxSockets": 0
+  },
+  "8:0:3": {
+   "name": "Sash",
+   "seeds": [
+    {
+     "seed": 333091,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 333094,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 333100,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 333103,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    }
+   ],
+   "maxSockets": 0
+  },
+  "8:0:4": {
+   "name": "Leather Belt",
+   "seeds": [
+    {
+     "seed": 333091,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 333094,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 333100,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 333103,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    }
+   ],
+   "maxSockets": 0
+  },
+  "8:0:5": {
+   "name": "Heavy Belt",
+   "seeds": [
+    {
+     "seed": 333091,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 333094,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 333100,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 333103,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    }
+   ],
+   "maxSockets": 0
+  },
+  "8:0:6": {
+   "name": "Devilhide Sash",
+   "seeds": [
+    {
+     "seed": 358915,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 358918,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 358924,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 358927,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    }
+   ],
+   "maxSockets": 0
+  },
+  "8:0:7": {
+   "name": "Viperskin Belt",
+   "seeds": [
+    {
+     "seed": 358915,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 358918,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 358924,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 358927,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    }
+   ],
+   "maxSockets": 0
+  },
+  "8:0:8": {
+   "name": "Battle Belt",
+   "seeds": [
+    {
+     "seed": 358915,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 358918,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 358924,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 358927,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    }
+   ],
+   "maxSockets": 0
+  },
+  "8:0:9": {
+   "name": "Devilhide Sash",
+   "seeds": [
+    {
+     "seed": 358915,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 358918,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 358924,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    },
+    {
+     "seed": 358927,
+     "maxed": 1,
+     "total": 1,
+     "deficit": 0
+    }
+   ],
+   "maxSockets": 0
+  }
+ },
+ "unique": {
+  "0:0:0": {
+   "name": "Harlequinn's Crest",
+   "seed": 177289,
+   "sockets": 2
+  },
+  "0:0:2": {
+   "name": "Demon Warlord's Helm",
+   "seed": 333478,
+   "sockets": 2
+  },
+  "0:0:3": {
+   "name": "The Bucket",
+   "seed": 73598324,
+   "sockets": 5
+  },
+  "0:0:4": {
+   "name": "Sky Crusader Helm",
+   "seed": 289468,
+   "sockets": 2
+  },
+  "0:0:5": {
+   "name": "Helm of Dominator",
+   "seed": 2136764,
+   "sockets": 2
+  },
+  "0:0:6": {
+   "name": "The Faceless Priest",
+   "seed": 423652,
+   "sockets": 3
+  },
+  "0:0:7": {
+   "name": "Uabel's Helmet",
+   "seed": 332962,
+   "sockets": 2
+  },
+  "0:0:9": {
+   "name": "Genji's Battle Helmet",
+   "seed": 1633933,
+   "sockets": 2
+  },
+  "0:0:14": {
+   "name": "Redneck's Cap",
+   "seed": 417868,
+   "sockets": 2
+  },
+  "0:0:16": {
+   "name": "Death Lord's Crown",
+   "seed": 335980,
+   "sockets": 3
+  },
+  "0:0:17": {
+   "name": "Thor's Battle Cap",
+   "seed": 321394,
+   "sockets": 2
+  },
+  "0:0:18": {
+   "name": "Viking's Sacred Helmet",
+   "seed": 333478,
+   "sockets": 2
+  },
+  "0:0:19": {
+   "name": "Nomad's Sand Bandana",
+   "seed": 233845,
+   "sockets": 2
+  },
+  "0:0:20": {
+   "name": "Nobunaga's Battle Helmet",
+   "seed": 430957,
+   "sockets": 3
+  },
+  "0:0:23": {
+   "name": "Aztec Crown",
+   "seed": 845198,
+   "sockets": 2
+  },
+  "0:0:25": {
+   "name": "Judge, Jury & Executioner",
+   "seed": 289468,
+   "sockets": 2
+  },
+  "0:0:27": {
+   "name": "Ancient Avenger",
+   "seed": 332962,
+   "sockets": 2
+  },
+  "0:0:32": {
+   "name": "Lumberjack's Safety Helm",
+   "seed": 332962,
+   "sockets": 2
+  },
+  "0:0:33": {
+   "name": "Blood-letter's Crown",
+   "seed": 332962,
+   "sockets": 2
+  },
+  "0:0:34": {
+   "name": "Venom's Skull",
+   "seed": 332962,
+   "sockets": 2
+  },
+  "0:0:35": {
+   "name": "Shield Bearer's Crown",
+   "seed": 335995,
+   "sockets": 2
+  },
+  "0:0:36": {
+   "name": "Juggernaut's Siege Helm",
+   "seed": 335995,
+   "sockets": 2
+  },
+  "0:0:38": {
+   "name": "Valkyrie's Winged Helm",
+   "seed": 334465,
+   "sockets": 2
+  },
+  "0:0:39": {
+   "name": "Surgical Mask",
+   "seed": 351574,
+   "sockets": 2
+  },
+  "0:0:40": {
+   "name": "Battle Worn Visor",
+   "seed": 332935,
+   "sockets": 2
+  },
+  "0:0:41": {
+   "name": "Underworld's Skullbreaker",
+   "seed": 2152271,
+   "sockets": 3
+  },
+  "0:0:43": {
+   "name": "Guise of the Dead",
+   "seed": 46751502,
+   "sockets": 2
+  },
+  "0:0:44": {
+   "name": "Veil of Mystery",
+   "seed": 407242,
+   "sockets": 2
+  },
+  "0:0:45": {
+   "name": "Crown of the North",
+   "seed": 15910066,
+   "sockets": 2
+  },
+  "0:0:46": {
+   "name": "Tenebris' Grievance",
+   "seed": 28151114,
+   "sockets": 2
+  },
+  "0:0:50": {
+   "name": "The Grand Champion",
+   "seed": 3888156,
+   "sockets": 2
+  },
+  "0:0:54": {
+   "name": "Sheep King's Crown",
+   "seed": 10812022,
+   "sockets": 4
+  },
+  "0:0:58": {
+   "name": "Knight Captain's Helmet",
+   "seed": 3888156,
+   "sockets": 2
+  },
+  "0:0:60": {
+   "name": "Sand Manipulator's Mask",
+   "seed": 407902,
+   "sockets": 3
+  },
+  "0:0:62": {
+   "name": "Einar's Horned Helmet",
+   "seed": 416809,
+   "sockets": 2
+  },
+  "0:0:64": {
+   "name": "Grimbone's Visage",
+   "seed": 52393051,
+   "sockets": 4
+  },
+  "0:0:67": {
+   "name": "Sentinel's Headguard",
+   "seed": 314470,
+   "sockets": 1
+  },
+  "0:0:71": {
+   "name": "Reaver's Headplate",
+   "seed": 338131,
+   "sockets": 1
+  },
+  "0:0:72": {
+   "name": "Juda's Broken Halo",
+   "seed": 317158,
+   "sockets": 3
+  },
+  "0:0:73": {
+   "name": "Solar Prophet's Crown",
+   "seed": 360562,
+   "sockets": 2
+  },
+  "0:0:74": {
+   "name": "Lunar Prophet's Tiara",
+   "seed": 360562,
+   "sockets": 2
+  },
+  "0:0:75": {
+   "name": "Harlequinn's Veil",
+   "seed": 18517798,
+   "sockets": 3
+  },
+  "0:0:77": {
+   "name": "Gabriel's Dauntless Vision",
+   "seed": 88317015,
+   "sockets": 3
+  },
+  "0:0:79": {
+   "name": "High Roller's Deathcrown",
+   "seed": 4755524,
+   "sockets": 2
+  },
+  "0:0:80": {
+   "name": "Gaze of the Oblivion",
+   "seed": 93031027,
+   "sockets": 4
+  },
+  "0:0:81": {
+   "name": "Eternal Death",
+   "seed": 31166439,
+   "sockets": 4
+  },
+  "0:0:83": {
+   "name": "Dragon Knight's Helmet",
+   "seed": 52835588,
+   "sockets": 4
+  },
+  "0:0:84": {
+   "name": "Crown of Doom",
+   "seed": 17303869,
+   "sockets": 3
+  },
+  "0:0:88": {
+   "name": "Face of Existence",
+   "seed": 858884,
+   "sockets": 3
+  },
+  "0:0:89": {
+   "name": "Parasite Queen's Tiara",
+   "seed": 423652,
+   "sockets": 3
+  },
+  "0:0:90": {
+   "name": "Leviathan's Crown",
+   "seed": 26408023,
+   "sockets": 4
+  },
+  "1:0:0": {
+   "name": "Heaven's Might",
+   "seed": 863609,
+   "sockets": 6
+  },
+  "1:0:1": {
+   "name": "Leviathan's Carcass",
+   "seed": 858884,
+   "sockets": 6
+  },
+  "1:0:2": {
+   "name": "Tayrel's Chestplate",
+   "seed": 58463712,
+   "sockets": 6
+  },
+  "1:0:3": {
+   "name": "Uabel's Chest",
+   "seed": 416809,
+   "sockets": 3
+  },
+  "1:0:4": {
+   "name": "Marsh Shroud",
+   "seed": 403123,
+   "sockets": 3
+  },
+  "1:0:5": {
+   "name": "Gladiator's Demise",
+   "seed": 45797482,
+   "sockets": 4
+  },
+  "1:0:6": {
+   "name": "Hellfire Cuirass",
+   "seed": 1692616,
+   "sockets": 4
+  },
+  "1:0:7": {
+   "name": "Devil's Cocoon",
+   "seed": 3888156,
+   "sockets": 5
+  },
+  "1:0:8": {
+   "name": "Mevius' Mighty Plate",
+   "seed": 375940,
+   "sockets": 4
+  },
+  "1:0:9": {
+   "name": "Anubis Torso",
+   "seed": 858884,
+   "sockets": 4
+  },
+  "1:0:10": {
+   "name": "Genji's Battle Armor",
+   "seed": 370717,
+   "sockets": 4
+  },
+  "1:0:11": {
+   "name": "Satan's Cuirass",
+   "seed": 370708,
+   "sockets": 3
+  },
+  "1:0:12": {
+   "name": "Sand King's Scarab",
+   "seed": 381535,
+   "sockets": 4
+  },
+  "1:0:13": {
+   "name": "Ice Howl's Cuirass",
+   "seed": 3888156,
+   "sockets": 5
+  },
+  "1:0:14": {
+   "name": "Grandwizard's Robe",
+   "seed": 391429,
+   "sockets": 3
+  },
+  "1:0:15": {
+   "name": "Zeus' Body Armor",
+   "seed": 3888156,
+   "sockets": 4
+  },
+  "1:0:16": {
+   "name": "Redneck's Shirt",
+   "seed": 6902308,
+   "sockets": 3
+  },
+  "1:0:18": {
+   "name": "Death Lord's Bone Armor",
+   "seed": 416809,
+   "sockets": 3
+  },
+  "1:0:19": {
+   "name": "Thor's Chest Armor",
+   "seed": 403123,
+   "sockets": 3
+  },
+  "1:0:20": {
+   "name": "Cuirass of Blood",
+   "seed": 3888156,
+   "sockets": 3
+  },
+  "1:0:21": {
+   "name": "Magister's Robe",
+   "seed": 314470,
+   "sockets": 2
+  },
+  "1:0:22": {
+   "name": "Nomad's Battlerobe",
+   "seed": 390967,
+   "sockets": 3
+  },
+  "1:0:23": {
+   "name": "Marksman's Hunting Shroud",
+   "seed": 403123,
+   "sockets": 4
+  },
+  "1:0:24": {
+   "name": "Upi's Sweetshirt",
+   "seed": 383254,
+   "sockets": 4
+  },
+  "1:0:25": {
+   "name": "Thunder Gladiator's Armor",
+   "seed": 377470,
+   "sockets": 4
+  },
+  "1:0:26": {
+   "name": "Nobunaga's Battle Cuirass",
+   "seed": 348151,
+   "sockets": 3
+  },
+  "1:0:27": {
+   "name": "Dante's Jacket",
+   "seed": 403123,
+   "sockets": 3
+  },
+  "1:0:28": {
+   "name": "Lancer's Chestplate",
+   "seed": 391156,
+   "sockets": 3
+  },
+  "1:0:29": {
+   "name": "Demon's Ribcage",
+   "seed": 315121,
+   "sockets": 3
+  },
+  "1:0:31": {
+   "name": "Chestplate of Fire",
+   "seed": 1723048,
+   "sockets": 6
+  },
+  "1:0:32": {
+   "name": "Lichbane",
+   "seed": 371161,
+   "sockets": 3
+  },
+  "1:0:33": {
+   "name": "St. Jupe's Plate of Command",
+   "seed": 3888156,
+   "sockets": 6
+  },
+  "1:0:34": {
+   "name": "Traveler's Leather Jacket",
+   "seed": 424666,
+   "sockets": 4
+  },
+  "1:0:35": {
+   "name": "Gem King's Garb",
+   "seed": 419959,
+   "sockets": 6
+  },
+  "1:0:36": {
+   "name": "Engineer's Plated Vest",
+   "seed": 403123,
+   "sockets": 3
+  },
+  "1:0:37": {
+   "name": "Vagabond's Wraps",
+   "seed": 391147,
+   "sockets": 3
+  },
+  "1:0:39": {
+   "name": "Blood-letter's Plate Body",
+   "seed": 403123,
+   "sockets": 3
+  },
+  "1:0:40": {
+   "name": "Venom's Ribcage",
+   "seed": 391156,
+   "sockets": 3
+  },
+  "1:0:41": {
+   "name": "Shield Bearer's Plated Armor",
+   "seed": 408970,
+   "sockets": 3
+  },
+  "1:0:42": {
+   "name": "Juggernaut's Glorious Plate",
+   "seed": 391138,
+   "sockets": 3
+  },
+  "1:0:43": {
+   "name": "Justiciar's Thunder Armor",
+   "seed": 403123,
+   "sockets": 3
+  },
+  "1:0:44": {
+   "name": "Lost Master's Platemail",
+   "seed": 390967,
+   "sockets": 3
+  },
+  "1:0:45": {
+   "name": "Earth Shaper's body",
+   "seed": 93976108,
+   "sockets": 3
+  },
+  "1:0:46": {
+   "name": "Plunderer's Jacket",
+   "seed": 3429797,
+   "sockets": 3
+  },
+  "1:0:47": {
+   "name": "Valkyrie's Battle Raiment",
+   "seed": 416809,
+   "sockets": 4
+  },
+  "1:0:48": {
+   "name": "Hazmat Suit",
+   "seed": 416809,
+   "sockets": 4
+  },
+  "1:0:49": {
+   "name": "Molten Steel Cataphract",
+   "seed": 864596,
+   "sockets": 3
+  },
+  "1:0:50": {
+   "name": "Tropical Storm",
+   "seed": 3888156,
+   "sockets": 4
+  },
+  "1:0:51": {
+   "name": "Magic-Imbued Frozen Plate",
+   "seed": 314614,
+   "sockets": 4
+  },
+  "1:0:52": {
+   "name": "Zephy's Gown",
+   "seed": 5983559,
+   "sockets": 3
+  },
+  "1:0:53": {
+   "name": "Mystique Allure",
+   "seed": 410545,
+   "sockets": 6
+  },
+  "1:0:54": {
+   "name": "Cocoon of the Berserker",
+   "seed": 10812748,
+   "sockets": 3,
+   "maxed": 5,
+   "total": 6,
+   "deficit": 1,
+   "previous": {
+    "seed": 4741985,
+    "sockets": 1
+   }
+  },
+  "1:0:55": {
+   "name": "Giant Thorned Lizard Skin",
+   "seed": 19905025,
+   "sockets": 3
+  },
+  "1:0:56": {
+   "name": "Noxious Hunter's Reward",
+   "seed": 52835588,
+   "sockets": 6
+  },
+  "1:0:57": {
+   "name": "Empire's Military Plate",
+   "seed": 416809,
+   "sockets": 3
+  },
+  "1:0:58": {
+   "name": "Leather Muscle Breastplate",
+   "seed": 21206257,
+   "sockets": 3
+  },
+  "1:0:59": {
+   "name": "Tundra Hunter's Long Coat",
+   "seed": 4316545,
+   "sockets": 6
+  },
+  "1:0:60": {
+   "name": "Arcane Robes of Authority",
+   "seed": 3888156,
+   "sockets": 3
+  },
+  "1:0:61": {
+   "name": "Thunder Guardian's Plate",
+   "seed": 3897525,
+   "sockets": 6
+  },
+  "1:0:62": {
+   "name": "Tactical Flak Jacket",
+   "seed": 4763345,
+   "sockets": 6
+  },
+  "1:0:63": {
+   "name": "Unearthed Esoteric Panoply",
+   "seed": 415750,
+   "sockets": 4
+  },
+  "1:0:64": {
+   "name": "Sheep King's Hide",
+   "seed": 391156,
+   "sockets": 6
+  },
+  "1:0:65": {
+   "name": "Clan Leader's Pride",
+   "seed": 3888156,
+   "sockets": 3
+  },
+  "1:0:66": {
+   "name": "Elementalist's Silk Shroud",
+   "seed": 289468,
+   "sockets": 3
+  },
+  "1:0:67": {
+   "name": "Bandit Lord's Shroud",
+   "seed": 1134768,
+   "sockets": 3
+  },
+  "1:0:68": {
+   "name": "Black Knight's Carapace",
+   "seed": 2984182,
+   "sockets": 4
+  },
+  "1:0:69": {
+   "name": "Behemoth's Damascus Body",
+   "seed": 858884,
+   "sockets": 4
+  },
+  "1:0:70": {
+   "name": "Sand Manipulator's Kalasiris",
+   "seed": 14693503,
+   "sockets": 6
+  },
+  "1:0:71": {
+   "name": "Ymir's Frozen Vestment",
+   "seed": 2136638,
+   "sockets": 5
+  },
+  "1:0:72": {
+   "name": "Einar's Plated Armor",
+   "seed": 416809,
+   "sockets": 5
+  },
+  "1:0:73": {
+   "name": "Gabriel's Leather Trench Coat",
+   "seed": 416809,
+   "sockets": 3
+  },
+  "1:0:74": {
+   "name": "Grimbone's Ribcage",
+   "seed": 88780570,
+   "sockets": 6
+  },
+  "1:0:75": {
+   "name": "Odin's Battlearmor",
+   "seed": 4677950,
+   "sockets": 3
+  },
+  "1:0:76": {
+   "name": "Ironclad Protector",
+   "seed": 2488068,
+   "sockets": 3
+  },
+  "1:0:77": {
+   "name": "Magiward Battlegear",
+   "seed": 309880,
+   "sockets": 3
+  },
+  "1:0:78": {
+   "name": "Wardbreaker Armor",
+   "seed": 10812022,
+   "sockets": 4
+  },
+  "1:0:79": {
+   "name": "Aegisweave Robes",
+   "seed": 401005,
+   "sockets": 3
+  },
+  "1:0:80": {
+   "name": "Solar Prophet's Robes",
+   "seed": 10812022,
+   "sockets": 3
+  },
+  "1:0:81": {
+   "name": "Stoneplate of Corruption",
+   "seed": 20788308,
+   "sockets": 5
+  },
+  "1:0:82": {
+   "name": "Butcher's Apron",
+   "seed": 3888156,
+   "sockets": 3
+  },
+  "1:0:83": {
+   "name": "Gabriel's Broken Wings",
+   "seed": 19905025,
+   "sockets": 6
+  },
+  "1:0:84": {
+   "name": "Thunder Caller's Robe",
+   "seed": 3888156,
+   "sockets": 3
+  },
+  "1:0:85": {
+   "name": "Muspelheim Guardian's Scorched Plate",
+   "seed": 5858460,
+   "sockets": 6,
+   "maxed": 8,
+   "total": 10,
+   "deficit": 44,
+   "previous": {
+    "seed": 78813686,
+    "sockets": 3
+   }
+  },
+  "1:0:86": {
+   "name": "Venomsteel Carapace",
+   "seed": 32862610,
+   "sockets": 5
+  },
+  "1:0:87": {
+   "name": "Isarius Ironthorn Breastplate",
+   "seed": 93986374,
+   "sockets": 6
+  },
+  "1:0:88": {
+   "name": "Executioner's Cocoon",
+   "seed": 16876227,
+   "sockets": 4
+  },
+  "1:0:89": {
+   "name": "Exiled Pagan's Mantle",
+   "seed": 93976108,
+   "sockets": 6
+  },
+  "1:0:90": {
+   "name": "Runemaster's Mantle",
+   "seed": 391147,
+   "sockets": 6
+  },
+  "1:0:91": {
+   "name": "Glacial Gladiator's Armor",
+   "seed": 377470,
+   "sockets": 4
+  },
+  "1:0:92": {
+   "name": "Magma Gladiator's Armor",
+   "seed": 377470,
+   "sockets": 4
+  },
+  "1:0:93": {
+   "name": "Scourge Gladiator's Armor",
+   "seed": 377470,
+   "sockets": 4
+  },
+  "1:0:94": {
+   "name": "Arcane Gladiator's Armor",
+   "seed": 377470,
+   "sockets": 4
+  },
+  "1:0:95": {
+   "name": "Grand Arch Wizard's Mantle",
+   "seed": 3888156,
+   "sockets": 6
+  },
+  "1:0:96": {
+   "name": "Pit Fighter's Band Shirt",
+   "seed": 862025,
+   "sockets": 6
+  },
+  "1:0:97": {
+   "name": "Dragon Knight's Vanguard",
+   "seed": 89651220,
+   "sockets": 6
+  },
+  "1:0:98": {
+   "name": "Wraith's Cloak",
+   "seed": 858884,
+   "sockets": 6
+  },
+  "1:0:99": {
+   "name": "Arcanist's Wrath",
+   "seed": 78813686,
+   "sockets": 6
+  },
+  "1:0:100": {
+   "name": "Sharpshooter's Cloak",
+   "seed": 16876227,
+   "sockets": 4
+  },
+  "1:0:101": {
+   "name": "Prophet's Shroud",
+   "seed": 863609,
+   "sockets": 3
+  },
+  "1:0:102": {
+   "name": "Skinwalker's Mantle",
+   "seed": 3888156,
+   "sockets": 4
+  },
+  "1:0:103": {
+   "name": "Captain's Attire",
+   "seed": 21217372,
+   "sockets": 6
+  },
+  "1:0:104": {
+   "name": "Leviathan's Ribcage",
+   "seed": 68567684,
+   "sockets": 4
+  },
+  "2:0:2": {
+   "name": "Tribal Boots",
+   "seed": 308812,
+   "sockets": 2
+  },
+  "2:0:4": {
+   "name": "Mevius' Mighty Marchers",
+   "seed": 377470,
+   "sockets": 2
+  },
+  "2:0:5": {
+   "name": "Molten Boots",
+   "seed": 252256,
+   "sockets": 2
+  },
+  "2:0:7": {
+   "name": "Zeus' Battle Boots",
+   "seed": 44577706,
+   "sockets": 2
+  },
+  "2:0:9": {
+   "name": "Pirate Captain's Boots",
+   "seed": 10812022,
+   "sockets": 4
+  },
+  "2:0:10": {
+   "name": "Death Lord's Marchers",
+   "seed": 738269,
+   "sockets": 2
+  },
+  "2:0:12": {
+   "name": "Boots of Blood",
+   "seed": 304630,
+   "sockets": 2
+  },
+  "2:0:15": {
+   "name": "Gladiator's Battle Sandals",
+   "seed": 3888156,
+   "sockets": 2
+  },
+  "2:0:19": {
+   "name": "Flaming Marchers",
+   "seed": 39361261,
+   "sockets": 3
+  },
+  "2:0:20": {
+   "name": "Mos'Arathim Marchers",
+   "seed": 288355,
+   "sockets": 2
+  },
+  "2:0:22": {
+   "name": "Bone Conjurer's Marchers",
+   "seed": 348151,
+   "sockets": 2
+  },
+  "2:0:24": {
+   "name": "Blood-letter's Plated Boots",
+   "seed": 5983559,
+   "sockets": 2
+  },
+  "2:0:25": {
+   "name": "Shield Bearer's Greaves",
+   "seed": 377470,
+   "sockets": 2
+  },
+  "2:0:26": {
+   "name": "Juggernaut's Victory Marchers",
+   "seed": 416809,
+   "sockets": 2
+  },
+  "2:0:30": {
+   "name": "Plunderer's Deck Marchers",
+   "seed": 270532,
+   "sockets": 2
+  },
+  "2:0:31": {
+   "name": "Battle Worn Boots",
+   "seed": 416809,
+   "sockets": 2
+  },
+  "2:0:32": {
+   "name": "Steadfast Marchers",
+   "seed": 407893,
+   "sockets": 2
+  },
+  "2:0:35": {
+   "name": "Satan's Molten Steps",
+   "seed": 3888156,
+   "sockets": 2
+  },
+  "2:0:38": {
+   "name": "Whisper Walker's Feiyue",
+   "seed": 346033,
+   "sockets": 2
+  },
+  "2:0:40": {
+   "name": "Grand Wizard's Silk Shoes",
+   "seed": 3888156,
+   "sockets": 2
+  },
+  "2:0:45": {
+   "name": "Chronomancer's Omnipotence",
+   "seed": 410545,
+   "sockets": 3
+  },
+  "2:0:46": {
+   "name": "Ymir's Freezing Boots",
+   "seed": 346033,
+   "sockets": 2
+  },
+  "2:0:48": {
+   "name": "Grimbone's Marchers",
+   "seed": 68434727,
+   "sockets": 3
+  },
+  "2:0:49": {
+   "name": "Aetherflow Treads",
+   "seed": 5983559,
+   "sockets": 3
+  },
+  "2:0:50": {
+   "name": "Runescribe's Striders",
+   "seed": 219226,
+   "sockets": 2
+  },
+  "2:0:51": {
+   "name": "Pla-Yer's Choice",
+   "seed": 348151,
+   "sockets": 2
+  },
+  "2:0:52": {
+   "name": "Mos'Arathim's Kicks",
+   "seed": 217462,
+   "sockets": 2
+  },
+  "2:0:55": {
+   "name": "Mystic Soles",
+   "seed": 738269,
+   "sockets": 2
+  },
+  "2:0:56": {
+   "name": "Enigma's Riftwalkers",
+   "seed": 314470,
+   "sockets": 2
+  },
+  "2:0:62": {
+   "name": "Marcher's of Hatred",
+   "seed": 31166439,
+   "sockets": 2
+  },
+  "2:0:63": {
+   "name": "Thunder Caller's Treads",
+   "seed": 738269,
+   "sockets": 2
+  },
+  "2:0:65": {
+   "name": "DEVELOPRE BOOT",
+   "seed": 719121760,
+   "sockets": 6
+  },
+  "2:0:67": {
+   "name": "Rocket Boots",
+   "seed": 308812,
+   "sockets": 2
+  },
+  "2:0:69": {
+   "name": "Chaoswalkers",
+   "seed": 10754398,
+   "sockets": 2
+  },
+  "2:0:70": {
+   "name": "Thunder Roamers",
+   "seed": 3888156,
+   "sockets": 2
+  },
+  "2:0:71": {
+   "name": "Venom Roamers",
+   "seed": 3888156,
+   "sockets": 2
+  },
+  "2:0:72": {
+   "name": "Chilling Roamers",
+   "seed": 3888156,
+   "sockets": 2
+  },
+  "2:0:73": {
+   "name": "Scorching Roamers",
+   "seed": 3888156,
+   "sockets": 2
+  },
+  "2:0:74": {
+   "name": "Astral Roamers",
+   "seed": 3888156,
+   "sockets": 2
+  },
+  "2:0:75": {
+   "name": "Brutal Roamers",
+   "seed": 3888156,
+   "sockets": 2
+  },
+  "2:0:76": {
+   "name": "Metal Vocalist's War Boots",
+   "seed": 391156,
+   "sockets": 4
+  },
+  "2:0:78": {
+   "name": "Adamant Roamers",
+   "seed": 858884,
+   "sockets": 4
+  },
+  "2:0:79": {
+   "name": "Peg Leg",
+   "seed": 11682486,
+   "sockets": 1
+  },
+  "2:0:80": {
+   "name": "Rift Vectors",
+   "seed": 17303869,
+   "sockets": 3
+  },
+  "2:0:81": {
+   "name": "Ghostplunderer's Marchers",
+   "seed": 423652,
+   "sockets": 2
+  },
+  "2:0:82": {
+   "name": "Phantom's Step",
+   "seed": 404236,
+   "sockets": 2
+  },
+  "3:1:0": {
+   "name": "Godfather",
+   "seed": 420748,
+   "sockets": 6
+  },
+  "3:1:1": {
+   "name": "Jade Warrior's Gladius",
+   "seed": 371161,
+   "sockets": 3
+  },
+  "3:1:2": {
+   "name": "Storm Katana",
+   "seed": 45797482,
+   "sockets": 6
+  },
+  "3:1:3": {
+   "name": "Molten Sword",
+   "seed": 4677950,
+   "sockets": 4
+  },
+  "3:1:4": {
+   "name": "The Undying",
+   "seed": 3897651,
+   "sockets": 4
+  },
+  "3:1:5": {
+   "name": "Shattered Dimensions",
+   "seed": 251197,
+   "sockets": 4
+  },
+  "3:1:6": {
+   "name": "Ashbringer",
+   "seed": 1633933,
+   "sockets": 4
+  },
+  "3:1:7": {
+   "name": "Hiyoki's Vorpal Katana",
+   "seed": 3013546,
+   "sockets": 3
+  },
+  "3:1:8": {
+   "name": "Hanzo's Flaming Katana",
+   "seed": 17234404,
+   "sockets": 4
+  },
+  "3:1:9": {
+   "name": "Genji's Sword of Fate",
+   "seed": 13764797,
+   "sockets": 6
+  },
+  "3:1:10": {
+   "name": "Wind Guardian's Gladius",
+   "seed": 72847356,
+   "sockets": 4
+  },
+  "3:1:11": {
+   "name": "Sand Crusader's Scimitar",
+   "seed": 219226,
+   "sockets": 4
+  },
+  "3:1:12": {
+   "name": "Azure's Wrath",
+   "seed": 17234404,
+   "sockets": 5
+  },
+  "3:1:13": {
+   "name": "Holy Warrior's Phase Blade",
+   "seed": 10286670,
+   "sockets": 4
+  },
+  "3:1:14": {
+   "name": "Steve's Mighty Sword",
+   "seed": 34500848,
+   "sockets": 5
+  },
+  "3:1:15": {
+   "name": "St. Gabriel's Retribution",
+   "seed": 15084017,
+   "sockets": 4
+  },
+  "3:1:16": {
+   "name": "Thor's Battle Sword",
+   "seed": 863609,
+   "sockets": 5
+  },
+  "3:1:17": {
+   "name": "Nomad's Sandslicer",
+   "seed": 1286214,
+   "sockets": 5
+  },
+  "3:1:18": {
+   "name": "Dante's Demon Blade",
+   "seed": 312523,
+   "sockets": 5
+  },
+  "3:1:19": {
+   "name": "Masamune",
+   "seed": 251197,
+   "sockets": 5
+  },
+  "3:1:20": {
+   "name": "Muramasa",
+   "seed": 283159,
+   "sockets": 5
+  },
+  "3:1:21": {
+   "name": "Crystal Infused Sword",
+   "seed": 273184,
+   "sockets": 3
+  },
+  "3:1:22": {
+   "name": "Bonetti's Rapier",
+   "seed": 14693503,
+   "sockets": 3
+  },
+  "3:1:23": {
+   "name": "Eternal Glaive",
+   "seed": 13239445,
+   "sockets": 2
+  },
+  "3:1:24": {
+   "name": "St. Mika's Zweih\u00e4nder",
+   "seed": 14660425,
+   "sockets": 6
+  },
+  "3:1:25": {
+   "name": "Sanguine Blade",
+   "seed": 219226,
+   "sockets": 2
+  },
+  "3:1:26": {
+   "name": "Gut's BFS",
+   "seed": 348151,
+   "sockets": 3
+  },
+  "3:1:27": {
+   "name": "Gut's HFS",
+   "seed": 858884,
+   "sockets": 4
+  },
+  "3:1:28": {
+   "name": "Grimbone's Scythe",
+   "seed": 17303869,
+   "sockets": 5
+  },
+  "3:1:29": {
+   "name": "Arch Angel's Phase Blade",
+   "seed": 45797482,
+   "sockets": 5
+  },
+  "3:1:30": {
+   "name": "Daisy",
+   "seed": 8151949,
+   "sockets": 5
+  },
+  "3:1:31": {
+   "name": "Gabriel's Broken Resolve",
+   "seed": 11258843,
+   "sockets": 5
+  },
+  "3:1:32": {
+   "name": "The Hope Ender",
+   "seed": 3888156,
+   "sockets": 6
+  },
+  "3:1:33": {
+   "name": "Glowstick Estoc",
+   "seed": 61463155,
+   "sockets": 5
+  },
+  "3:1:34": {
+   "name": "Blood Moon Crescent",
+   "seed": 293134,
+   "sockets": 2
+  },
+  "3:1:35": {
+   "name": "Stofflix Cooking Cleaver",
+   "seed": 24163754,
+   "sockets": 4
+  },
+  "3:1:36": {
+   "name": "Grimtide's Scimitar",
+   "seed": 17303869,
+   "sockets": 3
+  },
+  "3:1:37": {
+   "name": "Phantom Scimitar",
+   "seed": 25973382,
+   "sockets": 5
+  },
+  "3:2:0": {
+   "name": "Death's Mirror",
+   "seed": 1981652,
+   "sockets": 3
+  },
+  "3:2:1": {
+   "name": "Molten Dagger",
+   "seed": 121204,
+   "sockets": 1
+  },
+  "3:2:2": {
+   "name": "Icy Shank",
+   "seed": 816947,
+   "sockets": 2
+  },
+  "3:2:3": {
+   "name": "Darkness",
+   "seed": 183553,
+   "sockets": 2
+  },
+  "3:2:4": {
+   "name": "Sand Dagger",
+   "seed": 8226265,
+   "sockets": 2
+  },
+  "3:2:5": {
+   "name": "Thunder Dagger",
+   "seed": 3888156,
+   "sockets": 2
+  },
+  "3:2:6": {
+   "name": "Riftmaster's Dirge",
+   "seed": 10333836,
+   "sockets": 3
+  },
+  "3:2:7": {
+   "name": "Ceremonial Dagger",
+   "seed": 17303869,
+   "sockets": 3
+  },
+  "3:2:8": {
+   "name": "Fenrir's Bloodfang",
+   "seed": 31166439,
+   "sockets": 3
+  },
+  "3:3:0": {
+   "name": "Dragon Knight's Flail",
+   "seed": 17303869,
+   "sockets": 5
+  },
+  "3:3:1": {
+   "name": "Gurag's Stone Crusher",
+   "seed": 3888156,
+   "sockets": 6
+  },
+  "3:3:2": {
+   "name": "Nobunaga's Battle Slicer",
+   "seed": 7256315,
+   "sockets": 5
+  },
+  "3:3:3": {
+   "name": "Gladiator's Wrecking Ball",
+   "seed": 858884,
+   "sockets": 5
+  },
+  "3:3:4": {
+   "name": "Sacred Whip",
+   "seed": 7788825,
+   "sockets": 4
+  },
+  "3:3:5": {
+   "name": "Nightmare Slasher",
+   "seed": 1167264,
+   "sockets": 3
+  },
+  "3:3:6": {
+   "name": "Frozen Carver",
+   "seed": 3013546,
+   "sockets": 4
+  },
+  "3:3:7": {
+   "name": "Unholy God's Flail",
+   "seed": 3300818,
+   "sockets": 4
+  },
+  "3:3:8": {
+   "name": "Molten Hammer",
+   "seed": 17234404,
+   "sockets": 5
+  },
+  "3:3:9": {
+   "name": "Icy Crusher",
+   "seed": 36176130,
+   "sockets": 4
+  },
+  "3:3:10": {
+   "name": "The Light of Dawn",
+   "seed": 17303869,
+   "sockets": 6
+  },
+  "3:3:11": {
+   "name": "Gladiator's Skullcrusher",
+   "seed": 34535429,
+   "sockets": 4
+  },
+  "3:3:12": {
+   "name": "Sung Lee's Destroyer Flail",
+   "seed": 17234404,
+   "sockets": 5
+  },
+  "3:3:13": {
+   "name": "Revenant's Lasher",
+   "seed": 76452576,
+   "sockets": 5
+  },
+  "3:3:14": {
+   "name": "Pillar of Niflheim",
+   "seed": 284218,
+   "sockets": 5
+  },
+  "3:3:15": {
+   "name": "Spiritus",
+   "seed": 46744464,
+   "sockets": 4
+  },
+  "3:3:16": {
+   "name": "S\u00e4hk\u00f6puimuri",
+   "seed": 17234404,
+   "sockets": 4
+  },
+  "3:3:17": {
+   "name": "Rakhul's Legion Crusher",
+   "seed": 18546751,
+   "sockets": 6
+  },
+  "3:3:18": {
+   "name": "The Dawn Bringer",
+   "seed": 17234404,
+   "sockets": 5
+  },
+  "3:3:19": {
+   "name": "Luci's Day",
+   "seed": 3888156,
+   "sockets": 4
+  },
+  "3:3:20": {
+   "name": "Shishkebab",
+   "seed": 100848095,
+   "sockets": 6
+  },
+  "3:3:21": {
+   "name": "Stormslayer",
+   "seed": 3888156,
+   "sockets": 6
+  },
+  "3:3:22": {
+   "name": "Pit Fighter's Skullcracker",
+   "seed": 297334,
+   "sockets": 5
+  },
+  "3:3:23": {
+   "name": "Pit Fighter's Brutalizer",
+   "seed": 10754419,
+   "sockets": 4
+  },
+  "3:3:24": {
+   "name": "Metal Vocalist's Warlock",
+   "seed": 260566,
+   "sockets": 6
+  },
+  "3:4:0": {
+   "name": "Inferno Slayer",
+   "seed": 8156143,
+   "sockets": 4
+  },
+  "3:4:1": {
+   "name": "Rift Commander's Axe",
+   "seed": 312523,
+   "sockets": 2
+  },
+  "3:4:2": {
+   "name": "Odin's Battle Axe",
+   "seed": 348151,
+   "sockets": 3
+  },
+  "3:4:3": {
+   "name": "Viking's Sacred Axe",
+   "seed": 1633933,
+   "sockets": 3
+  },
+  "3:4:4": {
+   "name": "Crystal Infused Axe",
+   "seed": 109672,
+   "sockets": 2
+  },
+  "3:4:5": {
+   "name": "St. Rexis Sundering Axe",
+   "seed": 17303869,
+   "sockets": 5
+  },
+  "3:4:6": {
+   "name": "Gem King's Cleaver",
+   "seed": 288208,
+   "sockets": 6
+  },
+  "3:4:7": {
+   "name": "Winter's Bite",
+   "seed": 9456748,
+   "sockets": 4
+  },
+  "3:4:8": {
+   "name": "Wraith Forged Cleaver",
+   "seed": 4677950,
+   "sockets": 6
+  },
+  "3:4:9": {
+   "name": "Aurelion Fury",
+   "seed": 49689934,
+   "sockets": 6
+  },
+  "3:4:10": {
+   "name": "Abomination's Gut Ripper",
+   "seed": 18582172,
+   "sockets": 4
+  },
+  "3:4:11": {
+   "name": "Headsman's Bloodthirster",
+   "seed": 73598324,
+   "sockets": 6
+  },
+  "3:4:12": {
+   "name": "Doom Cutter",
+   "seed": 219226,
+   "sockets": 4
+  },
+  "3:5:0": {
+   "name": "Storm Fury",
+   "seed": 15910066,
+   "sockets": 5
+  },
+  "3:5:1": {
+   "name": "Molten Paw",
+   "seed": 315610,
+   "sockets": 2
+  },
+  "3:5:2": {
+   "name": "Hemorrhage",
+   "seed": 315610,
+   "sockets": 2
+  },
+  "3:5:3": {
+   "name": "Yoshi's Throat-Cutters",
+   "seed": 259579,
+   "sockets": 4
+  },
+  "3:5:4": {
+   "name": "Elemental Claws",
+   "seed": 3888156,
+   "sockets": 2
+  },
+  "3:5:6": {
+   "name": "Earth Shaper's Talons",
+   "seed": 314605,
+   "sockets": 2
+  },
+  "3:5:7": {
+   "name": "Spirit Walker's Guide",
+   "seed": 340774,
+   "sockets": 2
+  },
+  "3:5:8": {
+   "name": "Glacier Talons",
+   "seed": 10286670,
+   "sockets": 4
+  },
+  "3:6:0": {
+   "name": "Odin's Battle Spear",
+   "seed": 3013546,
+   "sockets": 5,
+   "maxed": 7,
+   "total": 8,
+   "deficit": 20,
+   "previous": {
+    "seed": 46744464,
+    "sockets": 4
+   }
+  },
+  "3:6:1": {
+   "name": "Crusader Halberd",
+   "seed": 2004707,
+   "sockets": 4
+  },
+  "3:6:3": {
+   "name": "Shadow Carver",
+   "seed": 17234404,
+   "sockets": 4
+  },
+  "3:6:4": {
+   "name": "Poseidon's Might",
+   "seed": 14682415,
+   "sockets": 3
+  },
+  "3:6:5": {
+   "name": "Vanguard's Lance",
+   "seed": 1167264,
+   "sockets": 2
+  },
+  "3:6:6": {
+   "name": "War God's Lance",
+   "seed": 190930,
+   "sockets": 2
+  },
+  "3:6:7": {
+   "name": "Jousting Lance",
+   "seed": 738269,
+   "sockets": 2
+  },
+  "3:6:8": {
+   "name": "Golden God's Gladius",
+   "seed": 377470,
+   "sockets": 2
+  },
+  "3:6:9": {
+   "name": "St. Draxis' Pigstick",
+   "seed": 8151949,
+   "sockets": 5
+  },
+  "3:6:10": {
+   "name": "Lancer's Glory",
+   "seed": 403123,
+   "sockets": 2
+  },
+  "3:6:11": {
+   "name": "Champion's Flag Lance",
+   "seed": 22501981,
+   "sockets": 2
+  },
+  "3:6:12": {
+   "name": "Dark Knight's Lance",
+   "seed": 1633933,
+   "sockets": 5
+  },
+  "3:6:13": {
+   "name": "Brimskull Trident",
+   "seed": 17303869,
+   "sockets": 5
+  },
+  "3:6:14": {
+   "name": "Thorn of Noxus",
+   "seed": 45797482,
+   "sockets": 6
+  },
+  "3:7:0": {
+   "name": "Sawgun",
+   "seed": 3888156,
+   "sockets": 2
+  },
+  "3:7:1": {
+   "name": "Doublesaw 4000",
+   "seed": 377470,
+   "sockets": 3
+  },
+  "3:7:2": {
+   "name": "Doomsaw",
+   "seed": 3888156,
+   "sockets": 3
+  },
+  "3:7:3": {
+   "name": "Vorpal Sharktooth",
+   "seed": 17303869,
+   "sockets": 5
+  },
+  "3:7:4": {
+   "name": "The Annihilator",
+   "seed": 377470,
+   "sockets": 4
+  },
+  "3:7:5": {
+   "name": "St. Draxis Longsaw",
+   "seed": 39336091,
+   "sockets": 6
+  },
+  "3:7:7": {
+   "name": "Candy Shredder",
+   "seed": 8529515,
+   "sockets": 5
+  },
+  "3:7:8": {
+   "name": "Royal Decapitator",
+   "seed": 1167264,
+   "sockets": 4
+  },
+  "3:7:9": {
+   "name": "Diablo",
+   "seed": 14660425,
+   "sockets": 4
+  },
+  "3:7:10": {
+   "name": "Eden's Harvester",
+   "seed": 23341020,
+   "sockets": 4
+  },
+  "3:8:0": {
+   "name": "The Iris",
+   "seed": 48061053,
+   "sockets": 2
+  },
+  "3:8:4": {
+   "name": "Apocalypto",
+   "seed": 371152,
+   "sockets": 2
+  },
+  "3:8:5": {
+   "name": "Ancient Sun Beacon",
+   "seed": 351817,
+   "sockets": 2
+  },
+  "3:8:6": {
+   "name": "Thorn of Helheim",
+   "seed": 10333836,
+   "sockets": 2
+  },
+  "3:8:8": {
+   "name": "Spell Eater",
+   "seed": 8066845,
+   "sockets": 6,
+   "maxed": 9,
+   "total": 11,
+   "deficit": 21,
+   "previous": {
+    "seed": 17303869,
+    "sockets": 4
+   }
+  },
+  "3:8:9": {
+   "name": "Necrobutcher's Curse",
+   "seed": 12488423,
+   "sockets": 6
+  },
+  "3:8:10": {
+   "name": "Crow's Whisper",
+   "seed": 10254174,
+   "sockets": 6
+  },
+  "3:9:0": {
+   "name": "Blood of Abaddon",
+   "seed": 339418,
+   "sockets": 6
+  },
+  "3:9:1": {
+   "name": "The Eye of Tarethiel",
+   "seed": 14660425,
+   "sockets": 6
+  },
+  "3:9:3": {
+   "name": "Cane of the Tundra",
+   "seed": 15910066,
+   "sockets": 4
+  },
+  "3:9:4": {
+   "name": "St. Nimo's Lightbringer",
+   "seed": 377470,
+   "sockets": 4
+  },
+  "3:9:5": {
+   "name": "Pagan God's Blasphemy",
+   "seed": 321142,
+   "sockets": 6
+  },
+  "3:9:6": {
+   "name": "Crackling Thunder",
+   "seed": 3888156,
+   "sockets": 6
+  },
+  "3:9:7": {
+   "name": "Cane of Creation",
+   "seed": 349219,
+   "sockets": 6
+  },
+  "3:9:8": {
+   "name": "Leviathan's Spine",
+   "seed": 3888156,
+   "sockets": 6
+  },
+  "3:10:0": {
+   "name": "Oculus of Ages",
+   "seed": 14660425,
+   "sockets": 2
+  },
+  "3:10:1": {
+   "name": "Clafaxier",
+   "seed": 249604,
+   "sockets": 4
+  },
+  "3:10:2": {
+   "name": "Steve's Wand of Fortune",
+   "seed": 15910066,
+   "sockets": 3
+  },
+  "3:10:3": {
+   "name": "St. HouDeanii's Tiny Fire Rod",
+   "seed": 750887,
+   "sockets": 4
+  },
+  "3:10:4": {
+   "name": "Beacon of Shadows",
+   "seed": 3888156,
+   "sockets": 3
+  },
+  "3:10:5": {
+   "name": "Crystal Infused Wand",
+   "seed": 270370,
+   "sockets": 2
+  },
+  "3:10:6": {
+   "name": "Uabel's Wand",
+   "seed": 18582172,
+   "sockets": 2
+  },
+  "3:10:7": {
+   "name": "Battle Mage's Wand",
+   "seed": 273184,
+   "sockets": 3
+  },
+  "3:10:8": {
+   "name": "Voodoo Magician's Skull",
+   "seed": 320914,
+   "sockets": 2
+  },
+  "3:10:9": {
+   "name": "Wraithbone",
+   "seed": 270532,
+   "sockets": 3
+  },
+  "3:10:10": {
+   "name": "Clafaxier's Legacy",
+   "seed": 3888156,
+   "sockets": 2
+  },
+  "3:10:11": {
+   "name": "Manafunneler's Conjurer",
+   "seed": 377470,
+   "sockets": 3
+  },
+  "3:10:12": {
+   "name": "Witch's Wand",
+   "seed": 3187,
+   "sockets": 2
+  },
+  "3:10:13": {
+   "name": "Conjured Tentacle",
+   "seed": 15910066,
+   "sockets": 3
+  },
+  "3:11:0": {
+   "name": "God's Benevolence",
+   "seed": 377470,
+   "sockets": 4
+  },
+  "3:11:1": {
+   "name": "Satan's Unholy Bible",
+   "seed": 173524,
+   "sockets": 4
+  },
+  "3:11:2": {
+   "name": "Book of Revelations",
+   "seed": 107926,
+   "sockets": 4
+  },
+  "3:11:3": {
+   "name": "Damien's Head",
+   "seed": 216049,
+   "sockets": 4
+  },
+  "3:11:4": {
+   "name": "Zealot's Book of Prophecy",
+   "seed": 410545,
+   "sockets": 2
+  },
+  "3:11:5": {
+   "name": "Solar Prophet's Tablet",
+   "seed": 303562,
+   "sockets": 4
+  },
+  "3:11:6": {
+   "name": "Sands of Time",
+   "seed": 216583,
+   "sockets": 4
+  },
+  "3:11:7": {
+   "name": "Book of Cold Death",
+   "seed": 389437,
+   "sockets": 4
+  },
+  "3:11:8": {
+   "name": "Damien's Corrupted Head",
+   "seed": 32899804,
+   "sockets": 5
+  },
+  "3:12:1": {
+   "name": "Dragon's Breath",
+   "seed": 377470,
+   "sockets": 3
+  },
+  "3:12:2": {
+   "name": "Wormclaw",
+   "seed": 174058,
+   "sockets": 2
+  },
+  "3:12:3": {
+   "name": "Hypothermia",
+   "seed": 29411195,
+   "sockets": 3
+  },
+  "3:13:0": {
+   "name": "Buriza-ko-nu",
+   "seed": 3888156,
+   "sockets": 5
+  },
+  "3:13:1": {
+   "name": "Wind's Force",
+   "seed": 863609,
+   "sockets": 6
+  },
+  "3:13:2": {
+   "name": "Poison Ivy",
+   "seed": 17234404,
+   "sockets": 4
+  },
+  "3:13:3": {
+   "name": "Glimmerfury",
+   "seed": 280036,
+   "sockets": 4
+  },
+  "3:13:4": {
+   "name": "Flamebringer",
+   "seed": 3888156,
+   "sockets": 4
+  },
+  "3:13:5": {
+   "name": "Steve's Punchbow",
+   "seed": 858884,
+   "sockets": 4
+  },
+  "3:13:6": {
+   "name": "St. Soloyolo's Holy Bow",
+   "seed": 12535358,
+   "sockets": 5
+  },
+  "3:13:7": {
+   "name": "Marksman's Hunting Bow",
+   "seed": 4677950,
+   "sockets": 5
+  },
+  "3:13:8": {
+   "name": "Shadowfury",
+   "seed": 85739736,
+   "sockets": 4
+  },
+  "3:13:9": {
+   "name": "Electro",
+   "seed": 17303869,
+   "sockets": 4
+  },
+  "3:13:10": {
+   "name": "Hellspawn Eradicator",
+   "seed": 17303869,
+   "sockets": 6
+  },
+  "3:13:11": {
+   "name": "Deathquill",
+   "seed": 18582172,
+   "sockets": 6
+  },
+  "3:13:14": {
+   "name": "Astral Projector",
+   "seed": 14660425,
+   "sockets": 5
+  },
+  "3:13:15": {
+   "name": "Arachno Phobia",
+   "seed": 13239445,
+   "sockets": 6
+  },
+  "3:13:16": {
+   "name": "Monsoon",
+   "seed": 18531901,
+   "sockets": 6
+  },
+  "3:13:17": {
+   "name": "Arrow of Niflheim",
+   "seed": 12958641,
+   "sockets": 5
+  },
+  "3:13:19": {
+   "name": "Arrow of Zamjo",
+   "seed": 17303869,
+   "sockets": 6
+  },
+  "3:13:20": {
+   "name": "Phantom Strike",
+   "seed": 1265286,
+   "sockets": 6
+  },
+  "3:14:0": {
+   "name": "RT XQC-4910",
+   "seed": 821492,
+   "sockets": 5
+  },
+  "3:14:1": {
+   "name": "Vampire Hunter",
+   "seed": 5544556,
+   "sockets": 5
+  },
+  "3:14:2": {
+   "name": "Flamecannon",
+   "seed": 75182502,
+   "sockets": 4
+  },
+  "3:14:3": {
+   "name": "Warbringer",
+   "seed": 863609,
+   "sockets": 2
+  },
+  "3:14:7": {
+   "name": "Chills of War",
+   "seed": 4715579,
+   "sockets": 2
+  },
+  "3:14:8": {
+   "name": "Commander's Sentry Blaster",
+   "seed": 4967223,
+   "sockets": 4
+  },
+  "3:14:9": {
+   "name": "Marine's Buddy",
+   "seed": 4677950,
+   "sockets": 4
+  },
+  "3:14:12": {
+   "name": "Crystal Infused Pistol",
+   "seed": 314470,
+   "sockets": 2
+  },
+  "3:14:13": {
+   "name": "F4-Tactical Rifle",
+   "seed": 3429797,
+   "sockets": 2
+  },
+  "3:14:14": {
+   "name": "Dreadnought",
+   "seed": 846782,
+   "sockets": 1
+  },
+  "3:14:15": {
+   "name": "AK-47",
+   "seed": 61463155,
+   "sockets": 6
+  },
+  "3:14:16": {
+   "name": "Glock 22",
+   "seed": 31166439,
+   "sockets": 4
+  },
+  "3:14:17": {
+   "name": "Dracula's Demise",
+   "seed": 17303869,
+   "sockets": 6
+  },
+  "3:14:18": {
+   "name": "Master's Magnum",
+   "seed": 17234404,
+   "sockets": 3
+  },
+  "3:14:19": {
+   "name": "Ethereal Musket",
+   "seed": 1696327,
+   "sockets": 6
+  },
+  "3:15:0": {
+   "name": "Cobra Blood Vial",
+   "seed": 325966,
+   "sockets": 2
+  },
+  "3:15:2": {
+   "name": "Demon Blood Flask",
+   "seed": 127,
+   "sockets": 2
+  },
+  "3:15:3": {
+   "name": "Spirit Urn",
+   "seed": 173389,
+   "sockets": 2
+  },
+  "3:16:0": {
+   "name": "Wakayka's Tomahawk",
+   "seed": 1702864,
+   "sockets": 2
+  },
+  "3:16:1": {
+   "name": "Scarred Battle Darts",
+   "seed": 14660425,
+   "sockets": 1
+  },
+  "3:16:2": {
+   "name": "Mimir's Corrupted Axe",
+   "seed": 3888156,
+   "sockets": 2
+  },
+  "3:16:3": {
+   "name": "Imperial Glaive",
+   "seed": 9862409,
+   "sockets": 2
+  },
+  "3:16:4": {
+   "name": "Ukko's Revenge",
+   "seed": 96111390,
+   "sockets": 4
+  },
+  "3:16:5": {
+   "name": "Wargod's Wrath",
+   "seed": 219226,
+   "sockets": 2
+  },
+  "3:16:6": {
+   "name": "St. Neri's Rainbow Lance",
+   "seed": 89536089,
+   "sockets": 4
+  },
+  "3:16:7": {
+   "name": "Serpent's Tooth",
+   "seed": 339418,
+   "sockets": 5
+  },
+  "3:16:8": {
+   "name": "Crystal Infused Javelin",
+   "seed": 630878,
+   "sockets": 2
+  },
+  "3:16:9": {
+   "name": "Valkyrie's Thunder Javelin",
+   "seed": 46341293,
+   "sockets": 3
+  },
+  "3:16:10": {
+   "name": "Deep Sea Glaive",
+   "seed": 1254252,
+   "sockets": 2
+  },
+  "3:16:11": {
+   "name": "Sowyer's Javelin of Devastation",
+   "seed": 32862610,
+   "sockets": 4
+  },
+  "3:16:12": {
+   "name": "Sidewinder",
+   "seed": 85306253,
+   "sockets": 2
+  },
+  "4:0:0": {
+   "name": "Shadow's Grasp",
+   "seed": 334465,
+   "sockets": 2
+  },
+  "4:0:3": {
+   "name": "Warmaster's Tribal Paws",
+   "seed": 321394,
+   "sockets": 2
+  },
+  "4:0:4": {
+   "name": "Death's Grasp",
+   "seed": 1261575,
+   "sockets": 2
+  },
+  "4:0:5": {
+   "name": "Anubis' Mighty Hands",
+   "seed": 334465,
+   "sockets": 2
+  },
+  "4:0:8": {
+   "name": "Thor's Battle Gloves",
+   "seed": 249613,
+   "sockets": 2
+  },
+  "4:0:9": {
+   "name": "Nomad's Sand Mitts",
+   "seed": 247015,
+   "sockets": 2
+  },
+  "4:0:10": {
+   "name": "Marksman's Hunting Gloves",
+   "seed": 247015,
+   "sockets": 2
+  },
+  "4:0:12": {
+   "name": "Dante's Mitts",
+   "seed": 304495,
+   "sockets": 2
+  },
+  "4:0:13": {
+   "name": "Lancers Gauntlets",
+   "seed": 259579,
+   "sockets": 2
+  },
+  "4:0:14": {
+   "name": "Devil's Grasp",
+   "seed": 338131,
+   "sockets": 2
+  },
+  "4:0:15": {
+   "name": "Gloves of Wilderness",
+   "seed": 318262,
+   "sockets": 2
+  },
+  "4:0:17": {
+   "name": "Conjurer Mitts",
+   "seed": 3408302,
+   "sockets": 2
+  },
+  "4:0:18": {
+   "name": "Zealot's Deathbringers",
+   "seed": 372220,
+   "sockets": 2,
+   "maxed": 5,
+   "total": 5,
+   "deficit": 0,
+   "previous": {
+    "seed": 371161,
+    "sockets": 1
+   }
+  },
+  "4:0:23": {
+   "name": "Champion's Fighting Gloves",
+   "seed": 333478,
+   "sockets": 2
+  },
+  "4:0:25": {
+   "name": "Brawler's Fighting Mitts",
+   "seed": 339247,
+   "sockets": 2
+  },
+  "4:0:30": {
+   "name": "St. Ahto's Diamond Hands",
+   "seed": 85306253,
+   "sockets": 3
+  },
+  "4:0:32": {
+   "name": "Battle Worn Gauntlets",
+   "seed": 349219,
+   "sockets": 2
+  },
+  "4:0:33": {
+   "name": "Wisdom's Hold",
+   "seed": 344974,
+   "sockets": 2
+  },
+  "4:0:34": {
+   "name": "Imbued Mage Gloves",
+   "seed": 3888156,
+   "sockets": 2
+  },
+  "4:0:35": {
+   "name": "Battle Caster's Gauntlets",
+   "seed": 1633933,
+   "sockets": 2
+  },
+  "4:0:37": {
+   "name": "Sand Manipulator's Authority",
+   "seed": 2576721,
+   "sockets": 3
+  },
+  "4:0:38": {
+   "name": "Einar's Padded Gauntlets",
+   "seed": 1286214,
+   "sockets": 2
+  },
+  "4:0:39": {
+   "name": "Rapidcaster Mitts",
+   "seed": 221527,
+   "sockets": 2
+  },
+  "4:0:44": {
+   "name": "Vigorous Lifegrips",
+   "seed": 113302,
+   "sockets": 2
+  },
+  "4:0:46": {
+   "name": "Thorned Wristguards",
+   "seed": 296185,
+   "sockets": 2
+  },
+  "4:0:49": {
+   "name": "Demonfire Accelerators",
+   "seed": 2160344,
+   "sockets": 3
+  },
+  "4:0:63": {
+   "name": "Chronobreakers",
+   "seed": 3000385,
+   "sockets": 3
+  },
+  "4:0:65": {
+   "name": "Infected Grasp",
+   "seed": 17234404,
+   "sockets": 2
+  },
+  "5:0:1": {
+   "name": "High Demon's Necklace",
+   "seed": 64,
+   "sockets": 2
+  },
+  "5:0:8": {
+   "name": "Steve's Necklace",
+   "seed": 291016,
+   "sockets": 2
+  },
+  "5:0:9": {
+   "name": "Baby Log Necklace",
+   "seed": 352876,
+   "sockets": 2
+  },
+  "5:0:10": {
+   "name": "Treasure Pendant",
+   "seed": 377743,
+   "sockets": 2
+  },
+  "5:0:11": {
+   "name": "Ritual Pendant",
+   "seed": 127,
+   "sockets": 2
+  },
+  "5:0:14": {
+   "name": "Elder's Heart",
+   "seed": 320398,
+   "sockets": 2
+  },
+  "5:0:18": {
+   "name": "Spirit Pendant",
+   "seed": 10,
+   "sockets": 2
+  },
+  "5:0:21": {
+   "name": "Eye of Horus",
+   "seed": 127,
+   "sockets": 2
+  },
+  "5:0:22": {
+   "name": "Pyramid Pendant",
+   "seed": 315121,
+   "sockets": 2
+  },
+  "5:0:24": {
+   "name": "Traveler's Compass",
+   "seed": 3187,
+   "sockets": 2
+  },
+  "5:0:26": {
+   "name": "Juggernaut's Emblem",
+   "seed": 176176,
+   "sockets": 2
+  },
+  "5:0:29": {
+   "name": "Venom's Necklace",
+   "seed": 376366,
+   "sockets": 2
+  },
+  "5:0:30": {
+   "name": "Champion's Medal of Valor",
+   "seed": 351574,
+   "sockets": 2
+  },
+  "5:0:32": {
+   "name": "Kallik's Fury",
+   "seed": 383779,
+   "sockets": 2
+  },
+  "5:0:34": {
+   "name": "Philosopher's Stone",
+   "seed": 107881,
+   "sockets": 2
+  },
+  "5:0:36": {
+   "name": "Coldfire Amulet",
+   "seed": 376240,
+   "sockets": 2
+  },
+  "5:0:42": {
+   "name": "Earth Goliath's Protection",
+   "seed": 121204,
+   "sockets": 2
+  },
+  "5:0:43": {
+   "name": "Claw of the Bloodthirsty",
+   "seed": 352876,
+   "sockets": 2
+  },
+  "5:0:49": {
+   "name": "Ymir's Frozen Tear",
+   "seed": 314470,
+   "sockets": 2
+  },
+  "5:0:50": {
+   "name": "Insignia of the Hunter",
+   "seed": 376213,
+   "sockets": 2
+  },
+  "5:0:61": {
+   "name": "Amulet of Colosseum",
+   "seed": 3187,
+   "sockets": 1
+  },
+  "5:0:66": {
+   "name": "Eagle's Claw",
+   "seed": 3888156,
+   "sockets": 1
+  },
+  "5:0:72": {
+   "name": "Fractal of Existence",
+   "seed": 376693,
+   "sockets": 2
+  },
+  "5:0:75": {
+   "name": "Grimtide's Necklace",
+   "seed": 863066,
+   "sockets": 1
+  },
+  "5:0:76": {
+   "name": "Blood Maggot Pendant",
+   "seed": 351385,
+   "sockets": 1
+  },
+  "6:0:0": {
+   "name": "Ancient Aegis",
+   "seed": 84448614,
+   "sockets": 4
+  },
+  "6:0:1": {
+   "name": "Tombstone",
+   "seed": 25114978,
+   "sockets": 6,
+   "maxed": 8,
+   "total": 12,
+   "deficit": 28,
+   "previous": {
+    "seed": 78813686,
+    "sockets": 5
+   }
+  },
+  "6:0:2": {
+   "name": "Rift Eye",
+   "seed": 58453137,
+   "sockets": 4
+  },
+  "6:0:3": {
+   "name": "Demon's Mirror",
+   "seed": 3888156,
+   "sockets": 5
+  },
+  "6:0:4": {
+   "name": "The Templar",
+   "seed": 67999537,
+   "sockets": 4
+  },
+  "6:0:5": {
+   "name": "Lancer's Wall",
+   "seed": 85306253,
+   "sockets": 4
+  },
+  "6:0:6": {
+   "name": "Shadow Buckler",
+   "seed": 394162,
+   "sockets": 3
+  },
+  "6:0:7": {
+   "name": "Wall of the Legion",
+   "seed": 375940,
+   "sockets": 6
+  },
+  "6:0:8": {
+   "name": "SUOMI FINLAND PERKELE",
+   "seed": 3888156,
+   "sockets": 6
+  },
+  "6:0:9": {
+   "name": "Den Glider In",
+   "seed": 17303869,
+   "sockets": 4
+  },
+  "6:0:10": {
+   "name": "Gladiator's Wall",
+   "seed": 3888156,
+   "sockets": 4
+  },
+  "6:0:11": {
+   "name": "Sacred Aegis",
+   "seed": 16024864,
+   "sockets": 4,
+   "maxed": 6,
+   "total": 7,
+   "deficit": 79,
+   "previous": {
+    "seed": 77076508,
+    "sockets": 1
+   }
+  },
+  "6:0:12": {
+   "name": "Aztec Ward",
+   "seed": 32862610,
+   "sockets": 4
+  },
+  "6:0:13": {
+   "name": "Ward of Toxicity",
+   "seed": 416809,
+   "sockets": 4
+  },
+  "6:0:14": {
+   "name": "Storm Gladiator's Wall",
+   "seed": 6899176,
+   "sockets": 4
+  },
+  "6:0:15": {
+   "name": "Thunder Lord's Aegis",
+   "seed": 3888156,
+   "sockets": 4
+  },
+  "6:0:16": {
+   "name": "Crystal Infused Shield",
+   "seed": 416809,
+   "sockets": 4
+  },
+  "6:0:17": {
+   "name": "Vagabond's Ward",
+   "seed": 401050,
+   "sockets": 4
+  },
+  "6:0:18": {
+   "name": "Flame Diviner's Ward",
+   "seed": 3888156,
+   "sockets": 6
+  },
+  "6:0:19": {
+   "name": "Justiciar's Thunder Wall",
+   "seed": 403123,
+   "sockets": 4
+  },
+  "6:0:22": {
+   "name": "Leprechauns Greed",
+   "seed": 1286214,
+   "sockets": 5
+  },
+  "6:0:23": {
+   "name": "Gem Encrusted Tower",
+   "seed": 17303869,
+   "sockets": 6
+  },
+  "6:0:24": {
+   "name": "Pandemic Shield",
+   "seed": 3888156,
+   "sockets": 4
+  },
+  "6:0:25": {
+   "name": "Iron Giants Shield",
+   "seed": 405250,
+   "sockets": 4
+  },
+  "6:0:26": {
+   "name": "St. Tomi's Vibrant Aura",
+   "seed": 416809,
+   "sockets": 6
+  },
+  "6:0:27": {
+   "name": "Defender's Justice",
+   "seed": 3888156,
+   "sockets": 5
+  },
+  "6:0:28": {
+   "name": "Shield of the Abyss",
+   "seed": 31166439,
+   "sockets": 6
+  },
+  "6:0:29": {
+   "name": "Mirror of Flesh",
+   "seed": 418801,
+   "sockets": 4
+  },
+  "6:0:30": {
+   "name": "St. Hallgar's Bloodforged Aegis",
+   "seed": 19905025,
+   "sockets": 6
+  },
+  "6:0:31": {
+   "name": "Ward of Blood",
+   "seed": 17303869,
+   "sockets": 3
+  },
+  "6:0:32": {
+   "name": "Novice's Tower",
+   "seed": 411559,
+   "sockets": 4
+  },
+  "6:0:33": {
+   "name": "King's Tower Shield",
+   "seed": 35503318,
+   "sockets": 4
+  },
+  "6:0:34": {
+   "name": "Heaven's Champion",
+   "seed": 416809,
+   "sockets": 4
+  },
+  "6:0:35": {
+   "name": "Pitfiend's Thorn",
+   "seed": 4677950,
+   "sockets": 3
+  },
+  "6:0:36": {
+   "name": "Celestial's Authority",
+   "seed": 3888156,
+   "sockets": 4
+  },
+  "6:0:37": {
+   "name": "Visage of Relentless Rage",
+   "seed": 845198,
+   "sockets": 4
+  },
+  "6:0:38": {
+   "name": "Battle Mage's Shield",
+   "seed": 17303869,
+   "sockets": 4
+  },
+  "6:0:39": {
+   "name": "Darkwood Defender",
+   "seed": 233845,
+   "sockets": 2
+  },
+  "6:0:48": {
+   "name": "Thunderstruck Deflector",
+   "seed": 3897525,
+   "sockets": 4
+  },
+  "6:0:49": {
+   "name": "Rendguard of Carnage",
+   "seed": 58453137,
+   "sockets": 3
+  },
+  "6:0:50": {
+   "name": "Spellbinder's Magebarrier",
+   "seed": 3888156,
+   "sockets": 4
+  },
+  "6:0:51": {
+   "name": "Gabriel's Unholy Oath",
+   "seed": 4328068,
+   "sockets": 6
+  },
+  "6:0:52": {
+   "name": "Pit Ravager's Cetratus",
+   "seed": 97445889,
+   "sockets": 5
+  },
+  "6:0:53": {
+   "name": "SUOMI FINLAND SUATANA",
+   "seed": 391156,
+   "sockets": 4
+  },
+  "6:0:54": {
+   "name": "Shadow Lantern",
+   "seed": 392671,
+   "sockets": 4
+  },
+  "6:0:55": {
+   "name": "The Event Horizon",
+   "seed": 19479348,
+   "sockets": 6
+  },
+  "6:0:56": {
+   "name": "Overgrowth",
+   "seed": 3027712,
+   "sockets": 6
+  },
+  "7:0:0": {
+   "name": "Ra's Band",
+   "seed": 3888156,
+   "sockets": 2
+  },
+  "7:0:2": {
+   "name": "Dragonsteel Ring",
+   "seed": 217462,
+   "sockets": 2
+  },
+  "7:0:9": {
+   "name": "St. Aaron's Eternal Rage",
+   "seed": 315610,
+   "sockets": 2
+  },
+  "7:0:10": {
+   "name": "Elven Grace",
+   "seed": 127,
+   "sockets": 2
+  },
+  "7:0:20": {
+   "name": "Templar's Faith",
+   "seed": 288208,
+   "sockets": 2
+  },
+  "7:0:21": {
+   "name": "Soulforged Ring",
+   "seed": 653635647,
+   "sockets": 1
+  },
+  "7:0:22": {
+   "name": "Signet of Bifr\u00f6st",
+   "seed": 314452,
+   "sockets": 1
+  },
+  "7:0:23": {
+   "name": "Sung Lee's Unleashed Rage",
+   "seed": 420703,
+   "sockets": 2
+  },
+  "7:0:24": {
+   "name": "Apex Striker's Ring",
+   "seed": 351592,
+   "sockets": 2
+  },
+  "7:0:25": {
+   "name": "Swiftsoul Band",
+   "seed": 10,
+   "sockets": 2
+  },
+  "7:0:26": {
+   "name": "Soul Funneling Loop",
+   "seed": 10,
+   "sockets": 2
+  },
+  "7:0:27": {
+   "name": "Colossus Circle of Vitality",
+   "seed": 127,
+   "sockets": 2
+  },
+  "7:0:28": {
+   "name": "Viper's Seal of Corrosion",
+   "seed": 314452,
+   "sockets": 2
+  },
+  "7:0:31": {
+   "name": "Circle of Nature",
+   "seed": 1286214,
+   "sockets": 2
+  },
+  "7:0:32": {
+   "name": "Merlock's Halo",
+   "seed": 273184,
+   "sockets": 2
+  },
+  "7:0:34": {
+   "name": "Solar Prophet's Signet",
+   "seed": 270463,
+   "sockets": 2
+  },
+  "7:0:35": {
+   "name": "Lunar Prophet's Band",
+   "seed": 270478,
+   "sockets": 2
+  },
+  "7:0:37": {
+   "name": "Destroyer\u2019s End",
+   "seed": 26848,
+   "sockets": 2
+  },
+  "7:0:38": {
+   "name": "Signet of Harbringer",
+   "seed": 351817,
+   "sockets": 2
+  },
+  "7:0:39": {
+   "name": "Hellfire Halo",
+   "seed": 351817,
+   "sockets": 2
+  },
+  "7:0:40": {
+   "name": "Signet of Corruption",
+   "seed": 351817,
+   "sockets": 2
+  },
+  "7:0:41": {
+   "name": "Arcanis",
+   "seed": 351817,
+   "sockets": 2
+  },
+  "7:0:42": {
+   "name": "Azazel's Despair",
+   "seed": 4,
+   "sockets": 1
+  },
+  "7:0:44": {
+   "name": "Stormloop",
+   "seed": 351817,
+   "sockets": 2
+  },
+  "7:0:49": {
+   "name": "Dragon's Blessing",
+   "seed": 173107,
+   "sockets": 1
+  },
+  "7:0:56": {
+   "name": "Void Bomba",
+   "seed": 750887,
+   "sockets": 2
+  },
+  "7:0:61": {
+   "name": "Parasite Loop",
+   "seed": 314614,
+   "sockets": 2
+  },
+  "8:0:0": {
+   "name": "Tundra Warrior's Girdle",
+   "seed": 3888156,
+   "sockets": 2
+  },
+  "8:0:3": {
+   "name": "Tribal Belt",
+   "seed": 1254252,
+   "sockets": 2
+  },
+  "8:0:7": {
+   "name": "Heavy Duty",
+   "seed": 1254252,
+   "sockets": 2
+  },
+  "8:0:8": {
+   "name": "Commander's Sash",
+   "seed": 18582172,
+   "sockets": 2
+  },
+  "8:0:10": {
+   "name": "Belt of War",
+   "seed": 589,
+   "sockets": 2
+  },
+  "8:0:11": {
+   "name": "Traveler's Double Belt",
+   "seed": 363367,
+   "sockets": 2
+  },
+  "8:0:17": {
+   "name": "Earth Shaper's Belt",
+   "seed": 10754398,
+   "sockets": 2
+  },
+  "8:0:21": {
+   "name": "Sash of the Magi",
+   "seed": 3888156,
+   "sockets": 2
+  },
+  "8:0:24": {
+   "name": "Tether of Anguish",
+   "seed": 377470,
+   "sockets": 2
+  },
+  "8:0:26": {
+   "name": "Ashen Belt",
+   "seed": 403123,
+   "sockets": 2
+  },
+  "8:0:27": {
+   "name": "Combat Duty Belt",
+   "seed": 2536278,
+   "sockets": 2
+  },
+  "8:0:28": {
+   "name": "Cingulum of Shifting Destiny",
+   "seed": 338131,
+   "sockets": 2
+  },
+  "8:0:29": {
+   "name": "Brute's Cord",
+   "seed": 273184,
+   "sockets": 2
+  },
+  "8:0:31": {
+   "name": "Warbosses' Trophy Belt",
+   "seed": 333994,
+   "sockets": 2
+  },
+  "8:0:32": {
+   "name": "Gaze of the Void",
+   "seed": 750887,
+   "sockets": 2
+  },
+  "8:0:33": {
+   "name": "Pitfighter's Razor Belt",
+   "seed": 289468,
+   "sockets": 2
+  },
+  "8:0:36": {
+   "name": "USB's Cord",
+   "seed": 4,
+   "sockets": 2
+  },
+  "8:0:44": {
+   "name": "Majorie's Belt",
+   "seed": 19487361,
+   "sockets": 3
+  },
+  "8:0:52": {
+   "name": "Girdle of Eternal War",
+   "seed": 3018796,
+   "sockets": 2
+  },
+  "8:0:54": {
+   "name": "Sandmagi's Sash",
+   "seed": 338131,
+   "sockets": 2
+  },
+  "10:0:11": {
+   "name": "Satan's Chalice",
+   "seed": 390724,
+   "sockets": 0
+  },
+  "10:0:23": {
+   "name": "Torch of Shadows",
+   "seed": 3802,
+   "sockets": 0
+  },
+  "10:0:35": {
+   "name": "Cold Giant's Charm",
+   "seed": 351817,
+   "sockets": 0
+  },
+  "10:0:42": {
+   "name": "Adventurer's Quiver",
+   "seed": 314488,
+   "sockets": 0
+  },
+  "10:0:48": {
+   "name": "Earth Melon",
+   "seed": 405250,
+   "sockets": 0
+  },
+  "10:0:54": {
+   "name": "Rotten Pumpkin",
+   "seed": 405250,
+   "sockets": 0
+  },
+  "10:0:58": {
+   "name": "Abomination's Heart",
+   "seed": 288220,
+   "sockets": 0
+  },
+  "10:0:61": {
+   "name": "Plague Shot",
+   "seed": 302641,
+   "sockets": 0
+  },
+  "10:0:70": {
+   "name": "Chaos Gemstone",
+   "seed": 145627,
+   "sockets": 0
+  },
+  "10:0:81": {
+   "name": "Dragon's Heart",
+   "seed": 172696,
+   "sockets": 1
+  },
+  "10:0:91": {
+   "name": "Soul Collector",
+   "seed": 215743,
+   "sockets": 0
+  },
+  "10:0:101": {
+   "name": "Parasitic Heart",
+   "seed": 397411,
+   "sockets": 0
+  },
+  "10:0:102": {
+   "name": "Ghost Armada",
+   "seed": 26848,
+   "sockets": 0
+  },
+  "10:0:103": {
+   "name": "Jar of Parasites",
+   "seed": 418306,
+   "sockets": 0
+  }
+ },
+ "runewordBlocked": {
+  "65": [
+   "3:4:0",
+   "3:4:1",
+   "3:4:2",
+   "3:4:3",
+   "3:4:4",
+   "3:4:5",
+   "3:4:6",
+   "3:4:7",
+   "3:4:8",
+   "3:4:9",
+   "3:6:5",
+   "3:6:6",
+   "3:6:7",
+   "3:6:8",
+   "3:6:9",
+   "3:7:1",
+   "3:7:3",
+   "3:7:5",
+   "3:7:8",
+   "3:7:11"
+  ],
+  "67": [
+   "3:1:2",
+   "3:1:5",
+   "3:1:8",
+   "3:1:9",
+   "3:1:12",
+   "3:1:13",
+   "3:1:16",
+   "3:1:17"
+  ]
+ }
+}

@@ -23,6 +23,10 @@ class SocketEditorTests(unittest.TestCase):
         editor.SAVES = self.saves
         self.game_patch = patch.object(editor, "game_running", return_value=False)
         self.game_patch.start()
+        # Generation reads the local Custom Forge store (a forged item's seed is
+        # skipped); keep it on the test's own empty folder, never the user's.
+        self.root_patch = patch.object(editor, "ROOT", self.saves)
+        self.root_patch.start()
 
         self.key = "0-0-1234567890123-3"
         self.data = {
@@ -42,6 +46,7 @@ class SocketEditorTests(unittest.TestCase):
         self.target = {"type": "stash", "tab": "unique_items"}
 
     def tearDown(self):
+        self.root_patch.stop()
         self.game_patch.stop()
         editor.SAVES = self.old_saves
         self.temp.cleanup()
@@ -78,6 +83,10 @@ class SocketEditorTests(unittest.TestCase):
         self.assertEqual(data["zz"], {"sockets": 4.0})
 
     def test_every_measured_socket_seed_is_used_for_generation(self):
+        # The game-built table (hs_game_seeds.json) decides the seed and the
+        # count: the socket table's seed where the game gives it enough
+        # sockets, a searched seed where it did not, and always the count the
+        # game really gives (a unique never reads zz.sockets).
         checked = 0
         for row in editor.CAT:
             profile = row.get("rollProfile")
@@ -86,16 +95,14 @@ class SocketEditorTests(unittest.TestCase):
                 continue
             with self.subTest(address=profile["addressKey"], name=row["name"]):
                 data = editor.make_data(row)
-                self.assertEqual(data["a"], float(socket_roll["seed"]))
+                game = editor.unique_seed_entry(row)
+                self.assertIsNotNone(game)
+                self.assertEqual(data["a"], float(game["seed"]))
                 self.assertEqual(data["c"], 1.0)
-                self.assertEqual(
-                    data["zz"],
-                    {"sockets": float(socket_roll["maxSockets"])},
-                )
-                self.assertEqual(
-                    editor.roll_profile_max_sockets(profile),
-                    socket_roll["maxSockets"],
-                )
+                self.assertEqual(data["zz"], {"sockets": float(game["sockets"])})
+                self.assertEqual(editor.roll_profile_max_sockets(profile), game["sockets"])
+                if "previous" not in game:
+                    self.assertEqual(game["seed"], socket_roll["seed"])
                 previous = socket_roll["previous"]
                 self.assertGreaterEqual(socket_roll["maxed"], previous["maxed"])
                 self.assertLessEqual(
@@ -117,8 +124,10 @@ class SocketEditorTests(unittest.TestCase):
         self.assertEqual(data["zz"], {"sockets": 3.0})
 
     def test_measured_capacity_overrides_stale_profile_and_catalog_limits(self):
+        # The game's counts (hs_game_seeds.json): Zephy's Gown's seed rolls 3,
+        # not the 4 the older build's socket table claimed.
         cases = (
-            ("armors_zephys_gown", 4),
+            ("armors_zephys_gown", 3),
             ("rings_parasite_loop", 2),
         )
         for key, expected in cases:

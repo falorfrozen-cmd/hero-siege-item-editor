@@ -57,6 +57,9 @@ AFFIX_SLOT_KEYS = ("10", "11", "12", "13", "14")
 HIDDEN_STAT_KEYS = frozenset({447})
 # Definition fields that say where an item sits or are the editor's own: the
 # equipment slot, the grid flag the editor writes for gear, the editor sidecar.
+# One part of zz is not: a non-unique item (c 0) shows the larger of zz.sockets
+# and its seed's socket count (measured 2026-09-26, GAME_TRUTH_DESIGN.md step 4),
+# so identity_fields keeps that count for such an item.
 PLACEMENT_FIELDS = frozenset({"g", "w", "zz", "pos"})
 # Fields the Vault's AFK ingest writes as 1 where the game's definition leaves
 # them out (a single item): absent and 1 mean the same thing.
@@ -224,6 +227,12 @@ def identity_fields(definition: Mapping[str, Any], ignore: Iterable[str] = ()) -
     for key in DEFAULT_ONE_FIELDS:
         if out.get(key) == 1:
             out.pop(key)
+    zz = definition.get("zz")
+    sockets = zz.get("sockets") if isinstance(zz, Mapping) else None
+    unique = _is_number(definition.get("c")) and float(definition["c"]) == 1.0
+    if "zz" not in frozenset(ignore) and not unique and _is_number(sockets) and float(sockets) > 0:
+        # a unique never reads it, and 0 builds like no zz at all
+        out["zz.sockets"] = _norm(sockets)
     return out
 
 

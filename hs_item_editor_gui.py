@@ -206,7 +206,7 @@ def _resource_base() -> Path:
 BASE = _resource_base()
 CATALOG_FILE = BASE / "hs_full_catalog.json"
 PORT = 8765
-APP_VERSION = "2.16.2-s10"
+APP_VERSION = "2.16.3-s10"
 APPLICATION_ID = "hero-siege-item-editor"
 CATALOG_PROFILE = "Season 10"
 MAX_POST_BYTES = 2 * 1024 * 1024
@@ -1207,7 +1207,8 @@ def runeword_api_rows() -> list[dict]:
             continue
         for base in candidates:
             profile = runeword_profile(recipe, base)
-            available = profile is not None and blocker is None
+            game_blocked = runeword_blocked_on(recipe, base)
+            available = profile is not None and blocker is None and not game_blocked
             bases.append({
                 "cid": int(base["id"]),
                 "cls": int(base["cls"]),
@@ -1223,7 +1224,9 @@ def runeword_api_rows() -> list[dict]:
                 "disabled": not available,
                 "unavailableReason": (
                     None if available else (
-                        blocker or runeword_profile_unavailable_reason()
+                        blocker
+                        or ("the game does not form this runeword on this base (measured)"
+                            if game_blocked else runeword_profile_unavailable_reason())
                     )
                 ),
             })
@@ -1305,6 +1308,9 @@ def item_socket_limit(item: object) -> int:
     profile = item.get("rollProfile")
     verified = roll_profile_max_sockets(profile)
     if verified is not None:
+        address = _profile_address(profile)
+        if address is not None and not address[0] and address[1]["kind"] == "normal":
+            return max(verified, _declared_socket_count(item.get("raw") or {}))
         return verified
     catalog_id = item.get("cid")
     if (
@@ -2781,13 +2787,74 @@ def socket_seed_for_profile(profile: dict | None) -> int | None:
 
 
 def effective_roll_field_seeds(profile: dict | None) -> dict[str, float]:
-    """Overlay a measured max-socket ``a`` seed on the canonical roll fields."""
+    """Overlay a measured max-socket ``a`` seed on the canonical roll fields.
+
+    A game-built seed (``hs_game_seeds.json``) wins over both: for a white base
+    or a runeword's base the best free Common seed, for a covered unique the
+    seed whose socket count the game confirmed. A runeword keeps its profile's
+    ``i``, the chain its overlay stats come from.
+    """
 
     seeds = roll_profile_field_seeds(profile)
     socket_seed = socket_seed_for_profile(profile)
     if socket_seed is not None:
         seeds["a"] = float(socket_seed)
+    game_seed = game_seed_for_profile(profile)
+    if game_seed is not None:
+        seeds["a"] = float(game_seed["seed"])
     return seeds
+
+
+_PROFILE_ADDRESS_RE = re.compile(
+    r"(runeword:(?:0|[1-9][0-9]*)\|)?(normal|unique):"
+    r"(0|[1-9][0-9]*):(0|[1-9][0-9]*):(0|[1-9][0-9]*)"
+)
+
+
+def _profile_address(profile: dict | None) -> tuple[bool, dict] | None:
+    """(is a runeword, the catalog-shaped address) of a profile, or None."""
+
+    if not isinstance(profile, dict) or not isinstance(profile.get("addressKey"), str):
+        return None
+    match = _PROFILE_ADDRESS_RE.fullmatch(profile["addressKey"])
+    if match is None:
+        return None
+    runeword, kind, cls, sub, base = match.groups()
+    return bool(runeword), {"kind": kind, "cls": int(cls), "sub": int(sub), "b": int(base)}
+
+
+def game_seed_for_profile(profile: dict | None) -> dict | None:
+    """The game-built seed for a profile's address, if the table covers it.
+
+    A white base's and a runeword base's is the base's best free Common seed; a
+    unique's the table's unique entry, with the socket count the game gives it.
+    """
+
+    address = _profile_address(profile)
+    if address is None:
+        return None
+    _runeword, row = address
+    if row["kind"] == "normal":
+        return white_seed_choice(row)
+    entry = unique_seed_entry(row)
+    return dict(entry) if entry is not None else None
+
+
+def _game_seed_scored(profile: dict | None, game: dict | None) -> bool:
+    """Whether the table's own stat score describes this profile's seed: a white
+    base, or a unique the table gave a searched seed (not the CPR-solved one)."""
+
+    address = _profile_address(profile)
+    return (
+        game is not None
+        and address is not None
+        and not address[0]
+        and "total" in game
+    )
+
+
+def _joined(*parts: object) -> str:
+    return "; ".join(str(part) for part in parts if part)
 
 
 def effective_roll_mode(profile: dict | None) -> str | None:
@@ -2795,6 +2862,16 @@ def effective_roll_mode(profile: dict | None) -> str | None:
 
     if not isinstance(profile, dict):
         return None
+    if isinstance(profile.get("gameSeed"), dict):
+        return profile.get("mode")   # already effective
+    game = game_seed_for_profile(profile)
+    if _game_seed_scored(profile, game):
+        if game["total"] == 0:
+            return profile.get("mode")
+        exact = game["maxed"] == game["total"] and game["deficit"] == 0
+        if _profile_address(profile)[1]["kind"] == "unique":
+            return "exact" if profile.get("mode") == "exact" and exact else "best"
+        return "exact" if exact else "best"
     entry = socket_roll_for_profile(profile)
     if entry is None:
         return profile.get("mode")
@@ -2814,7 +2891,30 @@ def effective_roll_detail(profile: dict | None) -> str:
 
     if not isinstance(profile, dict):
         return ""
+    if isinstance(profile.get("gameSeed"), dict):
+        return str(profile.get("detail") or "")   # already effective
+    game = game_seed_for_profile(profile)
+    address = _profile_address(profile)
     entry = socket_roll_for_profile(profile)
+    if game is not None and address is not None:
+        runeword, row = address
+        if runeword:
+            return _joined(profile.get("detail"), "base Common, game-verified")
+        if row["kind"] == "normal":
+            return _joined(game_seed_quality(game), "Common, game-verified")
+        if "total" in game:
+            return _joined(game_seed_quality(game), f"{game['sockets']} sockets, game-verified")
+        if entry is None:
+            return _joined(profile.get("detail"), f"{game['sockets']} sockets, game-verified")
+        sockets = (
+            f"{entry['maxSockets']} sockets MAX"
+            if game["sockets"] >= entry["maxSockets"]
+            else f"{game['sockets']} sockets, game-verified"
+        )
+        detail = f"{entry['maxed']}/{entry['total']} current-build a-chain stats MAX; {sockets}"
+        if entry["endpointDeficit"]:
+            detail += f"; verified endpoint deficit {entry['endpointDeficit']}"
+        return detail
     if entry is None:
         return str(profile.get("detail") or "")
     detail = (
@@ -2827,12 +2927,23 @@ def effective_roll_detail(profile: dict | None) -> str:
 
 
 def effective_roll_label(profile: dict | None) -> str:
-    """Return an honest user-facing label for the combined roll evidence."""
+    """Return an honest user-facing label for the combined roll evidence.
 
+    MAX SOCKETS is claimed only while the game gives the item that count.
+    """
+
+    if isinstance(profile, dict) and isinstance(profile.get("gameSeed"), dict) and profile.get("rollLabel"):
+        return str(profile["rollLabel"])
     mode = effective_roll_mode(profile)
     if mode == "exact":
         return "EXACT MAX"
-    if socket_roll_for_profile(profile) is not None:
+    game = game_seed_for_profile(profile)
+    entry = socket_roll_for_profile(profile)
+    if _game_seed_scored(profile, game):
+        return "BEST VERIFIED"
+    if game is not None and entry is not None and not _profile_address(profile)[0]:
+        return "BEST VERIFIED + MAX SOCKETS" if game["sockets"] >= entry["maxSockets"] else "BEST VERIFIED"
+    if entry is not None:
         return "BEST VERIFIED + MAX SOCKETS"
     return "BEST POSSIBLE"
 
@@ -2843,25 +2954,41 @@ def effective_roll_profile(profile: dict | None) -> dict | None:
     if not isinstance(profile, dict):
         return None
     output = copy.deepcopy(profile)
+    if isinstance(profile.get("gameSeed"), dict):
+        return output   # already effective
+    game = game_seed_for_profile(profile)
     entry = socket_roll_for_profile(profile)
-    if entry is None:
+    if game is None and entry is None:
         return output
     output.update({
         "fieldSeeds": effective_roll_field_seeds(profile),
         "mode": effective_roll_mode(profile),
         "rollLabel": effective_roll_label(profile),
         "detail": effective_roll_detail(profile),
-        "maxSockets": entry["maxSockets"],
-        "maxed": entry["maxed"],
-        "total": entry["total"],
-        "endpointDeficit": entry["endpointDeficit"],
-        "socketRoll": {
-            "verified": True,
-            "seed": entry["seed"],
-            "maxSockets": entry["maxSockets"],
-            "searchedThrough": entry.get("searchedThrough"),
-        },
     })
+    max_sockets = roll_profile_max_sockets(profile)
+    if max_sockets is not None:
+        output["maxSockets"] = max_sockets
+    if entry is not None and not _game_seed_scored(profile, game):
+        output.update({
+            "maxed": entry["maxed"],
+            "total": entry["total"],
+            "endpointDeficit": entry["endpointDeficit"],
+            "socketRoll": {
+                "verified": True,
+                "seed": entry["seed"],
+                "maxSockets": max_sockets if max_sockets is not None else entry["maxSockets"],
+                "searchedThrough": entry.get("searchedThrough"),
+            },
+        })
+    if game is not None:
+        output["gameSeed"] = {
+            "verified": True,
+            "build": _load_game_seed_document()["build"],
+            "seed": int(game["seed"]),
+        }
+        if "sockets" in game:
+            output["gameSeed"]["sockets"] = int(game["sockets"])
     return output
 
 
@@ -2882,11 +3009,237 @@ def catalog_api_rows() -> list[dict]:
 _load_socket_seed_document()
 
 
+# Seeds the game itself built (hs_game_seeds.json). The roll profiles and the
+# socket table above were solved offline with the CPR model, which predicts the
+# stat draws and the socket draw but not rarity. Built by the 2026-09-16 game,
+# 160 of the 363 white equipment bases they produced came out Superior or
+# better, and a runeword forms only on a Common base. This table holds what the
+# running game built through its own save loader (ForgePact Item Truth
+# evaluation requests): per white equipment base, seeds that come out Common and
+# roll no socket, best CPR stat score first, and the most sockets the game
+# rolled for the base; per unique the editor claims sockets on, the seed to use
+# and the socket count the game gives it.
+#
+# How the game counts sockets (measured the same way): a non-unique item (c 0)
+# shows the larger of zz.sockets and the count its seed rolls, so on a table
+# seed zz.sockets is the count; a unique (c 1) shows its seed's count and never
+# reads zz.sockets; filled socket payloads never add a socket.
+_GAME_SEED_DOCUMENT: dict | None = None
+_GAME_SEED_ADDRESS_RE = re.compile(r"(?:0|[1-9][0-9]*):(?:0|[1-9][0-9]*):(?:0|[1-9][0-9]*)")
+
+
+def _game_seed_int(value: object, low: int, high: int) -> bool:
+    return (
+        not isinstance(value, bool)
+        and isinstance(value, int)
+        and low <= value <= high
+    )
+
+
+def _load_game_seed_document() -> dict:
+    """Load and validate the game-built seed table; fail closed like the socket table.
+
+    A missing or damaged table must stop the editor: falling back to the old
+    profile seeds would silently create Rare "white" bases again.
+    """
+
+    global _GAME_SEED_DOCUMENT
+    if _GAME_SEED_DOCUMENT is not None:
+        return _GAME_SEED_DOCUMENT
+    path = BASE / "hs_game_seeds.json"
+    try:
+        document = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, UnicodeError, json.JSONDecodeError) as exc:
+        raise RuntimeError(f"game seed table unavailable: {exc}") from exc
+    if not isinstance(document, dict) or document.get("schemaVersion") != 1:
+        raise RuntimeError("game seed table has an unsupported schema")
+    build = document.get("build")
+    if not isinstance(build, str) or not build.startswith("pe-"):
+        raise RuntimeError("game seed table names no game build")
+    white, unique = document.get("white"), document.get("unique")
+    if not isinstance(white, dict) or not white or not isinstance(unique, dict):
+        raise RuntimeError("game seed table is incomplete")
+    for address, entry in white.items():
+        label = f"white seed entry {address!r}"
+        if (
+            not isinstance(address, str)
+            or _GAME_SEED_ADDRESS_RE.fullmatch(address) is None
+            or not isinstance(entry, dict)
+        ):
+            raise RuntimeError(f"{label} is malformed")
+        choices = entry.get("seeds")
+        if not isinstance(choices, list) or not choices:
+            raise RuntimeError(f"{label} has no Common seed")
+        for choice in choices:
+            if (
+                not isinstance(choice, dict)
+                or not _game_seed_int(choice.get("seed"), SEED_MIN, SEED_MAX)
+                or not _game_seed_int(choice.get("total"), 0, 64)
+                or not _game_seed_int(choice.get("maxed"), 0, choice["total"])
+                or not _game_seed_int(choice.get("deficit"), 0, 10 ** 9)
+            ):
+                raise RuntimeError(f"{label} has an invalid seed choice")
+        if not _game_seed_int(entry.get("maxSockets"), 0, 6):
+            raise RuntimeError(f"{label} has an invalid socket maximum")
+    for address, entry in unique.items():
+        if (
+            not isinstance(address, str)
+            or _GAME_SEED_ADDRESS_RE.fullmatch(address) is None
+            or not isinstance(entry, dict)
+            or not _game_seed_int(entry.get("seed"), SEED_MIN, SEED_MAX)
+            or not _game_seed_int(entry.get("sockets"), 0, 6)
+        ):
+            raise RuntimeError(f"unique seed entry {address!r} is malformed")
+    blocked = document.get("runewordBlocked", {})
+    if not isinstance(blocked, dict) or any(
+        not isinstance(runeword, str)
+        or re.fullmatch(r"0|[1-9][0-9]*", runeword) is None
+        or not isinstance(addresses, list)
+        or any(
+            not isinstance(address, str) or _GAME_SEED_ADDRESS_RE.fullmatch(address) is None
+            for address in addresses
+        )
+        for runeword, addresses in blocked.items()
+    ):
+        raise RuntimeError("game seed table has a malformed runeword block list")
+    _GAME_SEED_DOCUMENT = document
+    return document
+
+
+# Same fail-closed rule as the socket table: a release without the game-built
+# seeds must not start and quietly hand out the old Rare-rolling seeds.
+_load_game_seed_document()
+
+
+def game_seed_address(row: object) -> str | None:
+    """The table key of a catalog row or a resolved item: ``cls:sub:b``."""
+
+    if not isinstance(row, dict):
+        return None
+    try:
+        cls = int(row["cls"])
+        sub = int(row.get("sub", 0)) if cls == 3 else 0
+        return f"{cls}:{sub}:{int(row['b'])}"
+    except (KeyError, TypeError, ValueError):
+        return None
+
+
+def white_seed_entry(row: object) -> dict | None:
+    """The game-built Common seeds of one white equipment base, if the table has it."""
+
+    if not isinstance(row, dict) or row.get("kind") != "normal":
+        return None
+    address = game_seed_address(row)
+    entry = _load_game_seed_document()["white"].get(address) if address else None
+    return entry if isinstance(entry, dict) else None
+
+
+def white_base_socket_limit(row: object) -> int | None:
+    """The most sockets the game rolled for this white base: the socket editor's limit."""
+
+    entry = white_seed_entry(row)
+    return int(entry["maxSockets"]) if entry else None
+
+
+def _custom_forge_claims(cls: int, data: dict) -> bool:
+    """Whether the local Custom Forge dresses items with this exact definition.
+
+    Custom Forge recognises an item by its type and a/b/c/j, so a seed that a
+    forged item already uses would turn every new item on that base into the
+    forged one (a white Great Helm became the owner's Miner's Helmet).
+    """
+
+    try:
+        return custom_forge_store().get(custom_forge_item_selector(cls, data)) is not None
+    except Exception:
+        return False
+
+
+def white_seed_choice(row: object, *, avoid: object = ()) -> dict | None:
+    """The best game-built Common seed for this base that nothing else owns.
+
+    Every table seed rolls no socket, so the item shows exactly the zz.sockets
+    count the editor writes.
+    """
+
+    entry = white_seed_entry(row)
+    if entry is None:
+        return None
+    cls = int(row["cls"])
+    identity = {
+        "b": float(row["b"]),
+        "c": 0.0,
+        "j": float(int(row.get("sub", 0)) if cls == 3 else 0),
+    }
+    avoided = {float(seed) for seed in avoid}
+    for choice in entry["seeds"]:
+        seed = float(choice["seed"])
+        if seed in avoided or _custom_forge_claims(cls, dict(identity, a=seed)):
+            continue
+        return dict(choice)
+    return None
+
+
+def is_white_table_seed(row: object, seed: object) -> bool:
+    """Whether ``seed`` is one of the table's game-built Common seeds for this base."""
+
+    entry = white_seed_entry(row)
+    if entry is None or isinstance(seed, bool) or not isinstance(seed, (int, float)):
+        return False
+    return any(float(choice["seed"]) == float(seed) for choice in entry["seeds"])
+
+
+def runeword_blocked_on(recipe: dict, base: dict) -> bool:
+    """Whether the game was measured not to form this runeword on this base.
+
+    Built on a Common base with the right socket count, the recipe still did
+    not form (Disaster and Celestus on some of the bases their target names).
+    """
+
+    try:
+        blocked = _load_game_seed_document().get("runewordBlocked", {})
+        return game_seed_address(base) in blocked.get(str(int(recipe["rw"])), ())
+    except (KeyError, TypeError, ValueError):
+        return False
+
+
+def unique_seed_entry(row: object) -> dict | None:
+    """The seed and the game's socket count for a unique the editor claims sockets on."""
+
+    if not isinstance(row, dict) or row.get("kind") != "unique":
+        return None
+    address = game_seed_address(row)
+    entry = _load_game_seed_document()["unique"].get(address) if address else None
+    return entry if isinstance(entry, dict) else None
+
+
+def game_seed_quality(choice: dict) -> str:
+    """How close a table seed's stat draws are to the top, in the roll profiles' terms."""
+
+    if choice.get("total", 0) == 0:
+        return "no variable stats"
+    text = f"{choice['maxed']}/{choice['total']} variable stats MAX"
+    if choice.get("deficit"):
+        text += f"; deficit {choice['deficit']}"
+    return text
+
+
 def roll_profile_max_sockets(profile: dict | None) -> int | None:
     """Return the measured capacity, falling back to the canonical profile."""
 
     if not isinstance(profile, dict):
         return None
+    address = _profile_address(profile)
+    if address is not None and not address[0]:
+        _runeword, row = address
+        if row["kind"] == "unique":
+            entry = unique_seed_entry(row)
+            if entry is not None:
+                return int(entry["sockets"])
+        else:
+            limit = white_base_socket_limit(row)
+            if limit is not None:
+                return limit
     entry = socket_roll_for_profile(profile)
     if entry is not None:
         return int(entry["maxSockets"])
@@ -2929,6 +3282,18 @@ def preferred_runeword_seeds(
     seeds = {field: random_item_seed() for field in ("a", "i")}
     verified = roll_profile_field_seeds(profile)
     seeds.update({field: verified[field] for field in ("a", "i") if field in verified})
+    # A runeword forms only on a Common base: its `a` is the base's best free
+    # game-built Common seed, which rolls no socket, so zz.sockets (the rune
+    # count) is the count the game gives it.
+    base_row = dict(base, kind="normal")
+    if white_seed_entry(base_row) is not None:
+        white = white_seed_choice(base_row)
+        if white is None:
+            raise ValueError(
+                f"{base.get('name', 'Base')}: every game-verified Common seed for this "
+                "base is taken by a Custom Forge item"
+            )
+        seeds["a"] = float(white["seed"])
     return seeds
 
 
@@ -2986,7 +3351,17 @@ def make_data(r: dict, equipped_g=None, skill_id: object = None) -> dict:
     c = 1.0 if r["kind"] == "unique" else 0.0
     j = float(r["sub"] if r["cls"] == 3 else 0)
     profile = generation_roll_profile_for_request(r, skill_id)
+    white = None
+    if skill_id is None and white_seed_entry(r) is not None:
+        white = white_seed_choice(r)
+        if white is None:
+            raise ValueError(
+                f"{r.get('name', 'Item')}: every game-verified Common seed for this "
+                "base is taken by a Custom Forge item"
+            )
     verified_seeds = effective_roll_field_seeds(profile)
+    if white is not None:
+        verified_seeds["a"] = float(white["seed"])
     item_seed = (
         item_seed_for_generation(r, skill_id)
         if skill_id is not None
@@ -3000,11 +3375,12 @@ def make_data(r: dict, equipped_g=None, skill_id: object = None) -> dict:
     if r.get("cls") in (12, 13, 14, 15):
         # Native S10 drops use the compact a/b/c/j/o shape in dedicated bags.
         return {"a": d["a"], "j": 0.0, "b": d["b"], "c": 0.0, "o": 1.0}
-    max_sockets = roll_profile_max_sockets(profile)
+    # A new white base has no sockets: its seed rolls none and no zz.sockets
+    # is written (the socket editor sets the count). A unique's seed rolls the
+    # count recorded here; the game never reads zz.sockets on a unique, so the
+    # value only keeps the editor's own view in line with the game.
+    max_sockets = None if white is not None else roll_profile_max_sockets(profile)
     if max_sockets is not None:
-        # The game rolls capacity from ``a``; this explicit value keeps the
-        # editor's empty-slot count and compatibility metadata aligned with
-        # that measured result. It is not the source of the in-game roll.
         d["zz"] = {"sockets": float(max_sockets)}
     if equipped_g is not None:
         d.update({"g": float(equipped_g), "d": 0.0, "n": 0.0, "e": 0.0})
@@ -6957,6 +7333,161 @@ def _retarget_custom_forge_after_seed_change(
         raise
 
 
+def _white_row_for_item(item: dict) -> dict | None:
+    """The catalog row of a non-unique item whose base the game-built table
+    covers (a runeword's base included), or None."""
+
+    catalog_id = item.get("cid")
+    if isinstance(catalog_id, bool) or not isinstance(catalog_id, int) or not 0 <= catalog_id < len(CAT):
+        return None
+    try:
+        if int(item["raw"].get("c", 0)) != 0:
+            return None
+    except (KeyError, TypeError, ValueError, AttributeError):
+        return None
+    row = CAT[catalog_id]
+    return row if white_seed_entry(row) is not None else None
+
+
+def _meant_to_be_white(item: dict, row: dict) -> bool:
+    """A runeword, or a white base the editor made (a table seed or the base's
+    old profile seed): items whose point is to stay Common."""
+
+    if item.get("isRW"):
+        return True
+    seed = (item.get("raw") or {}).get("a")
+    if is_white_table_seed(row, seed):
+        return True
+    legacy = roll_profile_field_seeds(catalog_roll_profile(row)).get("a")
+    return (
+        legacy is not None
+        and isinstance(seed, (int, float))
+        and not isinstance(seed, bool)
+        and float(seed) == float(legacy)
+    )
+
+
+def _game_socket_count(item: dict) -> int | None:
+    """The socket count the game built this exact item with (Item Truth), if known."""
+
+    try:
+        model = _game_tooltip_model(dict(item))
+    except Exception:
+        return None
+    if not isinstance(model, dict) or (model.get("calculation") or {}).get("coverage") != "game_verified":
+        return None
+    for line in model.get("stats") or ():
+        if isinstance(line, dict) and line.get("statKey") == 20:
+            value = line.get("value")
+            if (
+                isinstance(value, (int, float))
+                and not isinstance(value, bool)
+                and math.isfinite(float(value))
+                and float(value).is_integer()
+                and 0 <= int(value) <= 6
+            ):
+                return int(value)
+            return None
+    return None
+
+
+def rolled_socket_count(item: dict, data: dict) -> int | None:
+    """Sockets the item's seed rolls, when the editor can know it.
+
+    The game shows a unique (c 1) exactly this many and never reads
+    zz.sockets; a non-unique item shows the larger of this and zz.sockets.
+    """
+
+    catalog_id = item.get("cid")
+    row = CAT[catalog_id] if isinstance(catalog_id, int) and not isinstance(catalog_id, bool) and 0 <= catalog_id < len(CAT) else None
+    seed = data.get("a")
+    unique = str(data.get("c", 0)) in ("1", "1.0")
+    if row is not None and not unique and is_white_table_seed(row, seed):
+        return 0
+    if row is not None and unique:
+        entry = unique_seed_entry(row)
+        if (
+            entry is not None
+            and isinstance(seed, (int, float))
+            and not isinstance(seed, bool)
+            and float(seed) == float(entry["seed"])
+        ):
+            return int(entry["sockets"])
+    shown = _game_socket_count(item)
+    if shown is None:
+        return None
+    if unique:
+        return shown
+    # non-unique: the game showed max(zz.sockets, rolled); it names the roll
+    # only when it shows more than zz.sockets asks for
+    return shown if shown > _declared_socket_count(data) else None
+
+
+def _filled_socket_count(data: dict) -> int:
+    return sum(1 for index in range(1, 7) if data.get(f"s{index}"))
+
+
+def _declared_socket_count(data: dict) -> int:
+    zz = data.get("zz")
+    value = zz.get("sockets") if isinstance(zz, dict) else None
+    if (
+        isinstance(value, bool)
+        or not isinstance(value, (int, float))
+        or not math.isfinite(float(value))
+        or not float(value).is_integer()
+    ):
+        return 0
+    return max(0, min(6, int(value)))
+
+
+def _white_base_seed_action(action: str, it: dict, entry: dict, ctx, row: dict) -> dict:
+    """Reroll / Perfect for a white base or a runeword: game-built Common seeds only.
+
+    Any other seed may roll Superior or better: then the base is not white and
+    a runeword on it does not form. Every table seed rolls no socket, so the
+    item keeps the count its zz.sockets gives it.
+    """
+
+    data = entry.setdefault("data", {})
+    current = data.get("a")
+    if action == "perfect":
+        choice = white_seed_choice(row)
+    else:
+        seeds = [choice["seed"] for choice in white_seed_entry(row)["seeds"]]
+        others = []
+        for seed in seeds:
+            if isinstance(current, (int, float)) and not isinstance(current, bool) and float(seed) == float(current):
+                continue
+            choice = white_seed_choice(row, avoid=[s for s in seeds if s != seed])
+            if choice is not None:
+                others.append(choice)
+        choice = random.choice(others) if others else None
+    if choice is None:
+        if action == "reroll":
+            return {"err": (f"{it['name']}: no other game-verified Common seed for this "
+                            "base; item unchanged")}
+        return {"err": (f"{it['name']}: every game-verified Common seed for this base is "
+                        "taken by a Custom Forge item; item unchanged")}
+    if action == "perfect" and isinstance(current, (int, float)) and not isinstance(current, bool) \
+            and float(current) == float(choice["seed"]):
+        return {"ok": (f"{it['name']}: already the best game-verified Common roll "
+                       f"({game_seed_quality(choice)})"), "backup": ""}
+    old_data = dict(data)
+    data["a"] = float(choice["seed"])
+    if action == "reroll":
+        for field in ("i", "s"):
+            if field in data:
+                data[field] = random_item_seed()
+    baks = ctx.save_all()
+    forge_backup = _retarget_custom_forge_after_seed_change(it, old_data, data)
+    if forge_backup:
+        baks.append(forge_backup)
+    verb = ("best game-verified Common roll applied" if action == "perfect"
+            else "rerolled to another game-verified Common seed")
+    return {"ok": (f"{it['name']}: {verb} ({game_seed_quality(choice)}; "
+                   f"a={choice['seed']})"), "backup": ", ".join(baks)}
+
+
 def op_modify(body: dict) -> dict:
     """Validated operations on one existing item."""
     if game_running():
@@ -7030,6 +7561,16 @@ def op_modify(body: dict) -> dict:
             "ok": f"{it['name']}: {changed_label}",
             "backup": ", ".join(baks),
         }
+    white_row = _white_row_for_item(it)
+    if (
+        white_row is not None
+        and not it.get("skillSelector")
+        and (
+            (action == "perfect" and not it.get("isRW"))
+            or (action == "reroll" and _meant_to_be_white(it, white_row))
+        )
+    ):
+        return _white_base_seed_action(action, it, entry, ctx, white_row)
     if action == "reroll":
         d0 = entry.setdefault("data", {})
         old_data = dict(d0)
@@ -7900,6 +8441,9 @@ def _op_forge(body: dict) -> dict:
         base = next((row for row in candidates if int(row["id"]) == requested_cid), None)
     if base is None:
         return {"err": "selected base is not valid for this runeword"}
+    if runeword_blocked_on(rec, base):
+        return {"err": (f"{rec['name']}: the game does not form this runeword on "
+                        f"{base.get('name', 'this base')} (measured); choose another base")}
     profile = runeword_profile(rec, base)
     if profile is None:
         return {"err": (
@@ -8236,6 +8780,22 @@ def op_sockets(body: dict) -> dict:
         return {
             "err": (
                 f"{it['name']}: maximum {max_sockets} sockets; item unchanged"
+            )
+        }
+    rolled = rolled_socket_count(it, d0)
+    if rolled is not None and str(d0.get("c", 0)) in ("1", "1.0") and len(sockets) != rolled:
+        return {
+            "err": (
+                f"{it['name']}: the game gives this item {rolled} sockets from its "
+                "seed and never reads a saved socket count on a unique; keep "
+                f"{rolled} and fill any of them; item unchanged"
+            )
+        }
+    if rolled is not None and len(sockets) < rolled:
+        return {
+            "err": (
+                f"{it['name']}: its seed gives it {rolled} sockets, so the game "
+                f"shows at least {rolled}; item unchanged"
             )
         }
 
