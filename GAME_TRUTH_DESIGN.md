@@ -266,11 +266,16 @@ definitions through step 2 showed why.
 The editor refuses to start without a valid table, like the socket table: a
 fallback would hand out the Rare-rolling seeds again.
 
-The game keeps every item it evaluates in memory until it closes (about 95 KB
-each; a session that evaluated about 200,000 crashed in `ucrtbase.dll` on
-2026-09-26). `build_game_seed_table.py` therefore evaluates at most 30,000 items
-per game session, keeps what the game built in a work file, and stops with exit
-code 2 until everything is measured: restart Hero Siege and run it again.
+The game keeps none of the items it evaluates, so one run of
+`build_game_seed_table.py` builds the whole table. Measured on 2026-09-26 with
+ForgePact's `tools/itemtruth_memrun.py`: 20,000 evaluations at the main menu moved
+the game's private memory by about 10 MB, and it stayed flat afterwards
+(ForgePact `docs/item-truth-memory-research.md`). The WER report after about
+200,000 evaluations in one session was HS-Offline-Tracker's producer aborting
+while the game exited, not a memory failure. The tool keeps what the game built
+in a work file, so a run that stops early (`--max-per-run`, or the game closing)
+carries on where it left off, and it stops with exit code 2 until everything is
+measured.
 
 ### How the editor uses it
 

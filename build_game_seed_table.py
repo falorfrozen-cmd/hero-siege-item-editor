@@ -7,11 +7,12 @@ evaluation request the game builds in memory through its own save loader.
 
     python build_game_seed_table.py [--out hs_game_seeds.json]
 
-The game keeps every item it evaluates in memory until it closes (about 95 KB
-each; a session that evaluated about 200,000 crashed on 2026-09-26), so one run
-evaluates at most --max-per-run items and keeps what the game built in a work
-file. Until everything is measured it stops with exit code 2: restart Hero Siege
-and run it again. About four runs build a table.
+One run builds the whole table: the game keeps none of the items it evaluates
+(measured 2026-09-26 with ForgePact's tools/itemtruth_memrun.py: 20,000 at the
+main menu moved its memory by about 10 MB, and it stayed there). What the game
+built goes into a work file, so a run that stops early - at --max-per-run, or
+because the game closed - carries on where it left off when it is run again.
+Until everything is measured it stops with exit code 2.
 
 What it measures (GAME_TRUTH_DESIGN.md, step 4):
 
@@ -158,10 +159,16 @@ class Work:
         return self.state["records"][ts]
 
 
-def measure(work: Work, root: Path, items: list, budget: int) -> int:
-    """Have the game build up to ``budget`` of ``items``; returns how many it built."""
+def spend(budget: int | None, used: int) -> int | None:
+    """What is left of --max-per-run after a phase built ``used`` items (None: no limit)."""
+    return None if budget is None else budget - used
 
-    batch = items[:budget]
+
+def measure(work: Work, root: Path, items: list, budget: int | None) -> int:
+    """Have the game build ``items``, at most ``budget`` of them (None: all);
+    returns how many it built."""
+
+    batch = items if budget is None else items[:max(budget, 0)]
     if not batch:
         return 0
     requests = []
@@ -211,8 +218,8 @@ def main() -> int:
     parser.add_argument("--root", type=Path,
                         default=Path(os.environ.get("LOCALAPPDATA", "")) / "Hero_Siege" / "itemtruth")
     parser.add_argument("--work", type=Path, default=Path(tempfile.gettempdir()) / "hs_game_seed_table" / "work.json")
-    parser.add_argument("--max-per-run", type=int, default=30_000,
-                        help="items one game session evaluates (the game keeps them in memory)")
+    parser.add_argument("--max-per-run", type=int, default=0,
+                        help="stop after this many items (0, the default: no limit - the game keeps none of them)")
     parser.add_argument("--white-candidates", type=int, default=100)
     parser.add_argument("--unique-candidates", type=int, default=200)
     parser.add_argument("--natural-samples", type=int, default=150)
@@ -225,7 +232,7 @@ def main() -> int:
 
     editor = _load_editor()
     work = Work(args.work)
-    budget = args.max_per_run
+    budget = args.max_per_run if args.max_per_run > 0 else None
     rng = random.Random(20260926)
 
     def white_data(row: dict, seed: int) -> dict:
@@ -280,7 +287,7 @@ def main() -> int:
             claim = int(claim["maxSockets"]) if claim else int(profile.get("maxSockets") or 0)
             items.append((row["cls"], unique_data(row, seeds["a"]), ["unique", address, row["name"], int(seeds["a"]), claim]))
         work.plan("measure", items)
-    budget -= measure(work, args.root, work.missing("measure"), budget)
+    budget = spend(budget, measure(work, args.root, work.missing("measure"), budget))
     if work.missing("measure"):
         return pause(work)
 
@@ -332,7 +339,7 @@ def main() -> int:
             for seed, maxed, deficit in ranked[bounds]:
                 items.append((row["cls"], unique_data(row, seed), [address, seed, maxed, total, deficit]))
         work.plan("short", items)
-    budget -= measure(work, args.root, work.missing("short"), budget)
+    budget = spend(budget, measure(work, args.root, work.missing("short"), budget))
     if work.missing("short"):
         return pause(work)
     found = collections.defaultdict(list)
@@ -368,7 +375,7 @@ def main() -> int:
                     data[f"s{index}"] = base64.b64encode(payload.encode()).decode()
                 items.append((base["cls"], data, [str(int(recipe["rw"])), recipe["name"], address, len(recipe["runes"])]))
         work.plan("runewords", items)
-    budget -= measure(work, args.root, work.missing("runewords"), budget)
+    budget = spend(budget, measure(work, args.root, work.missing("runewords"), budget))
     if work.missing("runewords"):
         return pause(work)
     blocked = collections.defaultdict(set)
@@ -404,8 +411,8 @@ def main() -> int:
 
 def pause(work: Work) -> int:
     left = sum(len(work.missing(name)) for name in PHASE_TS if work.phase(name) is not None)
-    print(f"{left:,} items still to measure. The game keeps evaluated items in memory: restart Hero Siege, "
-          f"then run this again (the work is kept in {work.path}).", flush=True)
+    print(f"{left:,} items still to measure: run this again, with Hero Siege at the main menu and Game truth on "
+          f"(the work is kept in {work.path}).", flush=True)
     return 2
 
 
