@@ -8,6 +8,21 @@ A local/offline save editor for **Hero Siege** (Pixel Prone Games). Manage items
 
 Single file, no install, no Python needed. Just run it.
 
+## v2.17.0-s10 — AFK FARM's Blacksmith
+
+- **AFK FARM's Blacksmith reforges a Vault item.** Choose a unique piece of
+  equipment in the Vault. The running game builds 1-16 candidates (the same item
+  with new seeds), AFK FARM shows them with the game's own numbers, and the one
+  you choose replaces the item in place.
+- **Only what the game built.** A candidate is written only after the game built
+  it. The Vault is backed up first. Each reforge happens at most once per request,
+  and History undo does not reach past it.
+- Not reforged: items that are not unique (their seed also rolls their rarity),
+  runewords and socketed items (the sockets can change), skill-choosing items and
+  Custom Forge items.
+
+See [the v2.17.0 release notes](RELEASE_NOTES_v2.17.0.md).
+
 ## v2.16.3-s10 — white bases come out white
 
 - **White bases and runeword bases are Common again.** The editor picked their
