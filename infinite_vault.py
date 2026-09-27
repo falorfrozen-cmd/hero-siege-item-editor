@@ -1537,7 +1537,7 @@ class InfiniteVault:
                 undone.add(event_id)
         for row in rows:
             if row["event_type"] in {"category_contents_deleted", "stash_page_deleted", "items_purged", "items_split",
-                                     "items_stacked", "items_dismantled", "afk_items_taken"}:
+                                     "items_stacked", "items_dismantled", "afk_items_taken", "afk_item_reforged"}:
                 # Older layout/move undo may point into storage that was deleted.
                 return None
             if row["event_type"] in reversible and int(row["id"]) not in undone:
@@ -3683,6 +3683,102 @@ class InfiniteVault:
             self._event(connection, self.TAKE_CANCELLED_EVENT,
                         details={**dict(details or {}), "requestId": clean})
             return self._take_event(connection, clean)
+
+        return self._write(operation)
+
+    # AFK FARM's Blacksmith reforges one Vault item: the game builds the candidates
+    # (the same item with new seeds), the player chooses one, and the item's payload is
+    # replaced in place. Like a take, a reforge carries the tool's request id and happens
+    # at most once; a cancelled id can never reforge.
+    REFORGE_EVENT = "afk_item_reforged"
+    REFORGE_CANCELLED_EVENT = "afk_reforge_cancelled"
+
+    def _reforge_event(self, connection: sqlite3.Connection, request_id: str) -> dict[str, Any] | None:
+        needle = '"requestId":' + json.dumps(request_id)
+        row = connection.execute(
+            """SELECT * FROM events WHERE event_type IN (?, ?) AND instr(details_json, ?) > 0
+               ORDER BY id LIMIT 1""",
+            (self.REFORGE_EVENT, self.REFORGE_CANCELLED_EVENT, needle),
+        ).fetchone()
+        return None if row is None else self._event_payload(row)
+
+    def reforge_request(self, request_id: str) -> dict[str, Any] | None:
+        """The reforge or cancellation recorded for ``request_id``, or None."""
+
+        clean = _clean_required_request_id(request_id)
+        return self._read(lambda connection: self._reforge_event(connection, clean))
+
+    def reforge_item(
+        self,
+        request_id: str,
+        item_id: str,
+        raw_json: str,
+        *,
+        preview_token: str,
+        details: Mapping[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        """Replace one item's payload with its reforged form, at most once per ``request_id``.
+
+        In one transaction: an id that was already settled returns its event with
+        ``replayed`` and changes nothing. Otherwise the item must still match
+        ``preview_token`` (``preview_item_rework``); a ``before-afk-item-reforged``
+        copy of the database is written first, the payload is replaced in place
+        (same id, category and grid place) and the ``afk_item_reforged`` event keeps
+        the request id and ``details``. It is an undo barrier.
+        """
+
+        clean = _clean_required_request_id(request_id)
+        clean_item = _clean_id(item_id, "item id")
+        if not isinstance(preview_token, str) or len(preview_token) != 64:
+            raise VaultValidationError("A fresh review is required.")
+        decoded = validate_raw_item_json(raw_json)
+        digest = hashlib.sha256(raw_json.encode("utf-8")).hexdigest()
+
+        def operation(connection: sqlite3.Connection) -> dict[str, Any]:
+            earlier = self._reforge_event(connection, clean)
+            if earlier is not None:
+                return {"replayed": True, "event": earlier}
+            rows, token = self._rework_snapshot(connection, [clean_item])
+            if token != preview_token:
+                raise VaultConflictError("The item changed. Review again.")
+            row = rows[0]
+            _validate_stored_raw_item_integrity(row["raw_json"], row["raw_sha256"])
+            backup_path = self.path.with_name(f"{self.path.name}.before-afk-item-reforged-{uuid.uuid4().hex}.bak")
+            self._backup_existing(backup_path)
+            search_text = _search_document(
+                decoded, (row["source_item_key"], row["label"], row["source"], row["custom_name"])
+            )
+            connection.execute(
+                "UPDATE items SET raw_json=?, raw_sha256=?, search_text=?, updated_at=? WHERE id=?",
+                (raw_json, digest, search_text, _utc_now(), clean_item),
+            )
+            collection = connection.execute(
+                "SELECT name FROM collections WHERE id=?", (row["collection_id"],)
+            ).fetchone()
+            self._event(connection, self.REFORGE_EVENT, item_id=clean_item,
+                        collection_name=None if collection is None else collection[0],
+                        details={**dict(details or {}), "requestId": clean, "backupName": backup_path.name})
+            return {"replayed": False, "event": self._reforge_event(connection, clean)}
+
+        return self._write(operation)
+
+    def cancel_reforge(self, request_id: str, *, details: Mapping[str, Any] | None = None) -> dict[str, Any]:
+        """Make sure ``request_id`` never reforges anything.
+
+        Returns its reforge when it already happened; otherwise records an
+        ``afk_reforge_cancelled`` event under the write lock, so a reforge arriving
+        later with the same id is answered with that cancellation.
+        """
+
+        clean = _clean_required_request_id(request_id)
+
+        def operation(connection: sqlite3.Connection) -> dict[str, Any]:
+            earlier = self._reforge_event(connection, clean)
+            if earlier is not None:
+                return earlier
+            self._event(connection, self.REFORGE_CANCELLED_EVENT,
+                        details={**dict(details or {}), "requestId": clean})
+            return self._reforge_event(connection, clean)
 
         return self._write(operation)
 

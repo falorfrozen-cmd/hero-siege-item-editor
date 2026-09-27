@@ -206,7 +206,7 @@ def _resource_base() -> Path:
 BASE = _resource_base()
 CATALOG_FILE = BASE / "hs_full_catalog.json"
 PORT = 8765
-APP_VERSION = "2.16.3-s10"
+APP_VERSION = "2.17.0-s10"
 APPLICATION_ID = "hero-siege-item-editor"
 CATALOG_PROFILE = "Season 10"
 MAX_POST_BYTES = 2 * 1024 * 1024
@@ -5942,6 +5942,209 @@ def op_vault_afk_take(body: dict) -> dict:
         return {"err": str(exc)}
 
 
+# ---------------------------------------------------------------------------
+# AFK FARM's Blacksmith: reforge a Vault item (``POST /api/vault/afk-reforge``)
+# ---------------------------------------------------------------------------
+AFK_REFORGE_TRIES = (1, 2, 4, 8, 16)
+AFK_REFORGE_SEED_RANGE = (1, 1_000_000_000)      # the editor's own random item seed range
+AFK_REFORGE_LIST_LIMIT = 100
+
+
+def _afk_reforge_tries(value: object) -> int:
+    if isinstance(value, bool) or value not in AFK_REFORGE_TRIES:
+        raise VaultValidationError("tries must be 1, 2, 4, 8 or 16")
+    return int(value)
+
+
+def _afk_reforge_why_not(item: dict, data: dict) -> str | None:
+    """Why a Vault item cannot be reforged (None when it can)."""
+
+    if item.get("stackable") or item.get("cls") not in ROLL_PROFILE_GEAR_CLASSES:
+        return "Only equipment can be reforged."
+    unique = data.get("c")
+    if isinstance(unique, bool) or not isinstance(unique, (int, float)) or float(unique) != 1.0:
+        # The seed of any other item rolls its rarity too (2.16.3): a reforge would re-roll the rarity.
+        return "Only unique equipment can be reforged: the seed of any other item also rolls its rarity."
+    if item.get("rar") == "Runeword" or item.get("rwcid") is not None:
+        return "A runeword keeps its runes in its sockets, and a new seed can change the sockets."
+    if any(data.get(f"s{n}") for n in range(1, 7)):
+        return "Empty its sockets first: a new seed can change how many sockets it has."
+    if item.get("skillSelector"):
+        return "Its seed chooses its skill, so a new seed would change what it is."
+    if item.get("customForge"):
+        return "A Custom Forge item's identity is tied to its seed."
+    seed = data.get("a")
+    if isinstance(seed, bool) or not isinstance(seed, (int, float)) or not math.isfinite(float(seed)):
+        return "It has no seed to reforge."
+    return None
+
+
+def _afk_reforge_parts(record):
+    """(key, value, data, item, why_not) of a Vault record (the skill selector needs the roll profiles)."""
+
+    value = record.decoded_item()
+    data = value.get("data") if isinstance(value.get("data"), dict) else {}
+    key = record.source_item_key or "0-0-0--1"
+    item = _attach_custom_forge(resolve(key, data))
+    return key, value, data, item, _afk_reforge_why_not(item, data)
+
+
+def _afk_reforge_item(store, item_id: object):
+    """(record, key, value, data, item, why_not) of a Vault item."""
+
+    if not isinstance(item_id, str) or not item_id.strip():
+        raise VaultValidationError("Choose a Vault item.")
+    record = store.get_item(item_id.strip())
+    if record.status != "available":
+        raise VaultStateError("That item is on its way somewhere else. Try again later.")
+    return (record, *_afk_reforge_parts(record))
+
+
+def _afk_reforge_seeds(request_id: str, tries: int, old_seed: float) -> list[float]:
+    """The candidates' seeds: drawn from the request id, so asking again gives the same ones."""
+
+    low, high = AFK_REFORGE_SEED_RANGE
+    seeds: list[float] = []
+    counter = 0
+    while len(seeds) < tries:
+        digest = hashlib.sha256(f"afk-reforge|{request_id}|{counter}".encode("utf-8")).digest()
+        counter += 1
+        seed = float(low + int.from_bytes(digest[:8], "big") % (high - low + 1))
+        if seed != float(old_seed) and seed not in seeds:
+            seeds.append(seed)
+    return seeds
+
+
+def _afk_reforge_candidates(request_id: str, tries: int, data: dict) -> list[dict]:
+    return [{**data, "a": seed} for seed in _afk_reforge_seeds(request_id, tries, data["a"])]
+
+
+def _afk_reforge_view(key: str, data: dict) -> dict:
+    """A candidate as the game built it: its name, rarity, level and stat lines."""
+
+    item = resolve(key, data)
+    model = _game_tooltip_model(item)
+    verified = isinstance(model, dict) and (model.get("calculation") or {}).get("coverage") == "game_verified"
+    about = (model.get("item") or {}) if isinstance(model, dict) else {}
+    lines = []
+    for line in (model.get("stats") or []) if verified else []:
+        if isinstance(line, dict) and line.get("label"):
+            value = line.get("formattedValue")
+            lines.append(f"{value} {line['label']}".strip() if value not in (None, "") else str(line["label"]))
+    return {"seed": data.get("a"), "verified": verified, "name": about.get("name") or item.get("name"),
+            "rarity": about.get("rarity") if verified else None, "tier": about.get("tier") if verified else None,
+            "requiredLevel": about.get("requiredLevel") if verified else None, "lines": lines}
+
+
+def _afk_reforge_listing(record, key: str, item: dict, why_not: str | None) -> dict:
+    return {"id": record.id, "name": item.get("name", "Unknown item"), "rar": item.get("rar"),
+            "clsName": item.get("clsName") or CLASS_NAMES.get(item.get("cls"), "Unknown"),
+            "collectionName": record.collection_name, "customName": record.custom_name,
+            "sourceItemKey": key, "itemSha": record.raw_sha256, "eligible": why_not is None, "reason": why_not}
+
+
+def _afk_reforge_reply(event: dict) -> dict:
+    details = event.get("details") or {}
+    cancelled = event.get("eventType") == InfiniteVault.REFORGE_CANCELLED_EVENT
+    reply = {"state": "cancelled" if cancelled else "done", "requestId": details.get("requestId"),
+             "eventId": event.get("id"), "at": event.get("createdAt")}
+    if not cancelled:
+        reply.update(itemId=event.get("itemId") or details.get("itemId"), candidate=details.get("candidate"),
+                     oldSeed=details.get("oldSeed"), newSeed=details.get("newSeed"), name=details.get("name"),
+                     lines=list(details.get("lines") or []), backupName=details.get("backupName"))
+    return reply
+
+
+def op_vault_afk_reforge(body: dict) -> dict:
+    """AFK FARM's Blacksmith (``POST /api/vault/afk-reforge``).
+
+    ``items`` lists Vault equipment (``search``, ``limit``, ``offset``), each with
+    whether it can be reforged. ``offer`` asks the game (ForgePact's Item Truth) to
+    build ``tries`` candidates of ``itemId``: the same item with new seeds drawn from
+    the ``requestId``, so an offer asked again is the same offer. ``status`` shows the
+    candidates as the game built them (``ready`` once all are verified). ``choose``
+    replaces the item with candidate ``index``, only as the game built it, only while
+    the item is as it was (``itemSha``), at most once per ``requestId``. ``cancel``
+    makes sure a request never reforges anything, or reports the reforge it made.
+    An ``err`` reply means nothing was changed; a done reforge never answers with one.
+    """
+
+    try:
+        action = body.get("action")
+        with SAVE_WRITE_LOCK:
+            store = vault_store()
+            if action == "items":
+                search = body.get("search")
+                limit = body.get("limit", 50)
+                offset = body.get("offset", 0)
+                if isinstance(limit, bool) or not isinstance(limit, int) or not 1 <= limit <= AFK_REFORGE_LIST_LIMIT:
+                    raise VaultValidationError(f"limit must be 1-{AFK_REFORGE_LIST_LIMIT}")
+                rows = []
+                for record in store.list_items(search=search if isinstance(search, str) else None, limit=limit,
+                                               offset=offset if isinstance(offset, int) and not isinstance(offset, bool) else 0):
+                    try:
+                        key, _, data, item, why_not = _afk_reforge_parts(record)
+                    except (VaultError, TypeError, ValueError):
+                        continue
+                    if item.get("stackable") or item.get("cls") not in ROLL_PROFILE_GEAR_CLASSES:
+                        continue
+                    rows.append(_afk_reforge_listing(record, key, item, why_not))
+                return {"items": rows}
+            if action not in {"offer", "status", "choose", "cancel"}:
+                raise VaultValidationError("Unknown Blacksmith action.")
+            request_id = _afk_take_request_id(body.get("requestId"))
+            if action == "cancel":
+                event = store.cancel_reforge(request_id, details={"source": "afk-farm"})
+                return {**_afk_reforge_reply(event), "replayed": event["eventType"] == InfiniteVault.REFORGE_EVENT}
+            earlier = store.reforge_request(request_id)
+            if earlier is not None:
+                return {**_afk_reforge_reply(earlier), "replayed": True}
+            tries = _afk_reforge_tries(body.get("tries"))
+            record, key, value, data, item, why_not = _afk_reforge_item(store, body.get("itemId"))
+            if why_not:
+                raise VaultValidationError(why_not)
+            item_sha = body.get("itemSha")
+            if action != "offer" and item_sha != record.raw_sha256:
+                raise VaultConflictError("The item changed since the Blacksmith's offer. Nothing was changed.")
+            candidates = _afk_reforge_candidates(request_id, tries, data)
+            if action == "offer":
+                if not GAME_TRUTH_ACTIVE:
+                    raise VaultValidationError("Game truth is not running in this Item Editor, so the game cannot build the candidates.")
+                capture = game_truth.capture_status(ITEM_TRUTH_DIR)
+                if not capture.get("requested"):
+                    raise VaultValidationError("Game capture is off. Turn it on in the Item Editor first: the game builds the candidates.")
+                missing = [(key, c) for c in candidates if not _afk_reforge_view(key, c)["verified"]]
+                request = None
+                if missing:
+                    request, _written = game_truth.write_eval_request(ITEM_TRUTH_DIR, missing)
+                views = [_afk_reforge_view(key, c) for c in candidates]
+                return {"state": "ready" if all(v["verified"] for v in views) else "building", "requestId": request_id,
+                        "itemId": record.id, "itemSha": record.raw_sha256, "tries": tries, "truthRequest": request,
+                        "item": _afk_reforge_listing(record, key, item, None), "candidates": views}
+            views = [_afk_reforge_view(key, c) for c in candidates]
+            if action == "status":
+                return {"state": "ready" if all(v["verified"] for v in views) else "building", "requestId": request_id,
+                        "itemId": record.id, "itemSha": record.raw_sha256, "tries": tries, "candidates": views,
+                        "gameTruth": {"active": GAME_TRUTH_ACTIVE, "capture": game_truth.capture_status(ITEM_TRUTH_DIR)}}
+            index = body.get("index")
+            if isinstance(index, bool) or not isinstance(index, int) or not 0 <= index < tries:
+                raise VaultValidationError("Choose one of the candidates.")
+            if not views[index]["verified"]:
+                raise VaultValidationError("The game has not built that candidate yet. Nothing was changed.")
+            chosen = candidates[index]
+            raw = json.dumps({**value, "data": chosen}, ensure_ascii=False, separators=(",", ":"))
+            token = store.preview_item_rework([record.id])
+            result = store.reforge_item(request_id, record.id, raw, preview_token=token, details={
+                "source": "afk-farm", "itemId": record.id, "candidate": index, "tries": tries,
+                "oldSeed": data.get("a"), "newSeed": chosen["a"], "name": views[index]["name"], "lines": views[index]["lines"]})
+            reply = {**_afk_reforge_reply(result["event"]), "replayed": result["replayed"]}
+            if not result["replayed"]:
+                reply["ok"] = f"Reforged {views[index]['name']} for AFK FARM's Blacksmith."
+            return reply
+    except (VaultError, OSError, sqlite3.Error, TypeError, ValueError, KeyError) as exc:
+        return {"err": str(exc)}
+
+
 def vault_history() -> dict:
     try:
         store = vault_store()
@@ -10574,6 +10777,8 @@ class H(BaseHTTPRequestHandler):
             self._json(op_vault_dismantle(body))
         elif path == "/api/vault/afk-take":
             self._json(op_vault_afk_take(body))
+        elif path == "/api/vault/afk-reforge":
+            self._json(op_vault_afk_reforge(body))
         else:
             self._json({"err": "not found"}, 404)
 

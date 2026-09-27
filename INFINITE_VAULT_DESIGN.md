@@ -296,6 +296,11 @@ never choose a second destination and duplicate the item.
   goods (`AFK_TAKE_KINDS`, classes 12-15) in AFK Materials;
   `take` removes `items` ([{cls, base, count}]) at most once per `requestId`;
   `status` and `cancel` settle a request whose reply was lost. SQLite only.
+- `POST /api/vault/afk-reforge`: AFK FARM's Blacksmith (2.17.0). `items` lists Vault
+  equipment and whether each can be reforged; `offer` asks the game to build
+  `tries` candidates of `itemId`; `status` shows them as the game built them;
+  `choose` replaces the item with candidate `index`, at most once per `requestId`;
+  `cancel` makes sure a request never reforges. See AFK FARM's Blacksmith below.
 
 Collection management never edits a game save. Deposit and withdrawal always
 run under `SAVE_WRITE_LOCK` and refuse while the game is running.
@@ -459,3 +464,32 @@ way: `status` says `done` (it credits the take once) or `unknown`, and then
 undo barrier. Only the rolling `.bak` sidecar is written, not a `before-*` copy:
 takes are small, and the event records exactly what left. SQLite only, like the
 AFK transfer, so Hero Siege may run.
+
+### AFK FARM's Blacksmith (2.17.0)
+
+AFK FARM's Stronghold reforges one Vault item: the same item with a new seed `a`,
+which the game rolls into new values and a new socket count.
+
+- **Which items.** Unique equipment only. On any other item the seed also rolls
+  the rarity (2.16.3). Refused, with the reason, in `items` and `offer`:
+  - runewords and socketed items (`s1`-`s6`), because the socket count can change;
+  - items whose seed chooses their skill;
+  - Custom Forge items.
+- **Candidates.** The seeds are drawn from the request id
+  (`_afk_reforge_seeds`), so an offer asked again is the same offer.
+  - They are never the item's own seed.
+  - `offer` needs game truth and game capture, and queues only the candidates the
+    game has not built yet (`game_truth.write_eval_request`).
+  - `status` reads each candidate as the game built it (`_game_tooltip_model`) and
+    says `ready` once all are game verified.
+- **The change.** `choose` needs the item as the offer saw it (`itemSha`) and a
+  game-verified candidate. `InfiniteVault.reforge_item(request_id, item_id,
+  raw_json, preview_token=)` then runs in one transaction under the write lock:
+  - a request id already recorded in an `afk_item_reforged` or
+    `afk_reforge_cancelled` event is answered from that event;
+  - otherwise the row must still match the `preview_item_rework` token;
+  - a `before-afk-item-reforged-*.bak` copy is written, and the payload is
+    replaced in place (same id, category and grid place).
+- **The event.** It keeps the request id, the candidate, the old and new seeds, the
+  name and the stat lines. `afk_item_reforged` is an undo barrier. `cancel_reforge`
+  records `afk_reforge_cancelled` unless the reforge already happened.
