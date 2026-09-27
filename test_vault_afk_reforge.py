@@ -14,6 +14,7 @@ import unittest
 from http.server import ThreadingHTTPServer
 from pathlib import Path
 from unittest.mock import patch
+from urllib.error import HTTPError
 from urllib.request import Request, urlopen
 
 import test_vault_afk_qol as qol
@@ -26,6 +27,7 @@ class FakeGame:
     def __init__(self):
         self.built: set[float] = set()
         self.requests: list[list] = []
+        self.current = True                  # the records are the running build's
 
     def write(self, root, entries, **_):
         entries = list(entries)
@@ -40,13 +42,15 @@ class FakeGame:
         seed = float((item.get("raw") or {}).get("a", -1))
         if seed not in self.built:
             return {"calculation": {"coverage": "estimate"}, "item": {"name": item.get("name")}, "stats": []}
-        return {"calculation": {"coverage": "game_verified"},
+        return {"calculation": {"coverage": "game_verified", "buildMatched": self.current},
                 "item": {"name": item.get("name"), "rarity": "Satanic", "tier": "Legendary", "requiredLevel": 60},
                 "stats": [{"label": "Magic Find", "formattedValue": f"+{int(seed) % 50}%"},
                           {"label": "Defense", "formattedValue": str(100 + int(seed) % 30)}]}
 
 
-class AfkReforgeTests(unittest.TestCase):
+class ReforgeCase(unittest.TestCase):
+    """A temporary Vault with three unique belts (one socketed) and a key; the game is faked."""
+
     setUp_vault = qol.VaultAfkQolTests.setUp
     ingest = qol.VaultAfkQolTests.ingest
 
@@ -55,7 +59,7 @@ class AfkReforgeTests(unittest.TestCase):
         self.game = FakeGame()
         self.truth = Path(self.temp.name) / "itemtruth"
         for target, value in (("GAME_TRUTH_ACTIVE", True), ("ITEM_TRUTH_DIR", self.truth),
-                              ("_game_tooltip_model", self.game.model)):
+                              ("_game_tooltip_model", self.game.model), ("_truth_store", lambda: None)):
             patcher = patch.object(editor, target, value)
             patcher.start()
             self.addCleanup(patcher.stop)
@@ -81,6 +85,9 @@ class AfkReforgeTests(unittest.TestCase):
 
     def offer(self, request="forge-0001-abcdef", tries=4, item=None):
         return self.forge("offer", requestId=request, itemId=(item or self.belt).id, tries=tries)
+
+
+class AfkReforgeTests(ReforgeCase):
 
     def test_items_lists_equipment_and_what_cannot_be_reforged(self):
         by_id = {r["id"]: r for r in self.forge("items")["items"]}
@@ -198,6 +205,104 @@ class AfkReforgeTests(unittest.TestCase):
                               headers={"Content-Type": "application/json", editor.EDITOR_REQUEST_HEADER: "1"})
             with urlopen(request, timeout=5) as response:
                 self.assertEqual(len(json.load(response)["items"]), 3)
+        finally:
+            server.shutdown()
+            server.server_close()
+            thread.join(5)
+
+
+
+class AfkReforgeReviewTests(ReforgeCase):
+    """Holes an independent review found (2026-09-27)."""
+
+    def test_things_the_game_cannot_rebuild_are_refused(self):
+        why = editor._afk_reforge_why_not
+        gear, unique = {"cls": 8, "stackable": False}, {"a": 5.0, "c": 1.0}
+        self.assertIn("item key", why(gear, unique, None))
+        self.assertIn("item key", why(gear, unique, "0-0-0--1"))
+        self.assertIn("item key", why(gear, unique, "0-0-0-8"))
+        self.assertIsNone(why(gear, unique, self.belt.source_item_key))
+        self.assertIn("seed", why(gear, dict(unique, a=10 ** 400)), "a seed too big for a float is no crash")
+        self.assertIn("unique", why(gear, dict(unique, c=10 ** 400)))
+
+    def test_an_unreadable_custom_forge_list_closes_the_blacksmith(self):
+        with patch.object(editor, "custom_forge_store", side_effect=editor.CustomForgeError("bad schema")):
+            rows = {r["id"]: r for r in self.forge("items")["items"]}
+            self.assertFalse(rows[self.belt.id]["eligible"])
+            self.assertIn("Custom Forge list", rows[self.belt.id]["reason"])
+            self.assertIn("Custom Forge list", self.offer()["err"])
+        self.assertEqual(self.game.requests, [])
+
+    def test_an_offer_the_queue_did_not_take_fails(self):
+        with patch.object(editor.game_truth, "write_eval_request", lambda root, entries, **_: (None, [])):
+            reply = self.offer()
+        self.assertEqual((reply["err"], reply["code"]), ("The game's queue did not take the candidates. Nothing was changed.", "refused"))
+
+    def test_errors_say_whether_the_offer_can_still_finish(self):
+        self.assertEqual(self.forge("offer", requestId="forge-0009-abcdef", itemId="0" * 32, tries=4)["code"], "gone")
+        self.offer()
+        changed = self.forge("status", requestId="forge-0001-abcdef", itemId=self.belt.id, tries=4, itemSha="0" * 64)
+        self.assertEqual(changed["code"], "changed")
+
+    def status(self, truth=None):
+        return self.forge("status", requestId="forge-0001-abcdef", itemId=self.belt.id, tries=4, itemSha=self.belt.raw_sha256,
+                          truthRequest=truth)
+
+    def test_the_queue_decides_building_partial_failed_and_a_lost_request_is_asked_again(self):
+        first = self.offer()
+        truth = first["truthRequest"]
+        files = {"waiting": [truth], "running": [], "stopped": []}
+        with patch.object(editor.game_truth, "request_files", lambda root, kind="eval": files):
+            self.assertEqual(self.status(truth)["state"], "building")
+            files.update(waiting=[], stopped=[truth])
+            self.assertEqual(self.status(truth)["state"], "failed", "stopped with nothing built")
+            self.game.built.add(float(first["candidates"][2]["seed"]))
+            partial = self.status(truth)
+            self.assertEqual((partial["state"], partial["truthPhase"]), ("partial", "stopped"))
+            self.assertEqual(len(self.game.requests), 1, "a stopped request is never asked again")
+            done = self.forge("choose", requestId="forge-0001-abcdef", itemId=self.belt.id, tries=4, itemSha=self.belt.raw_sha256, index=2)
+            self.assertEqual(done["state"], "done", "a built candidate of a partial offer can be chosen")
+
+    def test_a_cleared_request_is_asked_again(self):
+        first = self.offer()
+        again = self.status("1-gone")
+        self.assertEqual((again["state"], len(self.game.requests)), ("building", 2))
+        self.assertNotEqual(again["truthRequest"], first["truthRequest"])
+        self.assertEqual(len(self.game.requests[1]), 4)
+
+    def test_only_the_running_builds_records_count(self):
+        self.offer()
+        self.game.build_all()
+        self.game.current = False
+        self.assertIn("not built", self.forge("choose", requestId="forge-0001-abcdef", itemId=self.belt.id, tries=4,
+                                              itemSha=self.belt.raw_sha256, index=0)["err"])
+
+    def test_the_listing_pages_through_the_vault(self):
+        first = self.forge("items", limit=2)
+        self.assertEqual(len(first["items"]), 2)
+        self.assertIsNotNone(first["nextOffset"])
+        rest = self.forge("items", limit=2, offset=first["nextOffset"])
+        self.assertEqual(len(rest["items"]), 1)
+        self.assertIsNone(rest["nextOffset"])
+        self.assertEqual(len({r["id"] for r in first["items"] + rest["items"]}), 3)
+
+    def test_the_item_as_offered_is_checked_inside_the_transaction(self):
+        token = self.store.preview_item_rework([self.belt.id])
+        value = self.belt.decoded_item()
+        raw = json.dumps({**value, "data": {**value["data"], "a": 7.0}}, separators=(",", ":"))
+        with self.assertRaises(qol.VaultConflictError):
+            self.store.reforge_item("forge-0010-abcdef", self.belt.id, raw, preview_token=token, expected_sha="0" * 64)
+        self.assertIsNone(self.store.reforge_request("forge-0010-abcdef"))
+
+    def test_the_route_refuses_a_request_without_the_editor_header(self):
+        server = ThreadingHTTPServer(("127.0.0.1", 0), editor.H)
+        thread = threading.Thread(target=server.serve_forever, daemon=True)
+        thread.start()
+        try:
+            url = f"http://127.0.0.1:{server.server_port}/api/vault/afk-reforge"
+            with self.assertRaises(HTTPError) as refused:
+                urlopen(Request(url, data=b'{"action":"items"}', method="POST", headers={"Content-Type": "application/json"}), timeout=5)
+            self.assertEqual(refused.exception.code, 403)
         finally:
             server.shutdown()
             server.server_close()

@@ -480,10 +480,23 @@ which the game rolls into new values and a new socket count.
   - They are never the item's own seed.
   - `offer` needs game truth and game capture, and queues only the candidates the
     game has not built yet (`game_truth.write_eval_request`).
-  - `status` reads each candidate as the game built it (`_game_tooltip_model`) and
-    says `ready` once all are game verified.
-- **The change.** `choose` needs the item as the offer saw it (`itemSha`) and a
-  game-verified candidate. `InfiniteVault.reforge_item(request_id, item_id,
+  - `status` reads each candidate as the running build made it (`_game_tooltip_model`,
+    `buildMatched`). It takes the offer's `truthRequest` and says:
+    - `ready`: all candidates are built;
+    - `building`: the request still waits or runs;
+    - `partial` or `failed`: the request stopped or finished without the rest.
+    A built candidate of a partial offer can still be chosen.
+  - A request that is gone (cleared, or the offer's reply was lost) is queued again.
+    A stopped one never is, because one of its candidates may have stopped the game.
+  - An `err` reply carries a `code`: `gone` (the item left the Vault), `changed`
+    (it is no longer as offered), `busy` (try again) or `refused`.
+- **Refused before any work:** items without an item key of their own (the game
+  cannot rebuild them), and items the Custom Forge list cannot be read for. That
+  check fails closed. An offer the game's queue did not take also fails.
+- **Listing:** `items` reads the Vault page by page until it has `limit` pieces of
+  equipment, and returns `nextOffset`.
+- **The change.** `choose` needs the item as the offer saw it (`itemSha`, checked
+  again inside the transaction) and a game-verified candidate. `InfiniteVault.reforge_item(request_id, item_id,
   raw_json, preview_token=)` then runs in one transaction under the write lock:
   - a request id already recorded in an `afk_item_reforged` or
     `afk_reforge_cancelled` event is answered from that event;

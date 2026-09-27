@@ -3715,6 +3715,7 @@ class InfiniteVault:
         raw_json: str,
         *,
         preview_token: str,
+        expected_sha: str | None = None,
         details: Mapping[str, Any] | None = None,
     ) -> dict[str, Any]:
         """Replace one item's payload with its reforged form, at most once per ``request_id``.
@@ -3724,7 +3725,8 @@ class InfiniteVault:
         ``preview_token`` (``preview_item_rework``); a ``before-afk-item-reforged``
         copy of the database is written first, the payload is replaced in place
         (same id, category and grid place) and the ``afk_item_reforged`` event keeps
-        the request id and ``details``. It is an undo barrier.
+        the request id and ``details``. It is an undo barrier. ``expected_sha``: the
+        item's payload hash as the offer saw it, checked inside the transaction.
         """
 
         clean = _clean_required_request_id(request_id)
@@ -3742,6 +3744,8 @@ class InfiniteVault:
             if token != preview_token:
                 raise VaultConflictError("The item changed. Review again.")
             row = rows[0]
+            if expected_sha is not None and row["raw_sha256"] != expected_sha:
+                raise VaultConflictError("The item changed since the Blacksmith's offer. Nothing was changed.")
             _validate_stored_raw_item_integrity(row["raw_json"], row["raw_sha256"])
             backup_path = self.path.with_name(f"{self.path.name}.before-afk-item-reforged-{uuid.uuid4().hex}.bak")
             self._backup_existing(backup_path)
